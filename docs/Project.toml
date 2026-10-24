@@ -1,0 +1,7 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+FiniteElementMethod = "e08948db-0ae8-498a-9b98-73fc7f237ce3"
+
+[compat]
+Documenter = "1"
+FiniteElementMethod = "0.1"
