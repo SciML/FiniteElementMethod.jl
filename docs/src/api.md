@@ -31,3 +31,14 @@ FiniteElementMethod.numeric_dae_problem
 FiniteElementMethod.consistent_du0
 FiniteElementMethod.check_finite_initial_condition
 ```
+
+## Solution interface
+
+```@docs
+FieldInfo
+FEMMetadata
+FiniteElementMethod.FEMInterpolant
+piece_nodes
+normal_flux
+write_vtk
+```

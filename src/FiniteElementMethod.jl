@@ -13,7 +13,7 @@ using DiffEqBase: BrownFullBasicInit
 using DomainSets: DomainSets
 using Ferrite: Ferrite
 using ForwardDiff: ForwardDiff
-using LinearAlgebra: mul!
+using LinearAlgebra: dot, mul!
 using ModelingToolkit: ModelingToolkit, @parameters, @variables, Differential, MTKParameters,
     ProblemTypeCtx, System, complete, getmetadata
 using NonlinearSolveFirstOrder: NewtonRaphson
@@ -21,11 +21,15 @@ using PDEBase: PDEBase
 using SciMLBase: SciMLBase, DAEFunction, DAEProblem
 using SciMLBase.SymbolicIndexingInterface: getp, variable_index
 using SparseArrays: SparseMatrixCSC, nonzeros, nzrange, rowvals
-using Symbolics: Symbolics, @register_array_symbolic
+using SymbolicUtils: SymbolicUtils
+using Symbolics: Symbolics, Num, @register_array_symbolic
 
 include("numeric_dae.jl")
 
 include("mesh.jl")
 include("space.jl")
+include("solution.jl")
+
+export FieldInfo, FEMMetadata, piece_nodes, normal_flux, write_vtk
 
 end # module
