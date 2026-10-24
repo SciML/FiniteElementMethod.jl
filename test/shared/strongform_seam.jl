@@ -33,6 +33,13 @@ struct EssentialBC
     field::Int
     g::Num
 end
+"Periodic pairing of spec §5.2: `field` on `mirror` equals `field` on `master` translated by `shift`."
+struct PeriodicBC
+    master::Any
+    mirror::Any
+    field::Int
+    shift::Any
+end
 struct NaturalBC
     piece::Any
     eq::Int
@@ -52,6 +59,14 @@ struct StrongFormAnalysis
     natural::Vector{NaturalBC}
     periodic::Vector{Any}
 end
+
+"Integration-by-parts policies (spec §5.1, §5.2). `Weighted(w)` multiplies the equation by `w` before splitting."
+struct ProductRule end
+struct Weighted
+    w::Any
+end
+weighted(eq, ::ProductRule) = eq
+weighted(eq, policy::Weighted) = policy.w * eq.lhs ~ policy.w * eq.rhs
 
 "Boundary condition `eq` on `piece`; `normal` is a constant outward normal or `nothing` (symbolic N)."
 struct BC
@@ -129,7 +144,17 @@ function split_divergence(spatial, sivs)
     return G, R
 end
 
-function to_slots(ex, s::StateSlots, depvars, sivs, t, params)
+hasD(ex) = iscall(ex) && (operation(ex) isa Differential || any(hasD, arguments(ex)))
+
+"""
+    to_slots(ex, s, depvars, sivs, t, params; strict = true)
+
+`ex` in slots. With `strict`, unresolved symbols are an error, and so is a registered function without a
+derivative rule whose argument state reaches (spec §5.1 as clarified by PDEBase: opaque functions of the
+coordinates are fine). The strong residual is converted with `strict = false`, since it keeps `∂(opaque(x))`
+of a divergence-form coefficient that the weak form never needs.
+"""
+function to_slots(ex, s::StateSlots, depvars, sivs, t, params; strict = true)
     dim = length(sivs)
     rules1 = Dict()
     rules2 = Dict()
@@ -152,9 +177,14 @@ function to_slots(ex, s::StateSlots, depvars, sivs, t, params)
         rules2[unwrap(p)] = s.P[j]
     end
     out = substitute(substitute(expand_derivatives(wrap(ex)), rules1), rules2)
+    strict || return Num(out)
     known = Set(unwrap.(vcat(s.U, s.G, s.Ud, s.H, s.X, [s.T], s.P, s.N)))
     leftover = filter(v -> !(v in known), collect(Symbolics.get_variables(out)))
     isempty(leftover) || error("unresolved symbols $(leftover) in $out (unregistered coefficient derivative?)")
+    for slot in vcat(s.U, s.G, s.Ud, s.H)
+        depends(out, [slot]) && hasD(unwrap(Symbolics.derivative(out, slot))) &&
+            error("registered function without a derivative rule is applied to state in $out; register its derivative")
+    end
     return Num(out)
 end
 
@@ -174,22 +204,24 @@ function match_flux(Φ, B, s::StateSlots)
 end
 
 """
-    analyse(eqs, bcs; depvars, t, sivs, params = []) -> StrongFormAnalysis
+    analyse(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict(), periodic = []) -> StrongFormAnalysis
 
-Equation `e` is paired with field `e`. `mass[e]` is the whole time-derivative part `Σ_f m_ef·Ud_f`.
+Equation `e` is paired with field `e` and integrated by parts under `get(ibp, e, ProductRule())`. `periodic` is a
+list of `PeriodicBC`, passed through: the seam does not infer pairings from trace equations. `mass[e]` is the whole time-derivative part `Σ_f m_ef·Ud_f`.
 """
-function analyse(eqs, bcs; depvars, t, sivs, params = [])
+function analyse(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict(), periodic = [])
     nf, dim = length(depvars), length(sivs)
     s = StateSlots(nf, dim, length(params))
     P(ex) = to_slots(ex, s, depvars, sivs, t, params)
     strong, mass, flux, remainder, conormal = Num[], Num[], Vector{Num}[], Num[], Vector{Num}[]
-    for eq in eqs
+    for (e, eq) in enumerate(eqs)
+        eq = weighted(eq, get(ibp, e, ProductRule()))
         m, spatial = split_time(eq, depvars, t)
         Gs, R = split_divergence(spatial, sivs)
         mslots = [P(mf) for mf in m]
         any(mf -> depends(mf, vcat(s.U, s.G)), mslots) && error("state-dependent mass: needs residual-form DAE")
         G = [P(gi) for gi in Gs]
-        push!(strong, P(unwrap(eq.lhs - eq.rhs)))
+        push!(strong, to_slots(unwrap(eq.lhs - eq.rhs), s, depvars, sivs, t, params; strict = false))
         push!(mass, sum(mslots .* s.Ud))
         push!(flux, G)
         push!(remainder, sum((P(r) for r in R); init = Num(0)))
@@ -212,7 +244,7 @@ function analyse(eqs, bcs; depvars, t, sivs, params = [])
         Φ = match_flux(substitute(sum(flux[e] .* s.N), nsub), substitute(B, nsub), s)
         push!(natural, NaturalBC(bc.piece, e, Φ))
     end
-    return StrongFormAnalysis(s, nf, dim, strong, mass, flux, remainder, conormal, essential, natural, Any[])
+    return StrongFormAnalysis(s, nf, dim, strong, mass, flux, remainder, conormal, essential, natural, collect(Any, periodic))
 end
 
 end
