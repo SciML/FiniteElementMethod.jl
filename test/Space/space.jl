@@ -5,7 +5,7 @@ using Ferrite
 using PDEBase: PDEBase
 using Test
 
-include(joinpath(@__DIR__, "meshes", "lshape.jl"))
+include(joinpath(@__DIR__, "..", "shared", "lshape.jl"))
 
 errmsg(f) = try
     f()
