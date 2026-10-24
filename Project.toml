@@ -19,8 +19,9 @@ FiniteElementMethodFerriteGmshExt = "FerriteGmsh"
 
 [compat]
 DomainSets = "0.7, 0.8"
-Ferrite = "1"
-FerriteGmsh = "1"
+Ferrite = "1.7"
+FerriteGmsh = "1.5"
+Gmsh = "0.3"
 ModelingToolkit = "11"
 PDEBase = "0.1.39"
 SciMLBase = "2, 3"
@@ -31,9 +32,11 @@ Test = "1"
 julia = "1.10"
 
 [extras]
+FerriteGmsh = "4f95f4f8-b27c-4ae5-9a39-ea55e634e36b"
+Gmsh = "705231aa-382f-11e9-3f0c-b7cb4346fdeb"
 SafeTestsets = "1bc83da4-3b8d-516f-aca4-4fe02f6d838f"
 SciMLTesting = "09d9d899-5365-40a9-917a-5f67fddea283"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["SafeTestsets", "SciMLTesting", "Test"]
+test = ["FerriteGmsh", "Gmsh", "SafeTestsets", "SciMLTesting", "Test"]

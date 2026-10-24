@@ -15,4 +15,7 @@ using PDEBase: PDEBase
 using SciMLBase: SciMLBase
 using Symbolics: Symbolics
 
+include("mesh.jl")
+include("space.jl")
+
 end # module
