@@ -112,6 +112,17 @@ inside(grid, px, py) = PointEvalHandler(grid, [Vec(px, py)]; warn = false).cells
     @test_throws ArgumentError normal_flux(sol, x, Γ)
 
     @test sprint(show, MIME"text/plain"(), sol) isa String
+
+    tight = solve(prob, DFBDF(); abstol = 1.0e-10, reltol = 1.0e-10)
+    @test maximum(abs, tight[u(t, Γ)] .- sin.(tight.t)) <= 1.0e-9
+
+    mktempdir() do dir
+        pvd = write_vtk(sol, joinpath(dir, "heat&<flow>'\""))
+        xml = read(pvd, String)
+        @test occursin("file=\"heat&amp;&lt;flow&gt;&apos;&quot;_0001.vtu\"", xml)
+        @test !occursin(r"&(?!amp;|lt;|gt;|apos;|quot;)", xml)
+        @test count(endswith(".vtu"), readdir(dir)) == nt
+    end
 end
 
 @testset "L-shape, P1" begin
@@ -185,4 +196,44 @@ end
     @test isnan(sol(11.0, 11.0; dv = u(x, y)))
     @test isnan(sol(5.2, 5.2; dv = u(x, y)))
     @test_throws DomainError sol(5.2, 5.2; dv = u(x, y), outside = :error)
+end
+
+@testset "Projected derivatives reproduce polynomials" begin
+    for (ip, g, dgx, dgy) in (
+            (P1, x -> 3x[1] - 2x[2], x -> 3.0, x -> -2.0),
+            (P2, x -> x[1]^2 + x[1] * x[2], x -> 2x[1] + x[2], x -> x[1]),
+        )
+        for n in (1, 3)
+            grid = square_grid(n)
+            dh = DofHandler(grid)
+            add!(dh, :u, ip)
+            close!(dh)
+            U = zeros(ndofs(dh))
+            apply_analytical!(U, dh, :u, g)
+            sol, syms = steady_from_dofs(dh, (; u = ip), U)
+            (; x, y, u) = syms
+            pts = Vec.(sol[x], sol[y])
+            @test sol[Differential(x)(u(x, y))] ≈ dgx.(pts) atol = 1.0e-12
+            @test sol[Differential(y)(u(x, y))] ≈ dgy.(pts) atol = 1.0e-12
+            @test sol(0.3, 0.6; dv = Differential(x)(u(x, y))) ≈ dgx(Vec(0.3, 0.6)) atol = 1.0e-12
+        end
+    end
+end
+
+@testset "Backward time span" begin
+    grid = square_grid(2)
+    dh = DofHandler(grid)
+    add!(dh, :u, P1)
+    close!(dh)
+    U = zeros(ndofs(dh))
+    apply_analytical!(U, dh, :u, x -> x[1] + x[2])
+    prob, syms = constant_problem(dh, (; u = P1), U, (1.0, 0.0))
+    sol = solve(prob, DFBDF())
+    (; t, x, y, u) = syms
+    @test first(sol.t) == 1.0 && last(sol.t) == 0.0
+    @test sol(0.5, 0.2, 0.3; dv = u(t, x, y)) ≈ 0.5 atol = 1.0e-12
+    @test sol(1.0, 0.2, 0.3; dv = u(t, x, y)) ≈ 0.5 atol = 1.0e-12
+    @test sol(0.0, 0.2, 0.3; dv = u(t, x, y)) ≈ 0.5 atol = 1.0e-12
+    @test_throws DomainError sol(1.5, 0.2, 0.3; dv = u(t, x, y))
+    @test_throws DomainError sol(-0.5, 0.2, 0.3; dv = u(t, x, y))
 end

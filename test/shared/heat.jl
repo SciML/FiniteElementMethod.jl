@@ -154,3 +154,11 @@ end
 function dof_range_global(dh, name)
     return sort!(unique!(reduce(vcat, [celldofs(dh, c)[dof_range(dh, name)] for c in 1:getncells(Ferrite.get_grid(dh))])))
 end
+
+# du = 0 from the dof vector U over `tspan`, which may run backwards.
+function constant_problem(dh, ips::NamedTuple, U, tspan)
+    md, syms = heat_metadata(dh, ips)
+    resid!(res, du, u, p, t) = (res .= du; nothing)
+    prob = DAEProblem(DAEFunction{true}(resid!), zero(U), U, tspan, SciMLBase.NullParameters(), md)
+    return prob, syms
+end

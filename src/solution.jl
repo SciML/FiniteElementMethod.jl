@@ -209,11 +209,11 @@ function _facet_normal_flux(md, f::FieldInfo, Γ, U)
     fv = Ferrite.FacetValues(Ferrite.FacetQuadratureRule{Ferrite.getrefshape(f.ip)}(2), f.ip)
     return map(_sorted_facets(md, Γ)) do fi
         Ferrite.reinit!(fv, Ferrite.getcoordinates(grid, fi[1]), fi[2])
-        ue = U[Ferrite.celldofs(dh, fi[1])[r]]
+        u_cell = U[Ferrite.celldofs(dh, fi[1])[r]]
         flux = area = 0.0
         for q in 1:Ferrite.getnquadpoints(fv)
             dΓ = Ferrite.getdetJdV(fv, q)
-            flux += dot(Ferrite.function_gradient(fv, q, ue), Ferrite.getnormal(fv, q)) * dΓ
+            flux += dot(Ferrite.function_gradient(fv, q, u_cell), Ferrite.getnormal(fv, q)) * dΓ
             area += dΓ
         end
         flux / area
@@ -234,22 +234,25 @@ function normal_flux(A::FEMSolution, dv, Γ)
     return _stack(A, [_facet_normal_flux(md, f, Γ, U) for U in _states(A)])
 end
 
+_order(::Ferrite.Interpolation{<:Any, p}) where {p} = p
+
 # L2 projection of the cellwise gradient component `d` onto the field's own space, at the vertices.
+# Order 2p integrates both the mass matrix and the (p - 1)-degree gradient against p-degree tests.
 function _nodal_gradient(md, f::FieldInfo, d, U)
     dh = _dh(md)
     grid = _grid(md)
     r = Ferrite.dof_range(dh, f.name)
-    qr = Ferrite.QuadratureRule{Ferrite.getrefshape(f.ip)}(2)
+    qr = Ferrite.QuadratureRule{Ferrite.getrefshape(f.ip)}(2 * _order(f.ip))
     cv = Ferrite.CellValues(qr, f.ip)
     qpvals = [zeros(Ferrite.getnquadpoints(cv)) for _ in 1:Ferrite.getncells(grid)]
     for cell in Ferrite.CellIterator(dh)
         Ferrite.reinit!(cv, cell)
-        ue = U[Ferrite.celldofs(cell)[r]]
+        u_cell = U[Ferrite.celldofs(cell)[r]]
         for q in 1:Ferrite.getnquadpoints(cv)
-            qpvals[Ferrite.cellid(cell)][q] = Ferrite.function_gradient(cv, q, ue)[d]
+            qpvals[Ferrite.cellid(cell)][q] = Ferrite.function_gradient(cv, q, u_cell)[d]
         end
     end
-    proj = Ferrite.L2Projector(f.ip, grid)
+    proj = Ferrite.L2Projector(f.ip, grid; qr_lhs = qr)
     return Ferrite.evaluate_at_grid_nodes(proj, Ferrite.project(proj, qpvals, qr))
 end
 
@@ -296,8 +299,8 @@ end
 Base.getindex(A::FEMSolution, sym::Num, args...) = A[sym][args...]
 
 function _dofs_at(A::FEMTimeSolution, t::Real)
-    A.t[1] <= t <= A.t[end] ||
-        throw(DomainError(t, "outside the saved time span $(A.t[1]) .. $(A.t[end])"))
+    lo, hi = minmax(A.t[1], A.t[end])
+    lo <= t <= hi || throw(DomainError(t, "outside the saved time span $(A.t[1]) .. $(A.t[end])"))
     return A.original_sol(t)
 end
 
@@ -358,19 +361,8 @@ end
 
 const _CallArg = Union{Number, AbstractArray, DomainSets.Domain}
 
-"""
-    (sol::PDETimeSeriesSolution{…, FEMMetadata})(t, x, y, ...; dv = nothing, outside = :nan)
-    (sol::PDETimeSeriesSolution{…, FEMMetadata})(t, pts::AbstractVector{<:Ferrite.Vec}; dv, outside = :nan)
-    (sol::PDETimeSeriesSolution{…, FEMMetadata})(t, Γ; dv)
-
-Evaluate the solution at time `t` and spatial points: dense time interpolation of the dof
-vector, then Ferrite point evaluation. Vector arguments give a tensor product, scalar arguments
-drop their axis, and time comes first. `dv` is a dependent variable or a first spatial
-derivative of one; with no `dv` one result per dependent variable is returned. Points outside
-the mesh give `NaN`, or throw a `DomainError` with `outside = :error`; a time outside the saved
-span throws a `DomainError`. With a boundary piece `Γ`, the values at `piece_nodes(sol, Γ)`.
-The steady solution is called the same way without `t`.
-"""
+# Documented in docs/src/solution.md: a docstring on a call of SciMLBase's type has no
+# binding of this package for Documenter to check against.
 function (A::FEMTimeSolution)(t::Union{Real, AbstractVector{<:Real}}, xs::Vararg{_CallArg}; dv = nothing, outside::Symbol = :nan)
     states = [_dofs_at(A, tk) for tk in _axis(t)]
     return _evaluate(A, states, t isa AbstractVector ? (length(t),) : (), xs, dv, outside)
@@ -379,6 +371,8 @@ end
 function (A::FEMSteadySolution)(xs::Vararg{_CallArg}; dv = nothing, outside::Symbol = :nan)
     return _evaluate(A, _states(A), (), xs, dv, outside)
 end
+
+_xml_escape(str) = replace(str, '&' => "&amp;", '<' => "&lt;", '>' => "&gt;", '"' => "&quot;", '\'' => "&apos;")
 
 # A hand-written .pvd keeps WriteVTK, which Ferrite does not re-export publicly, out of the deps.
 """
@@ -396,7 +390,7 @@ function write_vtk(A::FEMTimeSolution, base::AbstractString)
         Ferrite.VTKGridFile(name, dh) do vtk
             Ferrite.write_solution(vtk, dh, U)
         end
-        push!(entries, "    <DataSet timestep=\"$(A.t[k])\" part=\"0\" file=\"$(basename(name)).vtu\"/>")
+        push!(entries, "    <DataSet timestep=\"$(A.t[k])\" part=\"0\" file=\"$(_xml_escape(basename(name))).vtu\"/>")
     end
     pvd = base * ".pvd"
     write(

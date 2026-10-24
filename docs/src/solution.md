@@ -34,12 +34,4 @@ mesh. The same pairing orders `sol[x]`, `sol[y]` and the arguments of `sol(t, x,
     `sol(t, x, y; dv = Differential(x)(u(t, x, y)))` is the pointwise gradient.
   - [`normal_flux`](@ref) is a post-processed facet-mean flux `∇u·n`, not the imposed datum.
 
-## API
-
-```@docs
-FieldInfo
-FEMMetadata
-piece_nodes
-normal_flux
-write_vtk
-```
+The docstrings are on the [API](@ref "API") page.
