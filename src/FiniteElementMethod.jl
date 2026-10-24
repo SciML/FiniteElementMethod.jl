@@ -8,11 +8,20 @@ This package is under construction and does not yet export any functionality.
 """
 module FiniteElementMethod
 
+using ADTypes: AutoForwardDiff
+using DiffEqBase: BrownFullBasicInit
 using DomainSets: DomainSets
 using Ferrite: Ferrite
-using ModelingToolkit: ModelingToolkit
+using LinearAlgebra: mul!
+using ModelingToolkit: ModelingToolkit, @parameters, @variables, Differential, MTKParameters,
+    ProblemTypeCtx, System, complete, getmetadata
+using NonlinearSolveFirstOrder: NewtonRaphson
 using PDEBase: PDEBase
-using SciMLBase: SciMLBase
-using Symbolics: Symbolics
+using SciMLBase: SciMLBase, DAEFunction, DAEProblem
+using SciMLBase.SymbolicIndexingInterface: getp, variable_index
+using SparseArrays: SparseMatrixCSC, nonzeros, nzrange, rowvals
+using Symbolics: Symbolics, @register_array_symbolic
+
+include("numeric_dae.jl")
 
 end # module
