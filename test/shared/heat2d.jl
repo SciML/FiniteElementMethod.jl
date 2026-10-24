@@ -99,7 +99,7 @@ function coupled2d(n)
     end
     nu = ndofs(dh) ÷ 2
     fields = [:u => 1:nu, :v => (nu + 1):ndofs(dh)]
-    load! = (out, p, t) -> (out .= F0 .+ exp(-t) .* Fs; out)
+    load! = (out, t) -> (out .= F0 .+ exp(-t) .* Fs; out)
     return (; M, K, load!, fields, prescribed = copy(ch.prescribed_dofs))
 end
 
@@ -112,18 +112,29 @@ function hand_rowreplace(M, K, F, prescribed, g = 0.0)
     return dropzeros!(Mz), dropzeros!(Kz), Fz
 end
 
-function hand_daeproblem(M, K, F, prescribed, u0, tspan)
-    Mz, Kz, Fz = hand_rowreplace(M, K, F, prescribed)
-    du0 = copy(Mz)
-    for d in prescribed
-        du0[d, d] = 1
+# F is a vector or (out, t) -> out; g(t) is the Dirichlet value; a row is algebraic iff its M
+# row is zero. The algebraic entries of u0 are replaced by consistent ones.
+function hand_daeproblem(M, K, F, prescribed, u0, tspan; g = t -> 0.0)
+    n = length(u0)
+    Mz, Kz, _ = hand_rowreplace(M, K, zeros(n), prescribed)
+    Ft = t -> begin
+        Fv = F isa AbstractVector ? copy(F) : F(zeros(n), t)
+        Fv[prescribed] .= g(t)
+        Fv
     end
-    rhs = Fz - Kz * u0
-    rhs[prescribed] .= 0
-    du0 = du0 \ rhs
-    f = (res, du, u, p, t) -> (mul!(res, Mz, du); mul!(res, Kz, u, 1, 1); res .-= Fz; nothing)
+    dv = vec(sum(abs, Mz; dims = 2)) .> 0
+    # Consistent algebraic values, so the reference needs no initialisation.
+    al = .!dv
+    u0 = copy(u0)
+    u0[al] = Kz[al, al] \ (Ft(first(tspan))[al] - Kz[al, dv] * u0[dv])
+    A = copy(Mz)
+    for i in findall(.!dv)
+        A[i, i] = 1
+    end
+    rhs = Ft(first(tspan)) - Kz * u0
+    rhs[.!dv] .= 0
+    du0 = A \ rhs
+    f = (res, du, u, p, t) -> (mul!(res, Mz, du); mul!(res, Kz, u, 1, 1); res .-= Ft(t); nothing)
     jac = (J, du, u, p, γ, t) -> (J .= Kz .+ γ .* Mz; nothing)
-    dv = trues(length(u0))
-    dv[prescribed] .= false
     return DAEProblem(DAEFunction(f; jac, jac_prototype = Kz + Mz), du0, u0, tspan; differential_vars = dv)
 end

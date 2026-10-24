@@ -6,7 +6,7 @@ using SciMLBase: SciMLBase, ReturnCode, remake, solve
 using SciMLBase.SymbolicIndexingInterface: getp
 using SparseArrays, LinearAlgebra
 
-include(joinpath(@__DIR__, "helpers", "heat2d.jl"))
+include(joinpath(@__DIR__, "..", "shared", "heat2d.jl"))
 
 struct TestMetadata <: SciMLBase.AbstractDiscretizationMetadata{Val(true)}
     metadata::Base.RefValue{Any}
@@ -35,7 +35,7 @@ heat_operators(fe; kw...) = FEMOperators(fe.M, fe.K, fe.F, [:u => 1:length(fe.F)
         @test sol[u] == sol.u
         @test sol[u[5]] == getindex.(sol.u, 5)
         @test getp(sys, sys.Kop)(prob.p).A == ops.K
-        @test getp(sys, sys.Fop)(prob.p) === ops.load
+        @test getp(sys, sys.Fop)(prob.p).buffer == ops.load.buffer
 
         n == 9 || continue
         # Parameter remake: swap in a reassembled stiffness with the same pattern.
@@ -105,9 +105,11 @@ heat_operators(fe; kw...) = FEMOperators(fe.M, fe.K, fe.F, [:u => 1:length(fe.F)
     @testset "time-dependent Dirichlet data g = sin(t)" begin
         opsg = heat_operators(fe; dirichlet_values = (out, t) -> fill!(out, sin(t)))
         @test opsg.load.timedep
-        sol = solve(numeric_dae_problem(opsg, zeros(N), (0.0, 1.0)), DFBDF())
+        sol = solve(numeric_dae_problem(opsg, zeros(N), (0.0, 1.0)), DFBDF(); tol...)
         @test SciMLBase.successful_retcode(sol)
         @test maximum(abs, sol.u[end][fe.prescribed] .- sin(sol.t[end])) <= 1.0e-12
+        refg = solve(hand_daeproblem(fe.M, fe.K, fe.F, fe.prescribed, zeros(N), (0.0, 1.0); g = sin), DFBDF(); tol...)
+        @test maximum(abs, sol.u[end] - refg.u[end]) <= 1.0e-9
     end
 
     @testset "algebraic block: 0 = Δv + exp(-t) sin(πx)" begin
@@ -120,14 +122,74 @@ heat_operators(fe; kw...) = FEMOperators(fe.M, fe.K, fe.F, [:u => 1:length(fe.F)
         sys = prob.f.sys
         us = SciMLBase.SymbolicIndexingInterface.variable_symbols(sys)
         @test length(us) == 2
-        sol = solve(prob, DFBDF())
+        sol = solve(prob, DFBDF(); tol...)
         @test SciMLBase.successful_retcode(sol)
+        refc = solve(hand_daeproblem(cp.M, cp.K, cp.load!, cp.prescribed, zeros(length(sol.u[end])), (0.0, 1.0)), DFBDF(); tol...)
+        @test refc.prob.differential_vars == opsc.differential_vars
+        @test maximum(abs, sol.u[end] - refc.u[end]) <= 1.0e-9
         # The algebraic block holds at the final time.
         Kvv, Kvu = opsc.K[rv, rv], opsc.K[rv, ru]
-        F1 = cp.load!(zeros(length(sol.u[end])), nothing, sol.t[end])
+        F1 = cp.load!(zeros(length(sol.u[end])), sol.t[end])
         F1[cp.prescribed] .= 0
         @test norm(Kvv * sol.u[end][rv] + Kvu * sol.u[end][ru] - F1[rv]) < 1.0e-8
         @test sol[us[2]][end] == sol.u[end][rv]
+    end
+
+    @testset "explicit initializealg wins" begin
+        prob = numeric_dae_problem(ops, zeros(N), (0.0, 1.0); initializealg = SciMLBase.NoInit())
+        @test prob.kwargs[:initializealg] isa SciMLBase.NoInit
+        @test numeric_dae_problem(ops, zeros(N), (0.0, 1.0)).kwargs[:initializealg] isa FiniteElementMethod.BrownFullBasicInit
+        sol = solve(prob, DFBDF(); tol...)
+        @test SciMLBase.successful_retcode(sol)
+        @test err(sol) <= 1.0e-9
+    end
+
+    @testset "constructor and argument errors" begin
+        Md = sparse(1.0I, 3, 3)
+        Kt = sparse(Tridiagonal(fill(-1.0, 2), fill(2.0, 3), fill(-1.0, 2)))
+        @test_throws "share one sparsity pattern" FEMOperators(Md, Kt, zeros(3), [:u => 1:3])
+        @test_throws "must tile" FEMOperators(Md, copy(Md), zeros(3), [:u => 2:3])
+        @test_throws "cover 1:2" FEMOperators(Md, copy(Md), zeros(3), [:u => 1:2])
+        Kz = sparse([1, 2, 3], [2, 2, 3], [1.0, 1.0, 1.0], 3, 3)
+        @test_throws "no diagonal entry for prescribed dof 1" FEMOperators(copy(Kz), Kz, zeros(3), [:u => 1:3]; prescribed = [1])
+        @test_throws DimensionMismatch numeric_dae_problem(ops, zeros(N + 1), (0.0, 1.0))
+    end
+
+    @testset "remade operator with a different pattern is rejected" begin
+        Md = sparse(1.0I, 3, 3)
+        opsd = FEMOperators(Md, copy(Md), zeros(3), [:u => 1:3])
+        prob = numeric_dae_problem(opsd, zeros(3), (0.0, 1.0))
+        cyclic = sparse([2, 3, 1], [1, 2, 3], [1.0, 1.0, 1.0], 3, 3)
+        prob2 = remake(prob; p = [prob.f.sys.Kop => FEMOp(cyclic)])
+        J = copy(prob.f.jac_prototype)
+        e = try
+            prob2.f.jac(J, zeros(3), zeros(3), prob2.p, 1.0, 0.0)
+            nothing
+        catch err
+            err
+        end
+        @test e isa ArgumentError
+        @test occursin("remeshed", e.msg)
+        prob.f.jac(J, zeros(3), zeros(3), prob.p, 1.0, 0.0)
+        @test J == 2I
+    end
+
+    @testset "symbolic load and numeric residual agree; problems own their load" begin
+        cp = coupled2d(3)
+        opsc = FEMOperators(cp.M, cp.K, cp.load!, cp.fields; prescribed = cp.prescribed)
+        n = size(opsc.K, 1)
+        p1 = numeric_dae_problem(opsc, zeros(n), (0.0, 1.0))
+        p2 = numeric_dae_problem(opsc, zeros(n), (0.0, 1.0))
+        F1, F2 = getp(p1.f.sys, p1.f.sys.Fop)(p1.p), getp(p2.f.sys, p2.f.sys.Fop)(p2.p)
+        @test F1 !== F2 && F1.buffer !== F2.buffer
+        res = zeros(n)
+        p1.f(res, zeros(n), zeros(n), p1.p, 0.3)
+        @test -res == FiniteElementMethod.fem_load(F1, 1:n, 0.3)
+        b1 = FiniteElementMethod.evaluate_load!(F1, 1.0)
+        FiniteElementMethod.evaluate_load!(F2, 2.0)
+        expected = cp.load!(zeros(n), 1.0)
+        expected[cp.prescribed] .= 0
+        @test b1 == expected
     end
 
     @testset "discretization metadata becomes problem_type" begin

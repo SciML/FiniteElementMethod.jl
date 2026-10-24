@@ -12,7 +12,7 @@ Base.show(io::IO, ::FEMOp) = print(io, "FEMOp")
 """
     FEMLoad
 
-The right-hand side `F(p, t)` of `M du + K u = F` with the Dirichlet rows `F[d] = g_d(t)`
+The right-hand side `F(t)` of `M du + K u = F` with the Dirichlet rows `F[d] = g_d(t)`
 already written in. `timedep` is `true` when the volume load or the Dirichlet data is a
 function, in which case the load is re-evaluated on every call; otherwise it is evaluated once.
 """
@@ -29,15 +29,18 @@ Base.show(io::IO, ::FEMLoad) = print(io, "FEMLoad")
 function FEMLoad(load, prescribed, values, n)
     timedep = !(load isa AbstractVector) || !(values isa Union{Number, AbstractVector})
     F = FEMLoad(load, prescribed, values, timedep, zeros(n), zeros(length(prescribed)))
-    timedep || fill_load!(F, nothing, 0.0)
+    timedep || fill_load!(F, 0.0)
     return F
 end
 
-function fill_load!(F::FEMLoad, p, t)
+# A fresh buffer per problem, so independently built problems never overwrite each other's load.
+Base.copy(F::FEMLoad) = FEMLoad(F.load, F.prescribed, F.values, F.timedep, copy(F.buffer), copy(F.gbuffer))
+
+function fill_load!(F::FEMLoad, t)
     if F.load isa AbstractVector
         copyto!(F.buffer, F.load)
     else
-        F.load(F.buffer, p, t)
+        F.load(F.buffer, t)
     end
     g = F.values
     if g isa Union{Number, AbstractVector}
@@ -50,11 +53,11 @@ function fill_load!(F::FEMLoad, p, t)
 end
 
 """
-    evaluate_load!(F::FEMLoad, p, t)
+    evaluate_load!(F::FEMLoad, t)
 
-Return the load vector at `(p, t)`, writing into `F`'s buffer when the load is time dependent.
+Return the load vector at `t`, writing into `F`'s buffer when the load is time dependent.
 """
-evaluate_load!(F::FEMLoad, p, t) = F.timedep ? fill_load!(F, p, t) : F.buffer
+evaluate_load!(F::FEMLoad, t) = F.timedep ? fill_load!(F, t) : F.buffer
 
 fem_apply(op::FEMOp, rows::UnitRange{Int}, cols::UnitRange{Int}, x::AbstractVector) = view(op.A, rows, cols) * x
 @register_array_symbolic fem_apply(op::FEMOp, rows::UnitRange{Int}, cols::UnitRange{Int}, x::AbstractVector) begin
@@ -63,7 +66,7 @@ fem_apply(op::FEMOp, rows::UnitRange{Int}, cols::UnitRange{Int}, x::AbstractVect
     ndims = 1
 end
 
-fem_load(op::FEMLoad, rows::UnitRange{Int}, t) = evaluate_load!(op, nothing, t)[rows]
+fem_load(op::FEMLoad, rows::UnitRange{Int}, t) = evaluate_load!(op, t)[rows]
 @register_array_symbolic fem_load(op::FEMLoad, rows::UnitRange{Int}, t) begin
     size = (length(rows),)
     eltype = Float64
@@ -79,7 +82,8 @@ is zeroed, row `d` of `K` becomes `e_d` and `F[d] = g_d(t)`. `M` and `K` are cop
 mutated, and must share one sparsity pattern (for example from `Ferrite.allocate_matrix(dh, ch)`)
 that contains the diagonal entry of every prescribed dof.
 
-  - `load`: a vector, or a function `(out, p, t) -> out` writing the full load vector.
+  - `load`: a vector, or a function `(out, t) -> out` writing the full load vector. Loads do
+    not see the parameters; parameter-dependent operators are reassembled instead (spec §8.3).
   - `fields`: `name => range` pairs in state order; the ranges must tile `1:size(M, 1)`.
   - `dirichlet_values`: a number, a vector over `prescribed`, or `(out, t) -> out`.
 
@@ -183,22 +187,28 @@ function fem_system(ops::FEMOperators, iv; unknowns = nothing, metadata = nothin
     for (u, r) in zip(us, ranges)
         variable_index(sys, u) == r || error("System reordered the unknowns: $u is at $(variable_index(sys, u)), expected $r")
     end
-    pmap = Dict{Any, Any}(Mop => FEMOp(ops.M), Kop => FEMOp(ops.K), Fop => ops.load)
+    pmap = Dict{Any, Any}(Mop => FEMOp(ops.M), Kop => FEMOp(ops.K), Fop => copy(ops.load))
     return sys, us, pmap
 end
 
 """
-    consistent_du0(ops::FEMOperators, u0, p, t0)
+    consistent_du0(ops::FEMOperators, u0, t0; load = ops.load)
 
-`du0` with `M_dd du_d = (F(p, t0) - K u0)_d` on the differential rows and zero elsewhere.
+`du0` with `M_dd du_d = (F(t0) - K u0)_d` on the differential rows and zero elsewhere.
 """
-function consistent_du0(ops::FEMOperators, u0, p, t0)
+function consistent_du0(ops::FEMOperators, u0, t0; load = ops.load)
     dd = ops.differential_vars
     du0 = zeros(promote_type(eltype(u0), eltype(ops.M)), length(u0))
     any(dd) || return du0
-    rhs = evaluate_load!(ops.load, p, t0) - ops.K * u0
+    rhs = evaluate_load!(load, t0) - ops.K * u0
     du0[dd] = ops.M[dd, dd] \ rhs[dd]
     return du0
+end
+
+function check_pattern(J, A, name)
+    (A.colptr === J.colptr && A.rowval === J.rowval) || (A.colptr == J.colptr && A.rowval == J.rowval) ||
+        throw(ArgumentError("$name no longer has the sparsity pattern of the Jacobian prototype; an operator with a new pattern (a remeshed problem) needs a new problem from numeric_dae_problem, not remake"))
+    return nothing
 end
 
 default_initializealg() = BrownFullBasicInit(nlsolve = NewtonRaphson(autodiff = AutoForwardDiff()))
@@ -231,16 +241,19 @@ function numeric_dae_problem(
     function residual!(res, du, u, p, t)
         mul!(res, getM(p).A, du)
         mul!(res, getK(p).A, u, true, true)
-        res .-= evaluate_load!(getF(p), p, t)
+        res .-= evaluate_load!(getF(p), t)
         return nothing
     end
-    # J shares the operators' pattern, and the Dirichlet rows of K + γM are already e_d.
+    # The Dirichlet rows of K + γM are already e_d, so the stored values are copied as they are.
     function jac!(J, du, u, p, γ, t)
-        nonzeros(J) .= nonzeros(getK(p).A) .+ γ .* nonzeros(getM(p).A)
+        Kp, Mp = getK(p).A, getM(p).A
+        check_pattern(J, Kp, "Kop")
+        check_pattern(J, Mp, "Mop")
+        nonzeros(J) .= nonzeros(Kp) .+ γ .* nonzeros(Mp)
         return nothing
     end
     u0 = collect(u0)
-    du0 = du0 === nothing ? consistent_du0(ops, u0, p, first(tspan)) : collect(du0)
+    du0 = du0 === nothing ? consistent_du0(ops, u0, first(tspan); load = getF(p)) : collect(du0)
     f = DAEFunction{true}(residual!; jac = jac!, jac_prototype = ops.jac_prototype, sys)
     md = getmetadata(sys, ProblemTypeCtx, nothing)
     md isa SciMLBase.AbstractDiscretizationMetadata && PDEBase.add_metadata!(md, sys)
