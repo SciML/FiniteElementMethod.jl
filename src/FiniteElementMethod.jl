@@ -10,9 +10,15 @@ module FiniteElementMethod
 
 using DomainSets: DomainSets
 using Ferrite: Ferrite
+using LinearAlgebra: dot
 using ModelingToolkit: ModelingToolkit
 using PDEBase: PDEBase
 using SciMLBase: SciMLBase
-using Symbolics: Symbolics
+using SymbolicUtils: SymbolicUtils
+using Symbolics: Symbolics, Num
+
+include("solution.jl")
+
+export FieldInfo, FEMMetadata, piece_nodes, normal_flux, write_vtk
 
 end # module

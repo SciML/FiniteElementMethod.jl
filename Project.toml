@@ -6,9 +6,11 @@ authors = ["Alex Jones <alex.jones@juliahub.com>"]
 [deps]
 DomainSets = "5b8099bc-c8ec-5219-889f-1d9e522a28bf"
 Ferrite = "c061ca5d-56c9-439f-9c0e-210fe06d3992"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 ModelingToolkit = "961ee093-0014-501f-94e3-6117800e7a78"
 PDEBase = "a7812802-0625-4b9e-961c-d332478797e5"
 SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
+SymbolicUtils = "d1185830-fcd6-423d-90d6-eec64667417b"
 Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
 
 [weakdeps]
@@ -21,19 +23,25 @@ FiniteElementMethodFerriteGmshExt = "FerriteGmsh"
 DomainSets = "0.7, 0.8"
 Ferrite = "1"
 FerriteGmsh = "1"
+LinearAlgebra = "1"
 ModelingToolkit = "11"
+OrdinaryDiffEqBDF = "2.4"
 PDEBase = "0.1.39"
 SciMLBase = "2, 3"
 SafeTestsets = "0.1"
 SciMLTesting = "2.4"
+SparseArrays = "1"
+SymbolicUtils = "4.53"
 Symbolics = "7"
 Test = "1"
 julia = "1.10"
 
 [extras]
+OrdinaryDiffEqBDF = "6ad6398a-0878-4a85-9266-38940aa047c8"
 SafeTestsets = "1bc83da4-3b8d-516f-aca4-4fe02f6d838f"
 SciMLTesting = "09d9d899-5365-40a9-917a-5f67fddea283"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["SafeTestsets", "SciMLTesting", "Test"]
+test = ["OrdinaryDiffEqBDF", "SafeTestsets", "SciMLTesting", "SparseArrays", "Test"]
