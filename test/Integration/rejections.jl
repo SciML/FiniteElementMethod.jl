@@ -17,10 +17,10 @@ run_chain(eqs, bcs = BC[]; depvars = [U]) = chain(eqs, bcs; depvars, t, sivs = [
 rejects(needle, eqs, bcs = BC[]; kw...) = raises(() -> run_chain(eqs, bcs; kw...), needle)
 
 @testset "rejected equation classes (seam; moves to PDEBase analyse)" begin
-    @test_throws ErrorException run_chain([Dt(U) ~ Dx(Dx(Dx(U)))])
     # Third order: spec m2 wants the message to name the actual order ("third-order"); the seam says
     # "fourth-or-higher" for every order above two.
     @test rejects("needs mixed/C¹ formulation", [Dt(U) ~ Dx(Dx(Dx(U)))])
+    @test_broken rejects("third-order", [Dt(U) ~ Dx(Dx(Dx(U)))])   # KdV, spec m2; PDEBase names the order
     @test rejects("needs mixed/C¹ formulation", [Dt(U) ~ -Dx(Dx(Dx(Dx(U)))) - Dy(Dy(Dy(Dy(U))))])
     @test rejects("not ∂ₜu × coefficient", [Differential(t, 2)(U) ~ Dx(Dx(U))])
     @test rejects("not ∂ₜu × coefficient", [Dt(U)^2 ~ Dx(Dx(U))])

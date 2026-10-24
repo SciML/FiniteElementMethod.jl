@@ -132,6 +132,15 @@ end
     check_linear(SETUP, c; block = (e, b, X) -> (; zero_block(2)..., κ = iso(opaque(X[1])), m = 1.0), facets = [])
 end
 
+@testset "§10.1 regression: piecewise ifelse coefficient accepted in divergence form" begin
+    # The rejected half (non-divergence ifelse·Δu) is @test_broken in rejections.jl until PDEBase's smoothness check.
+    apw = ifelse(x < 0.5, 1.0, 3.0)
+    c = scalar_chain(Dt(U) ~ Dx(apw * Dx(U)) + Dy(apw * Dy(U)) + x * y + 1, [DIR])
+    check_linear(
+        SETUP, c; block = (e, b, X) -> (; zero_block(2)..., κ = iso(X[1] < 0.5 ? 1.0 : 3.0), m = 1.0), facets = []
+    )
+end
+
 @testset "Dirichlet: constant and time-dependent, at two times" begin
     c = scalar_chain(Dt(U) ~ Dx(Dx(U)) + Dy(Dy(U)), [BC("left", U ~ k), BC("bottom", U ~ sin(t) * x + h)])
     ref = [("left", :u, (X, t) -> PV[1]), ("bottom", :u, (X, t) -> sin(t) * X[1] + PV[4])]
@@ -204,12 +213,17 @@ end
     @test relerr(Aw.K, Kw) ≤ TOL && relerr(Aw.M, Mw) ≤ TOL && relerr(Aw.F, Fw) ≤ TOL
     @test norm(Aw.K - Aw.K') ≤ TOL * norm(Aw.K)
     @test norm(Ap.K - Ap.K') > 1.0e-2 * norm(Ap.K)
-    # Spec §5.1 also wants ProductRule to warn once when it generates a correction term; that warning belongs
-    # to PDEBase's analyse and the seam does not emit it (deferred to the PDEBase swap).
+    # Spec §5.1: ProductRule warns exactly once when it generates a correction term, Weighted never. The warning
+    # belongs to PDEBase's analyse and the seam does not emit it, so the first check flips at the PDEBase swap.
+    warnings(f) = count(log -> log.level == Base.CoreLogging.Warn, first(Test.collect_test_logs(f)))
+    @test_broken warnings(() -> chain([eq], bcs; depvars = [Ur], t, sivs = [r], ibp = Dict(1 => ProductRule()))) == 1
+    @test warnings(() -> chain([eq], bcs; depvars = [Ur], t, sivs = [r], ibp = Dict(1 => Weighted(r^2)))) == 0
 end
 
 @testset "periodic conditions are carried through weak_form untouched" begin
-    # Periodic pairing is constraint-level (PeriodicDirichlet in M4); the weak form's terms must not change.
+    # Checks only that weak_form passes periodic data through with its terms unchanged. Periodic pairing is
+    # constraint-level (PeriodicDirichlet in M4), and rejecting periodic conditions before M4 belongs to the
+    # discretizer (M2/M4), so this is not coverage of the periodic BC kind.
     eq = Dt(U) ~ Dx(k * Dx(U)) + Dy(k * Dy(U)) + x * y + 1
     bcs = [BC("top", k * Dy(U) + α * U ~ β, TOP)]
     periodic = [PeriodicBC("left", "right", 1, [2.0, 0.0])]
