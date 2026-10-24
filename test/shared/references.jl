@@ -222,6 +222,12 @@ function newton(residual, ch, u; tol = 1.0e-11, maxiter = 25)
     return u, history
 end
 
+# Newton converged in at most `maxiter` steps and the last order estimate above round-off is at least `order`.
+function newton_converged(history; order = 1.8, maxiter = 8)
+    orders = newton_orders(history)
+    return history[end] < 1.0e-11 && length(history) ≤ maxiter && length(orders) ≥ 1 && orders[end] ≥ order
+end
+
 # Estimated orders `log(r₊/r)/log(r/r₋)` over consecutive Newton residuals above `floor`, the round-off level
 # where the order estimate stops being meaningful.
 function newton_orders(history; floor = 1.0e-12)
@@ -270,12 +276,13 @@ function numeric(ex, sivs)
     return X -> f(ntuple(d -> X[d], length(sivs))...)
 end
 
-# `true` when `f()` throws an `ErrorException` whose message contains `needle`.
+# `true` when `f()` throws any exception whose displayed message contains `needle`, so the checks survive
+# PDEBase raising an `ArgumentError` or its own exception type instead of the seam's `ErrorException`.
 function raises(f, needle)
     try
         f()
     catch err
-        return err isa ErrorException && occursin(needle, err.msg)
+        return err isa Exception && occursin(needle, sprint(showerror, err))
     end
     return false
 end

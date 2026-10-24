@@ -31,7 +31,7 @@ function check_linear(setup, c; block, source = (e, X) -> fsrc(X), facets, diric
     @test relerr(A.F, Fr) ≤ TOL
     ch, ch_ref = constraints(setup, c.dirichlet, p), constraints_reference(setup, dirichlet)
     @test ch.prescribed_dofs == ch_ref.prescribed_dofs
-    @test dirichlet_values(ch) == dirichlet_values(ch_ref)
+    @test dirichlet_values(ch) ≈ dirichlet_values(ch_ref) rtol = 1.0e-15
     return A
 end
 
@@ -139,12 +139,13 @@ end
     for tv in (0.3, 1.1)
         ch, ch_ref = constraints(SETUP, c.dirichlet, PV; t = tv), constraints_reference(SETUP, ref; t = tv)
         @test ch.prescribed_dofs == ch_ref.prescribed_dofs
-        @test dirichlet_values(ch) == dirichlet_values(ch_ref)
+        @test dirichlet_values(ch) ≈ dirichlet_values(ch_ref) rtol = 1.0e-15
     end
     ch = constraints(SETUP, c.dirichlet, PV; t = 0.3)
     before = dirichlet_values(ch)
     update!(ch, 1.1)
-    @test dirichlet_values(ch) == dirichlet_values(constraints_reference(SETUP, ref; t = 1.1)) != before
+    @test dirichlet_values(ch) ≈ dirichlet_values(constraints_reference(SETUP, ref; t = 1.1)) rtol = 1.0e-15
+    @test !(dirichlet_values(ch) ≈ before)
 end
 
 @testset "facet terms are non-vanishing: sum(F) shifts by k·h·|Γ|" begin

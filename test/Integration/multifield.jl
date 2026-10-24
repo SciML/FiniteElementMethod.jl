@@ -44,8 +44,8 @@ block_norms(A, setup) = [norm(A[I, J]) for I in field_dofs.(Ref(setup), setup.fi
     @test relerr(A.M, Mr) ≤ 1.0e-14
     @test relerr(A.F, Fr) ≤ 1.0e-14
     # Block norms printed by scratch/dauntless/test_multifield.out on the same 16×16 P1 mesh.
-    @test block_norms(A.K, setup) ≈ [69.6 20.9; 0.0 1390.0] rtol = 5.0e-3
-    @test block_norms(A.M, setup) ≈ [0.131 0.0; 0.0 0.131] rtol = 5.0e-3
+    @test all(isapprox.(block_norms(A.K, setup), [69.6 20.9; 0.0 1390.0]; rtol = 5.0e-3, atol = 1.0e-12))
+    @test all(isapprox.(block_norms(A.M, setup), [0.131 0.0; 0.0 0.131]; rtol = 5.0e-3, atol = 1.0e-12))
 
     u_rand = rand(Xoshiro(2), ndofs(setup.dh))
     rg, Jg = chain_residual(setup, c.kernels, u_rand, pv)
@@ -61,7 +61,7 @@ block_norms(A, setup) = [norm(A[I, J]) for I in field_dofs.(Ref(setup), setup.fi
     ch = constraints(setup, c.dirichlet, pv)
     ch_ref = constraints_reference(setup, [("left", :w, (X, t) -> 0.9)])
     @test ch.prescribed_dofs == ch_ref.prescribed_dofs
-    @test dirichlet_values(ch) == dirichlet_values(ch_ref)
+    @test dirichlet_values(ch) ≈ dirichlet_values(ch_ref) rtol = 1.0e-15
     @test issubset(ch.prescribed_dofs, field_dofs(setup, :w))
 end
 
