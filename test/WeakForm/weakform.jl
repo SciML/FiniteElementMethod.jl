@@ -5,7 +5,7 @@ using FiniteElementMethod: weak_form, classify, TestSlots
 using Symbolics
 using Test
 
-include("strongform_seam.jl")
+include(joinpath(@__DIR__, "..", "shared", "strongform_seam.jl"))
 using .StrongFormSeam: analyse, BC, StateSlots
 
 "`a` and `b` agree at several random values of every variable they contain."
