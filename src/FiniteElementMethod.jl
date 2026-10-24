@@ -12,6 +12,7 @@ using ADTypes: AutoForwardDiff
 using DiffEqBase: BrownFullBasicInit
 using DomainSets: DomainSets
 using Ferrite: Ferrite
+using ForwardDiff: ForwardDiff
 using LinearAlgebra: mul!
 using ModelingToolkit: ModelingToolkit, @parameters, @variables, Differential, MTKParameters,
     ProblemTypeCtx, System, complete, getmetadata

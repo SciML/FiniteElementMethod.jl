@@ -12,52 +12,59 @@ Base.show(io::IO, ::FEMOp) = print(io, "FEMOp")
 """
     FEMLoad
 
-The right-hand side `F(t)` of `M du + K u = F` with the Dirichlet rows `F[d] = g_d(t)`
-already written in. `timedep` is `true` when the volume load or the Dirichlet data is a
-function, in which case the load is re-evaluated on every call; otherwise it is evaluated once.
+The right-hand side `F(t)` of `M du + K u = F` with the Dirichlet rows `F[d] = g_d(t)`.
+`timedep` is `true` when the volume load or the Dirichlet data is a function. It holds no
+buffers: [`load!`](@ref) writes into the caller's vector, so problems that share a `FEMLoad`
+(remakes, ensembles) never share mutable state through it.
 """
 struct FEMLoad
     load::Any
     prescribed::Vector{Int}
     values::Any
     timedep::Bool
-    buffer::Vector{Float64}
-    gbuffer::Vector{Float64}
+    n::Int
 end
 Base.show(io::IO, ::FEMLoad) = print(io, "FEMLoad")
 
 function FEMLoad(load, prescribed, values, n)
     timedep = !(load isa AbstractVector) || !(values isa Union{Number, AbstractVector})
-    F = FEMLoad(load, prescribed, values, timedep, zeros(n), zeros(length(prescribed)))
-    timedep || fill_load!(F, 0.0)
-    return F
+    return FEMLoad(load, prescribed, values, timedep, n)
 end
 
-# A fresh buffer per problem, so independently built problems never overwrite each other's load.
-Base.copy(F::FEMLoad) = FEMLoad(F.load, F.prescribed, F.values, F.timedep, copy(F.buffer), copy(F.gbuffer))
+"""
+    load!(out, F::FEMLoad, t)
 
-function fill_load!(F::FEMLoad, t)
+Write the load vector at `t` into `out`, with `g(t)` on the prescribed rows, and return `out`.
+"""
+function load!(out, F::FEMLoad, t)
     if F.load isa AbstractVector
-        copyto!(F.buffer, F.load)
+        copyto!(out, F.load)
     else
-        F.load(F.buffer, t)
+        F.load(out, t)
     end
+    dirichlet_values!(view(out, F.prescribed), F, t)
+    return out
+end
+
+function dirichlet_values!(out, F::FEMLoad, t)
     g = F.values
     if g isa Union{Number, AbstractVector}
-        F.buffer[F.prescribed] .= g
+        out .= g
     else
-        g(F.gbuffer, t)
-        F.buffer[F.prescribed] .= F.gbuffer
+        g(out, t)
     end
-    return F.buffer
+    return out
 end
 
 """
-    evaluate_load!(F::FEMLoad, t)
+    dirichlet_rates(F::FEMLoad, t)
 
-Return the load vector at `t`, writing into `F`'s buffer when the load is time dependent.
+`g'(t)` on the prescribed dofs: zero for constant data, `ForwardDiff` through the callback otherwise.
 """
-evaluate_load!(F::FEMLoad, t) = F.timedep ? fill_load!(F, t) : F.buffer
+function dirichlet_rates(F::FEMLoad, t)
+    F.values isa Union{Number, AbstractVector} && return zeros(length(F.prescribed))
+    return ForwardDiff.derivative(τ -> dirichlet_values!(zeros(typeof(τ), length(F.prescribed)), F, τ), float(t))
+end
 
 fem_apply(op::FEMOp, rows::UnitRange{Int}, cols::UnitRange{Int}, x::AbstractVector) = view(op.A, rows, cols) * x
 @register_array_symbolic fem_apply(op::FEMOp, rows::UnitRange{Int}, cols::UnitRange{Int}, x::AbstractVector) begin
@@ -66,7 +73,7 @@ fem_apply(op::FEMOp, rows::UnitRange{Int}, cols::UnitRange{Int}, x::AbstractVect
     ndims = 1
 end
 
-fem_load(op::FEMLoad, rows::UnitRange{Int}, t) = evaluate_load!(op, t)[rows]
+fem_load(op::FEMLoad, rows::UnitRange{Int}, t) = load!(zeros(op.n), op, t)[rows]
 @register_array_symbolic fem_load(op::FEMLoad, rows::UnitRange{Int}, t) begin
     size = (length(rows),)
     eltype = Float64
@@ -187,20 +194,22 @@ function fem_system(ops::FEMOperators, iv; unknowns = nothing, metadata = nothin
     for (u, r) in zip(us, ranges)
         variable_index(sys, u) == r || error("System reordered the unknowns: $u is at $(variable_index(sys, u)), expected $r")
     end
-    pmap = Dict{Any, Any}(Mop => FEMOp(ops.M), Kop => FEMOp(ops.K), Fop => copy(ops.load))
+    pmap = Dict{Any, Any}(Mop => FEMOp(ops.M), Kop => FEMOp(ops.K), Fop => ops.load)
     return sys, us, pmap
 end
 
 """
-    consistent_du0(ops::FEMOperators, u0, t0; load = ops.load)
+    consistent_du0(ops::FEMOperators, u0, t0)
 
-`du0` with `M_dd du_d = (F(t0) - K u0)_d` on the differential rows and zero elsewhere.
+`du0` with `du_d = g'(t0)` on prescribed dofs, zero on the other algebraic rows, and
+`M_ff du_f = (F(t0) - K u0 - M_fd g'(t0))_f` on the differential rows.
 """
-function consistent_du0(ops::FEMOperators, u0, t0; load = ops.load)
+function consistent_du0(ops::FEMOperators, u0, t0)
     dd = ops.differential_vars
     du0 = zeros(promote_type(eltype(u0), eltype(ops.M)), length(u0))
+    du0[ops.prescribed] = dirichlet_rates(ops.load, t0)
     any(dd) || return du0
-    rhs = evaluate_load!(load, t0) - ops.K * u0
+    rhs = load!(zeros(length(u0)), ops.load, t0) - ops.K * u0 - ops.M * du0
     du0[dd] = ops.M[dd, dd] \ rhs[dd]
     return du0
 end
@@ -239,9 +248,10 @@ function numeric_dae_problem(
     p = MTKParameters(sys, pmap)
     getM, getK, getF = getp(sys, sys.Mop), getp(sys, sys.Kop), getp(sys, sys.Fop)
     function residual!(res, du, u, p, t)
-        mul!(res, getM(p).A, du)
+        load!(res, getF(p), t)
+        res .= .-res
+        mul!(res, getM(p).A, du, true, true)
         mul!(res, getK(p).A, u, true, true)
-        res .-= evaluate_load!(getF(p), t)
         return nothing
     end
     # The Dirichlet rows of K + γM are already e_d, so the stored values are copied as they are.
@@ -253,7 +263,7 @@ function numeric_dae_problem(
         return nothing
     end
     u0 = collect(u0)
-    du0 = du0 === nothing ? consistent_du0(ops, u0, first(tspan); load = getF(p)) : collect(du0)
+    du0 = du0 === nothing ? consistent_du0(ops, u0, first(tspan)) : collect(du0)
     f = DAEFunction{true}(residual!; jac = jac!, jac_prototype = ops.jac_prototype, sys)
     md = getmetadata(sys, ProblemTypeCtx, nothing)
     md isa SciMLBase.AbstractDiscretizationMetadata && PDEBase.add_metadata!(md, sys)

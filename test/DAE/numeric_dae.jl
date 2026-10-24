@@ -1,7 +1,7 @@
 using FiniteElementMethod, Test
 using FiniteElementMethod: FEMOperators, FEMOp, FEMLoad, numeric_dae_problem
 using ModelingToolkit: ModelingToolkit
-using OrdinaryDiffEqBDF: DFBDF
+using OrdinaryDiffEqBDF: DFBDF, DImplicitEuler
 using SciMLBase: SciMLBase, ReturnCode, remake, solve
 using SciMLBase.SymbolicIndexingInterface: getp
 using SparseArrays, LinearAlgebra
@@ -35,7 +35,7 @@ heat_operators(fe; kw...) = FEMOperators(fe.M, fe.K, fe.F, [:u => 1:length(fe.F)
         @test sol[u] == sol.u
         @test sol[u[5]] == getindex.(sol.u, 5)
         @test getp(sys, sys.Kop)(prob.p).A == ops.K
-        @test getp(sys, sys.Fop)(prob.p).buffer == ops.load.buffer
+        @test getp(sys, sys.Fop)(prob.p) === ops.load
 
         n == 9 || continue
         # Parameter remake: swap in a reassembled stiffness with the same pattern.
@@ -119,6 +119,7 @@ heat_operators(fe; kw...) = FEMOperators(fe.M, fe.K, fe.F, [:u => 1:length(fe.F)
         @test !any(opsc.differential_vars[rv])
         @test opsc.differential_vars[ru] == [d ∉ cp.prescribed for d in ru]
         prob = numeric_dae_problem(opsc, zeros(length(rv) + length(ru)), (0.0, 1.0))
+        @test all(iszero, prob.du0[setdiff(rv, cp.prescribed)])
         sys = prob.f.sys
         us = SciMLBase.SymbolicIndexingInterface.variable_symbols(sys)
         @test length(us) == 2
@@ -174,22 +175,51 @@ heat_operators(fe; kw...) = FEMOperators(fe.M, fe.K, fe.F, [:u => 1:length(fe.F)
         @test J == 2I
     end
 
-    @testset "symbolic load and numeric residual agree; problems own their load" begin
+    @testset "symbolic load agrees with the numeric residual" begin
         cp = coupled2d(3)
         opsc = FEMOperators(cp.M, cp.K, cp.load!, cp.fields; prescribed = cp.prescribed)
         n = size(opsc.K, 1)
-        p1 = numeric_dae_problem(opsc, zeros(n), (0.0, 1.0))
-        p2 = numeric_dae_problem(opsc, zeros(n), (0.0, 1.0))
-        F1, F2 = getp(p1.f.sys, p1.f.sys.Fop)(p1.p), getp(p2.f.sys, p2.f.sys.Fop)(p2.p)
-        @test F1 !== F2 && F1.buffer !== F2.buffer
+        prob = numeric_dae_problem(opsc, zeros(n), (0.0, 1.0))
+        Fop = getp(prob.f.sys, prob.f.sys.Fop)(prob.p)
         res = zeros(n)
-        p1.f(res, zeros(n), zeros(n), p1.p, 0.3)
-        @test -res == FiniteElementMethod.fem_load(F1, 1:n, 0.3)
-        b1 = FiniteElementMethod.evaluate_load!(F1, 1.0)
-        FiniteElementMethod.evaluate_load!(F2, 2.0)
-        expected = cp.load!(zeros(n), 1.0)
+        prob.f(res, zeros(n), zeros(n), prob.p, 0.3)
+        expected = cp.load!(zeros(n), 0.3)
         expected[cp.prescribed] .= 0
-        @test b1 == expected
+        @test -res == FiniteElementMethod.fem_load(Fop, 1:n, 0.3) == expected
+    end
+
+    @testset "overlapping residual calls on a problem and its remakes" begin
+        # The load callback of the call at t = 1 runs the remakes' residuals at t = 2 in the
+        # middle of its own evaluation, as interleaved ensemble threads would.
+        M1 = sparse([1.0;;])
+        K1 = SparseMatrixCSC(1, 1, [1, 2], [1], [0.0])
+        hook = Ref{Any}(nothing)
+        load = (out, t) -> (out .= t; t == 1 && hook[] !== nothing && hook[](); out)
+        ops1 = FEMOperators(M1, K1, load, [:u => 1:1])
+        prob = numeric_dae_problem(ops1, [0.0], (0.0, 1.0))
+        remakes = [remake(prob; u0 = [0.0]), remake(prob; p = [prob.f.sys.Kop => FEMOp(K1)])]
+        inner = [zeros(1), zeros(1)]
+        hook[] = () -> foreach((pr, r) -> pr.f(r, [0.0], [0.0], pr.p, 2.0), remakes, inner)
+        outer = zeros(1)
+        prob.f(outer, [0.0], [0.0], prob.p, 1.0)
+        @test outer == [-1.0]
+        @test inner == [[-2.0], [-2.0]]
+    end
+
+    @testset "consistent du0 with moving Dirichlet data" begin
+        # u2 = t is prescribed and du1 + du2 = 0, so u = (-t, t) and du0 = (-1, 1).
+        M2 = sparse([1.0 1.0; 1.0 2.0])
+        K2 = copy(M2)
+        nonzeros(K2) .= 0
+        ops2 = FEMOperators(M2, K2, zeros(2), [:u => 1:2]; prescribed = [2], dirichlet_values = (out, t) -> fill!(out, t))
+        prob = numeric_dae_problem(ops2, zeros(2), (0.0, 1.0))
+        @test prob.du0 ≈ [-1.0, 1.0]
+        sol = solve(prob, DImplicitEuler(); dt = 0.1, adaptive = false)
+        @test SciMLBase.successful_retcode(sol)
+        @test sol(0.05) ≈ [-0.05, 0.05] atol = 1.0e-12
+        @test sol.u[end] ≈ [-1.0, 1.0] atol = 1.0e-12
+        # Constant Dirichlet data gives du_d = 0.
+        @test FiniteElementMethod.dirichlet_rates(ops.load, 0.0) == zeros(length(fe.prescribed))
     end
 
     @testset "discretization metadata becomes problem_type" begin
