@@ -18,4 +18,7 @@ using Symbolics: Symbolics, Num
 include("weakform.jl")
 include("kernels.jl")
 
+include("kernelspec.jl")
+include("assembly.jl")
+
 end # module
