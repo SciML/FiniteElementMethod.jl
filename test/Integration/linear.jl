@@ -22,7 +22,7 @@ const DIR = BC("left", U ~ 0.1 * y)
 const DIR_REF = [("left", :u, (X, t) -> 0.1 * X[2])]
 const ROBIN_REF = ("top", 1, 1, X -> PV[2], X -> PV[3])
 
-"Compare the chain's K, M, F and Dirichlet data with the hand-written reference."
+# Compare the chain's K, M, F and Dirichlet data with the hand-written reference.
 function check_linear(setup, c; block, source = (e, X) -> fsrc(X), facets, dirichlet = DIR_REF, p = PV)
     A = assemble_linear(setup.ctx, c.kernels, p)
     Kr, Mr, Fr = linear_reference(setup; block, source, facets)
@@ -35,7 +35,7 @@ function check_linear(setup, c; block, source = (e, X) -> fsrc(X), facets, diric
     return A
 end
 
-const SETUP = fe_setup(Triangle, 1, 10)
+const SETUP = mesh_setup(Triangle, 1, 10)
 
 @testset "(i) constant isotropic diffusion: Dirichlet, Neumann, Robin" begin
     c = scalar_chain(
@@ -53,7 +53,7 @@ end
 
 @testset "(i) on $(celltype) P$(order)" for (celltype, order) in
     ((Triangle, 1), (Triangle, 2), (Quadrilateral, 1), (Quadrilateral, 2))
-    setup = fe_setup(celltype, order, 4)
+    setup = mesh_setup(celltype, order, 4)
     c = scalar_chain(
         Dt(U) ~ Dx(k * Dx(U)) + Dy(k * Dy(U)) + x * y + 1,
         [DIR, BC("right", Dx(U) ~ h, RIGHT), BC("top", k * Dy(U) + α * U ~ β, TOP)]
@@ -67,7 +67,7 @@ end
 @testset "(i) on Line P$(order)" for order in (1, 2)
     @variables u1(..)
     U1 = u1(t, x)
-    setup = fe_setup(Line, order, 8)
+    setup = mesh_setup(Line, order, 8)
     c = chain(
         [Dt(U1) ~ Dx(k * Dx(U1)) + x + 1], [BC("left", U1 ~ 0.1), BC("right", k * Dx(U1) + α * U1 ~ β, [1.0])];
         depvars = [U1], t, sivs = [x], params = PARAMS
@@ -181,10 +181,10 @@ end
     # ∂ₜu = r⁻² ∂ᵣ(r² ∂ᵣu) on r ∈ [0.5, 1.5], ∂ᵣu = 2 at r = 1.5. ProductRule gives the non-symmetric
     # ∫u'v' − ∫(2/r)u'v; Weighted(r²) gives the symmetric ∫r²u'v' with mass r² and facet datum r²·2.
     @variables r
-    @variables ur(..)
+    @variables u_rand(..)
     Dr = Differential(r)
-    Ur = ur(t, r)
-    setup = fe_setup(Line, 1, 16; corners = (Vec(0.5), Vec(1.5)))
+    Ur = u_rand(t, r)
+    setup = mesh_setup(Line, 1, 16; corners = (Vec(0.5), Vec(1.5)))
     eq = Dt(Ur) ~ 1 / r^2 * Dr(r^2 * Dr(Ur))
     bcs = [BC("right", Dr(Ur) ~ 2.0, [1.0])]
     one1 = one(Tensor{2, 1})

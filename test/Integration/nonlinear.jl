@@ -11,11 +11,9 @@ U = u(t, x, y)
 const RIGHT = [1.0, 0.0]
 const P0 = [0.0]
 
-"""
-Steady `0 ~ ∇·(k(u)∇u) + f` for the non-harmonic `u* = shift + sin(πx)cos(πy) + x²y` (red cell: Dauntless's
-`eˣ sin y` has Δu* = 0), Dirichlet `u*` on left, bottom and top, and `∂ₙu = ∂ₓu*` on right, written as the
-user would (not the conormal), so the chain rescales it into a nonlinear facet kernel.
-"""
+# Steady `0 ~ ∇·(k(u)∇u) + f` for the non-harmonic `u* = shift + sin(πx)cos(πy) + x²y` (red cell: Dauntless's
+# `eˣ sin y` has Δu* = 0), Dirichlet `u*` on left, bottom and top, and `∂ₙu = ∂ₓu*` on right, written as the
+# user would (not the conormal), so the chain rescales it into a nonlinear facet kernel.
 function diffusion_problem(ksym, knum; shift = 0.0)
     ustar = shift + sin(pi * x) * cos(pi * y) + x^2 * y
     kstar = ksym(ustar)
@@ -32,20 +30,20 @@ function diffusion_problem(ksym, knum; shift = 0.0)
     return (; c, reference, exact, shift)
 end
 
-"Residual and tangent at a random state, then Newton and nodal errors on `nels`."
-function check_diffusion(prob, nels)
+# Residual and tangent at a random state, then Newton and nodal errors on `sizes`.
+function check_diffusion(prob, sizes)
     (; c, reference, exact, shift) = prob
     @test any(v -> v.kind === :nonlinear, c.wf.volume)
     @test any(f -> f.kind === :nonlinear && f.piece == "right", c.wf.facet)
-    setup = fe_setup(Triangle, 1, 16)
-    ur = shift .+ randn(Xoshiro(1), ndofs(setup.dh))
+    setup = mesh_setup(Triangle, 1, 16)
+    u_rand = shift .+ randn(Xoshiro(1), ndofs(setup.dh))
     R(v) = chain_residual(setup, c.kernels, v, P0)[1]
-    rg, Jg = chain_residual(setup, c.kernels, ur, P0)
-    @test relerr(rg, reference(setup, ur)) ≤ 1.0e-14
-    @test tangent_error(R, Jg, ur) ≤ 1.0e-9
+    rg, Jg = chain_residual(setup, c.kernels, u_rand, P0)
+    @test relerr(rg, reference(setup, u_rand)) ≤ 1.0e-14
+    @test tangent_error(R, Jg, u_rand) ≤ 1.0e-9
     errs, orders = Float64[], Float64[]
-    for nel in nels
-        setup = fe_setup(Triangle, 1, nel)
+    for nel in sizes
+        setup = mesh_setup(Triangle, 1, nel)
         ch = constraints(setup, c.dirichlet, P0)
         uh, history = newton(v -> chain_residual(setup, c.kernels, v, P0), ch, fill(shift, ndofs(setup.dh)))
         @test history[end] < 1.0e-11
@@ -76,15 +74,15 @@ end
         depvars = [U], t, sivs = [x, y]
     )
     @test Set(f.kind for f in c.wf.facet) == Set([:nonlinear, :source])
-    setup = fe_setup(Triangle, 1, 12)
+    setup = mesh_setup(Triangle, 1, 12)
     ref(v) = residual_reference(
         setup, v; flux = (e, Uq, ∇Uq, X) -> ∇Uq[1], source = (e, Uq, ∇Uq, X) -> -1.0,
         facets = [("right", 1, (Uq, X) -> Uq[1]^4 - 1)]
     )
-    ur = 1 .+ 0.3 .* randn(Xoshiro(2), ndofs(setup.dh))
-    rg, Jg = chain_residual(setup, c.kernels, ur, P0)
-    @test relerr(rg, ref(ur)) ≤ 1.0e-14
-    @test tangent_error(v -> chain_residual(setup, c.kernels, v, P0)[1], Jg, ur) ≤ 1.0e-9
+    u_rand = 1 .+ 0.3 .* randn(Xoshiro(2), ndofs(setup.dh))
+    rg, Jg = chain_residual(setup, c.kernels, u_rand, P0)
+    @test relerr(rg, ref(u_rand)) ≤ 1.0e-14
+    @test tangent_error(v -> chain_residual(setup, c.kernels, v, P0)[1], Jg, u_rand) ≤ 1.0e-9
     ch = constraints(setup, c.dirichlet, P0)
     uh, history = newton(v -> chain_residual(setup, c.kernels, v, P0), ch, ones(ndofs(setup.dh)))
     @test history[end] < 1.0e-11
@@ -95,16 +93,16 @@ end
 @testset "nonlinear advection −u·∂ₓu and −∂ₓ(u²), 1D" begin
     @variables v1(..)
     V1 = v1(t, x)
-    setup = fe_setup(Line, 2, 10)
+    setup = mesh_setup(Line, 2, 10)
     for (advection, coefficient) in ((-V1 * Dx(V1), 1.0), (-Dx(V1^2), 2.0))
         c = chain([Differential(t)(V1) ~ Dx(Dx(V1)) + advection], [BC("left", V1 ~ 1.0)]; depvars = [V1], t, sivs = [x])
         @test any(v -> v.kind === :nonlinear, c.wf.volume)
-        ur = randn(Xoshiro(4), ndofs(setup.dh))
-        rg, Jg = chain_residual(setup, c.kernels, ur, P0)
+        u_rand = randn(Xoshiro(4), ndofs(setup.dh))
+        rg, Jg = chain_residual(setup, c.kernels, u_rand, P0)
         ref = residual_reference(
-            setup, ur; flux = (e, Uq, ∇Uq, X) -> ∇Uq[1], source = (e, Uq, ∇Uq, X) -> coefficient * Uq[1] * ∇Uq[1][1]
+            setup, u_rand; flux = (e, Uq, ∇Uq, X) -> ∇Uq[1], source = (e, Uq, ∇Uq, X) -> coefficient * Uq[1] * ∇Uq[1][1]
         )
         @test relerr(rg, ref) ≤ 1.0e-14
-        @test tangent_error(v -> chain_residual(setup, c.kernels, v, P0)[1], Jg, ur) ≤ 1.0e-9
+        @test tangent_error(v -> chain_residual(setup, c.kernels, v, P0)[1], Jg, u_rand) ≤ 1.0e-9
     end
 end

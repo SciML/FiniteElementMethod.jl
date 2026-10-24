@@ -33,7 +33,7 @@ struct EssentialBC
     field::Int
     g::Num
 end
-"Periodic pairing of spec §5.2: `field` on `mirror` equals `field` on `master` translated by `shift`."
+# Periodic pairing of spec §5.2: `field` on `mirror` equals `field` on `master` translated by `shift`.
 struct PeriodicBC
     master::Any
     mirror::Any
@@ -60,7 +60,7 @@ struct StrongFormAnalysis
     periodic::Vector{Any}
 end
 
-"Integration-by-parts policies (spec §5.1, §5.2). `Weighted(w)` multiplies the equation by `w` before splitting."
+# Integration-by-parts policies (spec §5.1, §5.2). `Weighted(w)` multiplies the equation by `w` before splitting.
 struct ProductRule end
 struct Weighted
     w::Any
@@ -146,14 +146,12 @@ end
 
 hasD(ex) = iscall(ex) && (operation(ex) isa Differential || any(hasD, arguments(ex)))
 
-"""
-    to_slots(ex, s, depvars, sivs, t, params; strict = true)
-
-`ex` in slots. With `strict`, unresolved symbols are an error, and so is a registered function without a
-derivative rule whose argument state reaches (spec §5.1 as clarified by PDEBase: opaque functions of the
-coordinates are fine). The strong residual is converted with `strict = false`, since it keeps `∂(opaque(x))`
-of a divergence-form coefficient that the weak form never needs.
-"""
+#     to_slots(ex, s, depvars, sivs, t, params; strict = true)
+#
+# `ex` in slots. With `strict`, unresolved symbols are an error, and so is a registered function without a
+# derivative rule whose argument state reaches (spec §5.1 as clarified by PDEBase: opaque functions of the
+# coordinates are fine). The strong residual is converted with `strict = false`, since it keeps `∂(opaque(x))`
+# of a divergence-form coefficient that the weak form never needs.
 function to_slots(ex, s::StateSlots, depvars, sivs, t, params; strict = true)
     dim = length(sivs)
     rules1 = Dict()

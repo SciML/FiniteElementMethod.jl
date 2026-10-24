@@ -56,7 +56,7 @@ end
 end
 
 @testset "boundary piece with no facet set (assembly driver)" begin
-    setup = fe_setup(Triangle, 1, 4)
+    setup = mesh_setup(Triangle, 1, 4)
     c = run_chain([Dt(U) ~ Dx(Dx(U)) + Dy(Dy(U))], [BC("inlet", Dx(U) ~ 1.0, [-1.0, 0.0])])
     @test_throws "no facet set is given for piece inlet" assemble_linear(setup.ctx, c.kernels, [0.0])
     @test_throws "no facet set named" AssemblyContext(setup.dh, [:u], setup.cv, setup.fv, Dict("inlet" => "inlet"))

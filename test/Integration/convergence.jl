@@ -8,7 +8,7 @@ include(joinpath(@__DIR__, "..", "shared", "references.jl"))
 Dx, Dy = Differential(x), Differential(y)
 const P0 = [0.0]
 
-@testset "variable-coefficient diffusion, $(celltype) P$(order)" for (celltype, order, nels) in (
+@testset "variable-coefficient diffusion, $(celltype) P$(order)" for (celltype, order, sizes) in (
         (Triangle, 1, (8, 16, 32)), (Quadrilateral, 1, (8, 16, 32)),
         (Triangle, 2, (4, 8, 16)), (Quadrilateral, 2, (4, 8, 16)),
         (Line, 1, (8, 16, 32)), (Line, 2, (8, 16, 32)),
@@ -31,8 +31,8 @@ const P0 = [0.0]
     end
     c = chain([eq], bcs; depvars = [U], t, sivs)
     exact = numeric(ustar, sivs)
-    errs = map(nels) do nel
-        setup = fe_setup(celltype, order, nel)
+    errs = map(sizes) do nel
+        setup = mesh_setup(celltype, order, nel)
         l2_error(setup, linear_solve(setup, c.kernels, constraints(setup, c.dirichlet, P0), P0), exact)
     end
     @test minimum(rates(errs)) ≥ order + 1 - 0.15
@@ -50,7 +50,7 @@ end
     c = chain([0 ~ axy * (Dx(Dx(U)) + Dy(Dy(U))) + f], bcs; depvars = [U], t, sivs = [x, y])
     exact = numeric(ustar, [x, y])
     errs = map((8, 16, 32, 64)) do nel
-        setup = fe_setup(Triangle, 1, nel)
+        setup = mesh_setup(Triangle, 1, nel)
         nodal_error(setup, linear_solve(setup, c.kernels, constraints(setup, c.dirichlet, P0), P0), exact)
     end
     @test all(≥(1.9), rates(errs)[(end - 1):end])

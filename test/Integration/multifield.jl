@@ -26,7 +26,7 @@ block_norms(A, setup) = [norm(A[I, J]) for I in field_dofs.(Ref(setup), setup.fi
     ]
     c = chain(eqs, bcs; depvars = [U, Wf], t, sivs = [x, y], params)
     @test [(f.eq, f.kind) for f in c.wf.facet] == [(1, :source), (2, :source)]
-    setup = fe_setup(Triangle, 1, 16; fields = [:u, :w])
+    setup = mesh_setup(Triangle, 1, 16; fields = [:u, :w])
     Dup, Dwp, χp, ap, bp = pv
 
     blocks = Dict(
@@ -47,16 +47,16 @@ block_norms(A, setup) = [norm(A[I, J]) for I in field_dofs.(Ref(setup), setup.fi
     @test block_norms(A.K, setup) ≈ [69.6 20.9; 0.0 1390.0] rtol = 5.0e-3
     @test block_norms(A.M, setup) ≈ [0.131 0.0; 0.0 0.131] rtol = 5.0e-3
 
-    ur = rand(Xoshiro(2), ndofs(setup.dh))
-    rg, Jg = chain_residual(setup, c.kernels, ur, pv)
+    u_rand = rand(Xoshiro(2), ndofs(setup.dh))
+    rg, Jg = chain_residual(setup, c.kernels, u_rand, pv)
     rr = residual_reference(
-        setup, ur;
+        setup, u_rand;
         flux = (e, Uq, ∇Uq, X) -> e == 1 ? Dup * ∇Uq[1] + χp * ∇Uq[2] : Dwp * ∇Uq[2],
         source = (e, Uq, ∇Uq, X) -> e == 1 ? -(ap - Uq[1] + Uq[1]^2 * Uq[2]) : -(bp - Uq[1]^2 * Uq[2]),
         facets = [("right", 1, (Uq, X) -> -0.1), ("right", 2, (Uq, X) -> -0.2Dwp)]
     )
     @test relerr(rg, rr) ≤ 1.0e-14
-    @test tangent_error(v -> chain_residual(setup, c.kernels, v, pv)[1], Jg, ur) ≤ 1.0e-9
+    @test tangent_error(v -> chain_residual(setup, c.kernels, v, pv)[1], Jg, u_rand) ≤ 1.0e-9
 
     ch = constraints(setup, c.dirichlet, pv)
     ch_ref = constraints_reference(setup, [("left", :w, (X, t) -> 0.9)])
@@ -70,14 +70,14 @@ end
     c = chain(eqs, [BC("left", U ~ 0.0), BC("left", Wf ~ 0.0)]; depvars = [U, Wf], t, sivs = [x, y])
     @test count(v -> v.kind === :mass, c.wf.volume) == 1
     @test only(v for v in c.wf.volume if v.kind === :source).timedep
-    setup = fe_setup(Quadrilateral, 1, 8; fields = [:u, :w])
+    setup = mesh_setup(Quadrilateral, 1, 8; fields = [:u, :w])
     blocks = Dict(
         (1, 1) => (; zero_block(2)..., κ = iso(1.0), m = 1.0),
         (1, 2) => (; zero_block(2)..., c = -1.0),
         (2, 1) => zero_block(2),
         (2, 2) => (; zero_block(2)..., κ = iso(1.0)),
     )
-    iw = field_dofs(setup, :w)
+    w_dofs = field_dofs(setup, :w)
     sources = map((0.0, 0.5)) do tv
         A = assemble_linear(setup.ctx, c.kernels, P0; t = tv)
         Kr, Mr, Fr = linear_reference(
@@ -86,7 +86,7 @@ end
         @test relerr(A.K, Kr) ≤ 1.0e-14
         @test relerr(A.M, Mr) ≤ 1.0e-14
         @test relerr(A.F, Fr) ≤ 1.0e-14
-        @test norm(A.M[iw, :]) == 0 && norm(A.M[:, iw]) == 0
+        @test norm(A.M[w_dofs, :]) == 0 && norm(A.M[:, w_dofs]) == 0
         A.F
     end
     @test sources[2] ≈ exp(-0.5) * sources[1] rtol = 1.0e-14
@@ -99,7 +99,7 @@ end
         [Dt(P1) ~ Q1, Dt(Q1) ~ Dx(Dx(P1))], [BC("left", P1 ~ 0.0), BC("right", P1 ~ 0.0)];
         depvars = [P1, Q1], t, sivs = [x]
     )
-    setup = fe_setup(Line, order, 12; fields = [:p, :q])
+    setup = mesh_setup(Line, order, 12; fields = [:p, :q])
     one1 = one(Tensor{2, 1})
     blocks = Dict(
         (1, 1) => (; zero_block(1)..., m = 1.0),

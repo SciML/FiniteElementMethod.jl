@@ -23,14 +23,12 @@ relerr(A, B) = norm(A - B) / max(norm(B), eps())
 const SHAPES = Dict(Line => RefLine, Triangle => RefTriangle, Quadrilateral => RefQuadrilateral)
 const FACETSETS = Dict(1 => ("left", "right"), 2 => ("left", "right", "bottom", "top"))
 
-"""
-    fe_setup(celltype, order, nel; fields = [:u], corners = ())
-
-A Ferrite grid (`generate_grid`, so `[−1, 1]^dim` unless `corners` is given), a `DofHandler` with one Lagrange
-field of `order` per name in `fields`, quadrature of order `2·order` (spec §5.6), and the `AssemblyContext` with
-every facet set of the grid as a piece keyed by its own name.
-"""
-function fe_setup(celltype, order, nel; fields = [:u], corners = ())
+#     mesh_setup(celltype, order, nel; fields = [:u], corners = ())
+#
+# A Ferrite grid (`generate_grid`, so `[−1, 1]^dim` unless `corners` is given), a `DofHandler` with one Lagrange
+# field of `order` per name in `fields`, quadrature of order `2·order` (spec §5.6), and the `AssemblyContext` with
+# every facet set of the grid as a piece keyed by its own name.
+function mesh_setup(celltype, order, nel; fields = [:u], corners = ())
     dim = celltype === Line ? 1 : 2
     grid = generate_grid(celltype, ntuple(_ -> nel, dim), corners...)
     shape = SHAPES[celltype]
@@ -47,18 +45,16 @@ function fe_setup(celltype, order, nel; fields = [:u], corners = ())
     return (; grid, dh, cv, fv, ctx, fields, dim, order)
 end
 
-"""
-    chain(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict())
-
-The whole M1 chain: `analyse` (the seam), `weak_form`, `emit_kernels` and `emit_dirichlet`.
-"""
+#     chain(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict())
+#
+# The whole M1 chain: `analyse` (the seam), `weak_form`, `emit_kernels` and `emit_dirichlet`.
 function chain(eqs, bcs; ibp = Dict(), kwargs...)
     an = analyse(eqs, bcs; ibp, kwargs...)
     wf = weak_form(an)
     return (; an, wf, kernels = emit_kernels(wf), dirichlet = emit_dirichlet(an))
 end
 
-"`ConstraintHandler` from the chain's `emit_dirichlet` output, with each piece read as a facet-set name."
+# `ConstraintHandler` from the chain's `emit_dirichlet` output, with each piece read as a facet-set name.
 function constraints(setup, dirichlet, p; t = 0.0)
     ch = ConstraintHandler(setup.dh)
     for (piece, field, g) in dirichlet
@@ -69,7 +65,7 @@ function constraints(setup, dirichlet, p; t = 0.0)
     return ch
 end
 
-"Hand-written `ConstraintHandler` from `(facet set, field, g(X, t))` triples."
+# Hand-written `ConstraintHandler` from `(facet set, field, g(X, t))` triples.
 function constraints_reference(setup, data; t = 0.0)
     ch = ConstraintHandler(setup.dh)
     for (set, field, g) in data
@@ -80,18 +76,16 @@ function constraints_reference(setup, data; t = 0.0)
     return ch
 end
 
-"Prescribed values as a full vector, the public route of spec §6.4."
+# Prescribed values as a full vector, the public route of spec §6.4.
 dirichlet_values(ch) = apply!(zeros(ndofs(ch.dh)), ch)
 
 zero_block(dim) = (; κ = zero(Tensor{2, dim}), β = zero(Vec{dim}), c = 0.0, m = 0.0)
 
-"""
-    linear_reference(setup; block, source, facets = ())
-
-Hand-written `K`, `M`, `F` for `nf` fields. `block(e, b, X)` returns the named tuple `(; κ, β, c, m)` coupling
-equation `e` to field `b` (start from `zero_block(dim)`); `source(e, X)` is `f`. Each facet entry is
-`(set, eq, field, a, g)` adding `∮ a(X) u_field v` to `K` and `∮ g(X) v` to `F`.
-"""
+#     linear_reference(setup; block, source, facets = ())
+#
+# Hand-written `K`, `M`, `F` for `nf` fields. `block(e, b, X)` returns the named tuple `(; κ, β, c, m)` coupling
+# equation `e` to field `b` (start from `zero_block(dim)`); `source(e, X)` is `f`. Each facet entry is
+# `(set, eq, field, a, g)` adding `∮ a(X) u_field v` to `K` and `∮ g(X) v` to `F`.
 function linear_reference(setup; block, source, facets = ())
     (; dh, cv, fv, grid, fields) = setup
     nf = length(fields)
@@ -147,75 +141,73 @@ function linear_reference(setup; block, source, facets = ())
     return K, M, F
 end
 
-"""
-    residual_reference(setup, u; flux, source, facets = ())
-
-Hand-written steady residual `r_e,i = ∫ flux(e, U, ∇U, X)·∇φ_i + ∫ source(e, U, ∇U, X) φ_i + Σ ∮ g(U, X) φ_i`,
-where `U` and `∇U` are tuples over the fields at the quadrature point and each facet entry is `(set, eq, g)`.
-"""
+#     residual_reference(setup, u; flux, source, facets = ())
+#
+# Hand-written steady residual `r_e,i = ∫ flux(e, U, ∇U, X)·∇φ_i + ∫ source(e, U, ∇U, X) φ_i + Σ ∮ g(U, X) φ_i`,
+# where `U` and `∇U` are tuples over the fields at the quadrature point and each facet entry is `(set, eq, g)`.
 function residual_reference(setup, u; flux, source, facets = ())
     (; dh, cv, fv, grid, fields) = setup
     nf = length(fields)
     ranges = [dof_range(dh, f) for f in fields]
     r = zeros(ndofs(dh))
     nb = getnbasefunctions(cv)
-    re = zeros(nf * nb)
-    state(vals, q, ue) = (
-        ntuple(f -> function_value(vals, q, ue[ranges[f]]), nf),
-        ntuple(f -> function_gradient(vals, q, ue[ranges[f]]), nf),
+    r_cell = zeros(nf * nb)
+    state(vals, q, u_cell) = (
+        ntuple(f -> function_value(vals, q, u_cell[ranges[f]]), nf),
+        ntuple(f -> function_gradient(vals, q, u_cell[ranges[f]]), nf),
     )
     for cell in CellIterator(dh)
         Ferrite.reinit!(cv, cell)
-        fill!(re, 0)
-        ue = u[celldofs(cell)]
+        fill!(r_cell, 0)
+        u_cell = u[celldofs(cell)]
         xs = getcoordinates(cell)
         for q in 1:getnquadpoints(cv), e in 1:nf
             dΩ = getdetJdV(cv, q)
             X = spatial_coordinate(cv, q, xs)
-            Uq, ∇Uq = state(cv, q, ue)
+            Uq, ∇Uq = state(cv, q, u_cell)
             for i in 1:nb
-                re[ranges[e][i]] += (
+                r_cell[ranges[e][i]] += (
                     flux(e, Uq, ∇Uq, X) ⋅ shape_gradient(cv, q, i) +
                         source(e, Uq, ∇Uq, X) * shape_value(cv, q, i)
                 ) * dΩ
             end
         end
-        assemble!(r, celldofs(cell), re)
+        assemble!(r, celldofs(cell), r_cell)
     end
     for (set, e, g) in facets
         for fc in FacetIterator(dh, getfacetset(grid, set))
             Ferrite.reinit!(fv, fc)
-            fill!(re, 0)
-            ue = u[celldofs(fc)]
+            fill!(r_cell, 0)
+            u_cell = u[celldofs(fc)]
             xs = getcoordinates(fc)
             for q in 1:getnquadpoints(fv)
                 X = spatial_coordinate(fv, q, xs)
-                Uq, _ = state(fv, q, ue)
+                Uq, _ = state(fv, q, u_cell)
                 for i in 1:nb
-                    re[ranges[e][i]] += g(Uq, X) * shape_value(fv, q, i) * getdetJdV(fv, q)
+                    r_cell[ranges[e][i]] += g(Uq, X) * shape_value(fv, q, i) * getdetJdV(fv, q)
                 end
             end
-            assemble!(r, celldofs(fc), re)
+            assemble!(r, celldofs(fc), r_cell)
         end
     end
     return r
 end
 
-"Steady residual `K u − F + r(u)` and Jacobian `K + J` of the generated operators."
+# Steady residual `K u − F + r(u)` and Jacobian `K + J` of the generated operators.
 function chain_residual(setup, kernels, u, p; t = 0.0)
     L = assemble_linear(setup.ctx, kernels, p; t)
     N = assemble_nonlinear(setup.ctx, kernels, u, p; t)
     return L.K * u - L.F + N.r, L.K + N.J
 end
 
-"Relative error of the Jacobian `J` of `R` against central differences along a random direction."
+# Relative error of the Jacobian `J` of `R` against central differences along a random direction.
 function tangent_error(R, J, u; ε = 1.0e-6, rng = Xoshiro(3))
     δ = randn(rng, length(u))
     fd = (R(u + ε * δ) - R(u - ε * δ)) / 2ε
     return norm(J * δ - fd) / norm(fd)
 end
 
-"Newton on `residual(u) -> (R, J)` with Dirichlet rows from `ch`; returns `u` and the history of `‖R‖`."
+# Newton on `residual(u) -> (R, J)` with Dirichlet rows from `ch`; returns `u` and the history of `‖R‖`.
 function newton(residual, ch, u; tol = 1.0e-11, maxiter = 25)
     u = copy(u)
     apply!(u, ch)
@@ -230,16 +222,14 @@ function newton(residual, ch, u; tol = 1.0e-11, maxiter = 25)
     return u, history
 end
 
-"""
-Estimated orders `log(r₊/r)/log(r/r₋)` over consecutive Newton residuals above `floor`, the round-off level
-where the order estimate stops being meaningful.
-"""
+# Estimated orders `log(r₊/r)/log(r/r₋)` over consecutive Newton residuals above `floor`, the round-off level
+# where the order estimate stops being meaningful.
 function newton_orders(history; floor = 1.0e-12)
     h = filter(>(floor), history)
     return [log(h[k + 1] / h[k]) / log(h[k] / h[k - 1]) for k in 2:(length(h) - 1)]
 end
 
-"Linear steady solve `K u = F` with Dirichlet rows condensed by `ch`."
+# Linear steady solve `K u = F` with Dirichlet rows condensed by `ch`.
 function linear_solve(setup, kernels, ch, p)
     A = assemble_linear(setup.ctx, kernels, p)
     K, F = copy(A.K), copy(A.F)
@@ -249,13 +239,13 @@ function linear_solve(setup, kernels, ch, p)
     return u
 end
 
-"Maximum nodal error of field `field` of `u` against `exact(X)`."
+# Maximum nodal error of field `field` of `u` against `exact(X)`.
 function nodal_error(setup, u, exact; field = :u)
     nodal = evaluate_at_grid_nodes(setup.dh, u, field)
     return maximum(abs(nodal[i] - exact(node.x)) for (i, node) in enumerate(setup.grid.nodes))
 end
 
-"L2 error of a single-field `u` against `exact(X)` with quadrature of order `2·order + 2`."
+# L2 error of a single-field `u` against `exact(X)` with quadrature of order `2·order + 2`.
 function l2_error(setup, u, exact)
     (; dh, order, grid) = setup
     shape = SHAPES[getcelltype(grid)]
@@ -263,10 +253,10 @@ function l2_error(setup, u, exact)
     err = 0.0
     for cell in CellIterator(dh)
         Ferrite.reinit!(cv, cell)
-        ue = u[celldofs(cell)]
+        u_cell = u[celldofs(cell)]
         xs = getcoordinates(cell)
         for q in 1:getnquadpoints(cv)
-            err += (function_value(cv, q, ue) - exact(spatial_coordinate(cv, q, xs)))^2 * getdetJdV(cv, q)
+            err += (function_value(cv, q, u_cell) - exact(spatial_coordinate(cv, q, xs)))^2 * getdetJdV(cv, q)
         end
     end
     return sqrt(err)
@@ -274,13 +264,13 @@ end
 
 rates(errs) = [log2(errs[k] / errs[k + 1]) for k in 1:(length(errs) - 1)]
 
-"Numeric function of a symbolic expression in the spatial variables `sivs`, called as `f(X)`."
+# Numeric function of a symbolic expression in the spatial variables `sivs`, called as `f(X)`.
 function numeric(ex, sivs)
     f = Symbolics.build_function(ex, sivs...; expression = Val(false))
     return X -> f(ntuple(d -> X[d], length(sivs))...)
 end
 
-"`true` when `f()` throws an `ErrorException` whose message contains `needle`."
+# `true` when `f()` throws an `ErrorException` whose message contains `needle`.
 function raises(f, needle)
     try
         f()
