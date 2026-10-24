@@ -9,3 +9,6 @@ versions = ["lts", "1", "pre"]
 
 [Kernels]
 versions = ["lts", "1", "pre"]
+
+[Assembly]
+versions = ["lts", "1", "pre"]

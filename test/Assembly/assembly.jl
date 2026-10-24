@@ -285,3 +285,31 @@ end
     @test iszero(assemble_nonlinear(ctx, heat_kernels(), u, P_HEAT).r)
     @test iszero(assemble_linear(ctx, ks, Float64[]).K)
 end
+
+# End to end: seam analysis, weak_form and emit_kernels, driven with the driver's slot types
+# (NTuples for U, G, Ud; Vec for W, X, N).
+using FiniteElementMethod: weak_form, emit_kernels
+using Symbolics
+include(joinpath(@__DIR__, "..", "shared", "strongform_seam.jl"))
+using .StrongFormSeam: analyse, BC
+
+@testset "end to end: case (i) weak_form -> emit_kernels -> driver" begin
+    @variables t x y k α β h
+    @variables u(..)
+    Dx, Dy, Dt = Differential(x), Differential(y), Differential(t)
+    U = u(t, x, y)
+    eq = Dt(U) ~ Dx(k * Dx(U)) + Dy(k * Dy(U)) + x * y + 1
+    bcs = [
+        BC("left", U ~ 0.1 * y), BC("right", Dx(U) ~ h, [1.0, 0.0]), BC("top", k * Dy(U) + α * U ~ β, [0.0, 1.0]),
+    ]
+    wf = weak_form(analyse([eq], bcs; depvars = [U], t, sivs = [x, y], params = [k, α, β, h]))
+    ks = emit_kernels(wf)
+    @test length(ks) == 6
+    (; dh, cv, fv) = heat_context(20)   # pieces are keyed by the seam's facet-set names here
+    ctx = AssemblyContext(dh, [:u], cv, fv, Dict("right" => "right", "top" => "top"))
+    A = assemble_linear(ctx, ks, P_HEAT)
+    Kr, Mr, Fr = heat_reference(ctx, P_HEAT)
+    @test relerr(A.K, Kr) ≤ 1.0e-14
+    @test relerr(A.M, Mr) ≤ 1.0e-14
+    @test relerr(A.F, Fr) ≤ 1.0e-14
+end
