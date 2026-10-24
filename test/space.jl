@@ -42,13 +42,13 @@ const P2 = Lagrange{RefTriangle, 2}()
 
     line = rectangle_grid(Line, (5,))
     @test _meshdim(line) == 1
-    @test _facetset_names(line) == [:x_hi, :x_lo]
-    @test only(facet_coordinates(line, only(getfacetset(line, "x_hi"))))[1] == 1.0
+    @test _facetset_names(line) == [:x1_hi, :x1_lo]
+    @test only(facet_coordinates(line, only(getfacetset(line, "x1_hi"))))[1] == 1.0
 
     hex = rectangle_grid(Hexahedron, (2, 2, 2))
     @test _meshdim(hex) == 3
-    @test _facetset_names(hex) == [:x_hi, :x_lo, :y_hi, :y_lo, :z_hi, :z_lo]
-    for (name, axis, value) in ((:x_lo, 1, 0.0), (:y_hi, 2, 1.0), (:z_lo, 3, 0.0))
+    @test _facetset_names(hex) == [:x1_hi, :x1_lo, :x2_hi, :x2_lo, :x3_hi, :x3_lo]
+    for (name, axis, value) in ((:x1_lo, 1, 0.0), (:x2_hi, 2, 1.0), (:x3_lo, 3, 0.0))
         for fi in getfacetset(hex, String(name))
             @test all(x[axis] ≈ value for x in facet_coordinates(hex, fi))
         end
@@ -58,6 +58,15 @@ const P2 = Lagrange{RefTriangle, 2}()
     @test !_contains_point(grid, (1.5, 0.5))
     @test !_contains_point(grid, (NaN, 0.5))
     @test _cellset_names(grid) == Symbol[]
+
+    # The 3 nearest nodes of (4.9, 4.9) all belong to cells other than the one containing it.
+    graded = Grid(
+        Triangle.([(1, 2, 3), (2, 4, 3), (2, 5, 4), (4, 5, 6), (3, 4, 6)]),
+        Node.([Vec(0.0, 0.0), Vec(10.0, 0.0), Vec(0.0, 10.0), Vec(5.1, 5.1), Vec(5.2, 5.1), Vec(5.1, 5.2)])
+    )
+    @test _contains_point(graded, (4.9, 4.9))
+    @test !_contains_point(graded, (6.0, 6.0))
+    @test !_contains_point(graded, (11.0, 1.0))
 end
 
 @testset "FieldWise blocks in declaration order" begin

@@ -11,17 +11,25 @@ function _contains_point(grid::Ferrite.Grid{dim}, x) where {dim}
     length(x) == dim ||
         throw(DimensionMismatch("point has $(length(x)) coordinates but the mesh is $(dim)-dimensional"))
     all(isfinite, x) || return false
-    handler = Ferrite.PointEvalHandler(grid, [Ferrite.Vec{dim, Float64}(Tuple(x))]; warn = false)
+    point = [Ferrite.Vec{dim, Float64}(Tuple(x))]
+    Ferrite.PointEvalHandler(grid, point; warn = false).cells[1] === nothing || return true
+    # The default search only visits cells around the 3 nearest nodes, which misses points on graded
+    # meshes; retry over every node, after a bounding-box test that settles most outside points.
+    all(1:dim) do d
+        lo, hi = extrema(node -> node.x[d], grid.nodes)
+        lo <= x[d] <= hi
+    end || return false
+    handler = Ferrite.PointEvalHandler(grid, point; warn = false, search_nneighbors = Ferrite.getnnodes(grid))
     return handler.cells[1] !== nothing
 end
 
-# Ferrite's `generate_grid` face names, renamed to the DomainSets order of spec §3.2.
+# Ferrite's `generate_grid` face names, renamed to the PDEBase `BoundaryPiece` names of a box.
 const _BOX_FACE_NAMES = Dict(
-    1 => ("left" => "x_lo", "right" => "x_hi"),
+    1 => ("left" => "x1_lo", "right" => "x1_hi"),
     2 => ("bottom" => "bottom", "right" => "right", "top" => "top", "left" => "left"),
     3 => (
-        "left" => "x_lo", "right" => "x_hi", "front" => "y_lo",
-        "back" => "y_hi", "bottom" => "z_lo", "top" => "z_hi",
+        "left" => "x1_lo", "right" => "x1_hi", "front" => "x2_lo",
+        "back" => "x2_hi", "bottom" => "x3_lo", "top" => "x3_hi",
     ),
 )
 
@@ -30,7 +38,7 @@ const _BOX_FACE_NAMES = Dict(
 
 `Ferrite.generate_grid` on the box `[lo, hi]` (default the unit box, not Ferrite's `[-1, 1]^N`) with the
 boundary facet sets named as DomainSets names the box faces: `"bottom"`, `"right"`, `"top"`, `"left"` in 2D
-and `"x_lo"`, `"x_hi"`, `"y_lo"`, … in 1D and 3D. No other facet sets are kept.
+and `"x1_lo"`, `"x1_hi"`, `"x2_lo"`, … in every other dimension. No other facet sets are kept.
 """
 function rectangle_grid(
         celltype, cells::NTuple{N, Int};
