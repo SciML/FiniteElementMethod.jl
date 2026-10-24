@@ -17,7 +17,7 @@ struct TestSlots
     W::Vector{Num}
     hK::Num
 end
-TestSlots(dim::Integer) = TestSlots(Symbolics.variable(:V), Symbolics.variables(:W, 1:dim), Symbolics.variable(:hK))
+TestSlots(dim::Integer) = TestSlots(Symbolics.variable(:V), [Symbolics.variable(:W, i) for i in 1:dim], Symbolics.variable(:hK))
 
 """
     VolumeTerm(eq, kind, integrand, timedep, paramdep)
