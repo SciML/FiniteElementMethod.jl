@@ -156,10 +156,10 @@ function two_field_reference(ctx, p, u)
     for cell in CellIterator(dh)
         Ferrite.reinit!(cv, cell)
         fill!(Ke, 0); fill!(Me, 0); fill!(Fe, 0); fill!(re, 0)
-        ue = u[celldofs(cell)]
+        u_elem = u[celldofs(cell)]
         for q in 1:getnquadpoints(cv)
             dΩ = getdetJdV(cv, q)
-            uq, wq = function_value(cv, q, ue, ru), function_value(cv, q, ue, rw)
+            uq, wq = function_value(cv, q, u_elem, ru), function_value(cv, q, u_elem, rw)
             for i in 1:nb
                 φ, ∇φ = shape_value(cv, q, i), shape_gradient(cv, q, i)
                 Fe[ru[i]] += a * φ * dΩ
@@ -244,12 +244,12 @@ function nonlinear_reference(ctx, u)
     for cell in CellIterator(dh)
         Ferrite.reinit!(cv, cell)
         fill!(re, 0)
-        ue = u[celldofs(cell)]
+        u_elem = u[celldofs(cell)]
         xs = getcoordinates(cell)
         for q in 1:getnquadpoints(cv)
             dΩ = getdetJdV(cv, q)
             X = spatial_coordinate(cv, q, xs)
-            uq, gq = function_value(cv, q, ue), function_gradient(cv, q, ue)
+            uq, gq = function_value(cv, q, u_elem), function_gradient(cv, q, u_elem)
             for i in 1:n
                 re[i] += ((1 + uq^2) * (gq ⋅ shape_gradient(cv, q, i)) - nl_source(X) * shape_value(cv, q, i)) * dΩ
             end
@@ -259,11 +259,11 @@ function nonlinear_reference(ctx, u)
     for fc in FacetIterator(dh, getfacetset(dh.grid, "right"))
         Ferrite.reinit!(fv, fc)
         fill!(re, 0)
-        ue = u[celldofs(fc)]
+        u_elem = u[celldofs(fc)]
         xs = getcoordinates(fc)
         for q in 1:getnquadpoints(fv)
             X = spatial_coordinate(fv, q, xs)
-            uq = function_value(fv, q, ue)
+            uq = function_value(fv, q, u_elem)
             for i in 1:n
                 re[i] -= (1 + uq^2) * nl_flux(X) * shape_value(fv, q, i) * getdetJdV(fv, q)
             end

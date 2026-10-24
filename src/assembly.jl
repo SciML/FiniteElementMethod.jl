@@ -99,7 +99,7 @@ struct NonlinearOp{AJ, U}
     Je::Matrix{Float64}
     re::Vector{Float64}
     u::U
-    ue::Vector{Float64}
+    u_elem::Vector{Float64}
 end
 
 "Volume kernels of `kinds` as a tuple, and one `(facet set, kernel tuple, piece)` group per facet piece."
@@ -214,7 +214,7 @@ function _start_cell!(op::NonlinearOp, dofs)
     fill!(op.Je, 0)
     fill!(op.re, 0)
     for (a, d) in enumerate(dofs)
-        op.ue[a] = op.u[d]
+        op.u_elem[a] = op.u[d]
     end
     return nothing
 end
@@ -224,15 +224,15 @@ _finish_cell!(op::NonlinearOp, dofs) = Ferrite.assemble!(op.aJ, dofs, op.Je, op.
 function _kernel!(op::NonlinearOp, k::KernelSpec, vals, xs, ranges::NTuple{NF}, p, t) where {NF}
     nb = Ferrite.getnbasefunctions(vals)
     rows = ranges[k.eq]
-    ue = op.ue
+    u_elem = op.u_elem
     Ud0 = ntuple(_ -> 0.0, Val(NF))
     for q in 1:Ferrite.getnquadpoints(vals)
         dΩ = Ferrite.getdetJdV(vals, q)
         X = Ferrite.spatial_coordinate(vals, q, xs)
         N = _normal(vals, q, X)
         DIM = length(X)
-        U = ntuple(f -> Ferrite.function_value(vals, q, ue, ranges[f]), Val(NF))
-        grads = ntuple(f -> Ferrite.function_gradient(vals, q, ue, ranges[f]), Val(NF))
+        U = ntuple(f -> Ferrite.function_value(vals, q, u_elem, ranges[f]), Val(NF))
+        grads = ntuple(f -> Ferrite.function_gradient(vals, q, u_elem, ranges[f]), Val(NF))
         G = ntuple(m -> grads[cld(m, DIM)][mod1(m, DIM)], Val(NF * length(X)))
         for i in 1:nb
             V, W = Ferrite.shape_value(vals, q, i), Ferrite.shape_gradient(vals, q, i)
