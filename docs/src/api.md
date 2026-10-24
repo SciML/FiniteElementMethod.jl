@@ -42,3 +42,20 @@ piece_nodes
 normal_flux
 write_vtk
 ```
+
+## Weak form, kernels and assembly
+
+```@docs
+FiniteElementMethod.TestSlots
+FiniteElementMethod.VolumeTerm
+FiniteElementMethod.FacetTerm
+FiniteElementMethod.WeakForm
+FiniteElementMethod.KernelSpec
+FiniteElementMethod.classify
+FiniteElementMethod.weak_form
+FiniteElementMethod.emit_kernels
+FiniteElementMethod.emit_dirichlet
+FiniteElementMethod.AssemblyContext
+FiniteElementMethod.assemble_linear
+FiniteElementMethod.assemble_nonlinear
+```

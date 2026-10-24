@@ -29,6 +29,9 @@ include("numeric_dae.jl")
 include("mesh.jl")
 include("space.jl")
 include("solution.jl")
+include("weakform.jl")
+include("kernels.jl")
+include("assembly.jl")
 
 export FieldInfo, FEMMetadata, piece_nodes, normal_flux, write_vtk
 

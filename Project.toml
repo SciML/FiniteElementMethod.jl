@@ -37,6 +37,7 @@ ModelingToolkit = "11"
 NonlinearSolveFirstOrder = "2.10"
 OrdinaryDiffEqBDF = "2.4"
 PDEBase = "0.1.39"
+Random = "1"
 SciMLBase = "3.58"
 SafeTestsets = "0.1"
 SciMLTesting = "2.4"
@@ -50,9 +51,10 @@ julia = "1.10"
 FerriteGmsh = "4f95f4f8-b27c-4ae5-9a39-ea55e634e36b"
 Gmsh = "705231aa-382f-11e9-3f0c-b7cb4346fdeb"
 OrdinaryDiffEqBDF = "6ad6398a-0878-4a85-9266-38940aa047c8"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SafeTestsets = "1bc83da4-3b8d-516f-aca4-4fe02f6d838f"
 SciMLTesting = "09d9d899-5365-40a9-917a-5f67fddea283"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["FerriteGmsh", "Gmsh", "OrdinaryDiffEqBDF", "SafeTestsets", "SciMLTesting", "Test"]
+test = ["FerriteGmsh", "Gmsh", "OrdinaryDiffEqBDF", "Random", "SafeTestsets", "SciMLTesting", "Test"]
