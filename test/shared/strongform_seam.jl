@@ -71,10 +71,10 @@ isD(ex) = iscall(ex) && operation(ex) isa Differential
 isD(ex, ivs) = isD(ex) && any(iv -> isequal(operation(ex).x, iv), ivs)
 depends(ex, syms) = !isempty(intersect(Set(Symbolics.get_variables(ex)), Set(unwrap.(syms))))
 
-function dorder(ex, sivs)
+function derivative_order(ex, sivs)
     iscall(ex) || return 0
-    isD(ex, sivs) && return operation(ex).order + dorder(arguments(ex)[1], sivs)
-    return maximum((dorder(a, sivs) for a in arguments(ex)); init = 0)
+    isD(ex, sivs) && return operation(ex).order + derivative_order(arguments(ex)[1], sivs)
+    return maximum((derivative_order(a, sivs) for a in arguments(ex)); init = 0)
 end
 function has_time_derivative(ex, t)
     return iscall(ex) &&
@@ -108,9 +108,9 @@ function split_divergence(spatial, sivs)
     R = Any[]
     for term in spatial
         fs = factors(term)
-        idx = findall(f -> isD(f, sivs) && dorder(f, sivs) >= 2, fs)
+        idx = findall(f -> isD(f, sivs) && derivative_order(f, sivs) >= 2, fs)
         if isempty(idx)
-            dorder(term, sivs) >= 2 && error("second derivative not in a divergence-compatible position: $term")
+            derivative_order(term, sivs) >= 2 && error("second derivative not in a divergence-compatible position: $term")
             push!(R, term)
             continue
         end
@@ -120,9 +120,9 @@ function split_divergence(spatial, sivs)
         w = arguments(Dw)[1]
         i = findfirst(iv -> isequal(op.x, iv), sivs)
         inner = op.order == 1 ? w : unwrap(Differential(op.x, op.order - 1)(w))
-        dorder(inner, sivs) >= 2 && error("fourth-or-higher-order operator needs mixed/C¹ formulation: $term")
+        derivative_order(inner, sivs) >= 2 && error("fourth-or-higher-order operator needs mixed/C¹ formulation: $term")
         c = prod(fs[j] for j in eachindex(fs) if j != idx[1]; init = 1)
-        dorder(c, sivs) >= 1 && error("coefficient depends on ∇u, product rule would give 2nd derivatives: $term")
+        derivative_order(c, sivs) >= 1 && error("coefficient depends on ∇u, product rule would give 2nd derivatives: $term")
         G[i] += c * inner
         push!(R, -expand_derivatives(Differential(op.x)(c)) * inner)
     end
