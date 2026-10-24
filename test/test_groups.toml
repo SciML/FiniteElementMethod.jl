@@ -6,3 +6,6 @@ versions = ["lts", "1"]
 
 [Space]
 versions = ["lts", "1", "pre"]
+
+[DAE]
+versions = ["lts", "1", "pre"]
