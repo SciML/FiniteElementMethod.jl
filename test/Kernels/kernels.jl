@@ -1,12 +1,15 @@
 # Stage f (spec §5.1, §5.2): kernels evaluate their symbolic integrands, tangents match central
 # differences, every KernelSpec is concrete, and calls with the driver's slot types do not allocate.
-using FiniteElementMethod: weak_form, emit_kernels, emit_dirichlet
+using FiniteElementMethod: weak_form, emit_kernels, emit_dirichlet, WeakForm, VolumeTerm, FacetTerm, TestSlots
 using Ferrite: Vec
 using Symbolics
 using Test
 
 include(joinpath(@__DIR__, "..", "shared", "strongform_seam.jl"))
-using .StrongFormSeam: analyse, BC
+using .StrongFormSeam: analyse, BC, StateSlots
+
+opaque(z) = 1 + z^2
+@register_symbolic opaque(z)
 
 @variables t x y k α β h Du Dw χ a b
 @variables u(..) w(..)
@@ -103,4 +106,20 @@ end
     X = Vec(0.3, 0.7)
     @test g(X, 0.0, [2.0, 3.0, 0.5, 1.5]) ≈ 0.1 * X[2]
     @test allocations(g, (X, 0.0, [2.0, 3.0, 0.5, 1.5])) == 0
+    X1 = an.slots.X[1]
+    @test_throws "register the derivative for opaque" emit_dirichlet((; an.slots, essential = [(; piece = "left", field = 1, g = Differential(X1)(opaque(X1)))]))
+end
+
+@testset "a function without a derivative rule is an error" begin
+    # Built directly: the seam rejects this input before it reaches emit_kernels.
+    s = StateSlots(1, 2, 1)
+    test = TestSlots(2)
+    term = VolumeTerm(1, :nonlinear, -s.G[1] * test.W[1] * opaque(s.U[1]), false, false)
+    wf = WeakForm((; slots = s), test, [term], FacetTerm[])
+    @test_throws "register the derivative for opaque" emit_kernels(wf)
+    # An unevaluated Differential already in the integrand would also compile to 0.
+    stray = VolumeTerm(1, :bilinear, Differential(s.U[1])(opaque(s.U[1])) * test.V, false, false)
+    @test_throws "register the derivative for opaque" emit_kernels(WeakForm((; slots = s), test, [stray], FacetTerm[]))
+    compound = VolumeTerm(1, :bilinear, Differential(s.U[1])(s.U[1] * opaque(s.U[1])) * test.V, false, false)
+    @test_throws "register the derivative for opaque" emit_kernels(WeakForm((; slots = s), test, [compound], FacetTerm[]))
 end
