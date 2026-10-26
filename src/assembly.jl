@@ -8,7 +8,8 @@
 
 What the driver needs to assemble kernels: the `DofHandler`, its field names in equation/field index order, the
 `CellValues` and `FacetValues` shared by all fields, and `pieces`, a map from boundary piece to its facet set,
-given as a facet-set name of the grid or as a set of `FacetIndex`.
+given as a facet-set name of the grid or as a set of `FacetIndex`. Each facet set is copied at construction, so
+changing the caller's set or the grid's facet sets afterwards does not affect the context; build a new one instead.
 """
 struct AssemblyContext{NF, DH <: Ferrite.DofHandler, CV, FV}
     dh::DH
@@ -28,7 +29,7 @@ function AssemblyContext(dh::Ferrite.DofHandler, fields, cv, fv, pieces = Dict()
     end
     facetsets = Dict{Any, Any}()
     for (piece, set) in pieces
-        facetsets[piece] = set isa AbstractString ? _named_facetset(dh.grid, piece, set) : set
+        facetsets[piece] = Set{Ferrite.FacetIndex}(set isa AbstractString ? _named_facetset(dh.grid, piece, set) : set)
     end
     ncells = Ferrite.getncells(dh.grid)
     facetcells = BitSet(fi[1] for set in values(facetsets) for fi in set if 1 ≤ fi[1] ≤ ncells)
