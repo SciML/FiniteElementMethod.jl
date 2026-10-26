@@ -27,6 +27,10 @@ end
 Base.show(io::IO, ::FEMLoad) = print(io, "FEMLoad")
 
 function FEMLoad(load, prescribed, values, n)
+    load isa AbstractVector && length(load) != n &&
+        throw(DimensionMismatch("the load vector has length $(length(load)), the operators have $n rows"))
+    values isa AbstractVector && length(values) != length(prescribed) &&
+        throw(DimensionMismatch("dirichlet_values has length $(length(values)) for $(length(prescribed)) prescribed dofs"))
     timedep = !(load isa AbstractVector) || !(values isa Union{Number, AbstractVector})
     return FEMLoad(load, prescribed, values, timedep, n)
 end
@@ -202,10 +206,18 @@ end
     consistent_du0(ops::FEMOperators, u0, t0)
 
 `du0` with `du_d = g'(t0)` on prescribed dofs, zero on the other algebraic rows, and
-`M_ff du_f = (F(t0) - K u0 - M_fd g'(t0))_f` on the differential rows.
+`M_ff du_f = (F(t0) - K u0 - M_fd g'(t0))_f` on the differential rows. Throws an
+`ArgumentError` when a non-prescribed algebraic variable has a nonzero column in `M`: its
+`du` is then not zero, cannot be found without index reduction, and must be passed as `du0`.
 """
 function consistent_du0(ops::FEMOperators, u0, t0)
     dd = ops.differential_vars
+    isprescribed = falses(length(u0))
+    isprescribed[ops.prescribed] .= true
+    for j in axes(ops.M, 2)
+        dd[j] || isprescribed[j] || all(iszero, view(nonzeros(ops.M), nzrange(ops.M, j))) ||
+            throw(ArgumentError("variable $j is algebraic (its row of M is zero) but its column of M is not, so a consistent du0 cannot be computed; pass du0 explicitly"))
+    end
     du0 = zeros(promote_type(eltype(u0), eltype(ops.M)), length(u0))
     du0[ops.prescribed] = dirichlet_rates(ops.load, t0)
     any(dd) || return du0
