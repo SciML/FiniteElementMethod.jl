@@ -1,5 +1,6 @@
-# Every M2 error path of the front end, with its message. Each is raised by `discretize` (which is
-# `DAEProblem(pdesys, disc)`), before any solver runs.
+# Every M2 error path of the front end. Each is raised by `discretize` (which is
+# `DAEProblem(pdesys, disc)`) before any solver runs. Documented user-facing messages are matched
+# exactly; errors raised inside PDEBase's analysis are matched by substring.
 using Test
 using FiniteElementMethod: FiniteElementMethod, rectangle_grid
 using Ferrite: Ferrite, Triangle, Quadrilateral, Grid, Node, Vec, addfacetset!
@@ -32,7 +33,9 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         Ω = box()
         @test occursin("valid names are", errmsg(() -> boundarypiece(Ω, :nosuch)))
         Γ = PDEBase.BoundaryPiece(Ω, :nosuch, nothing)
-        @test occursin("unknown facet set :nosuch", errmsg(() -> lower([heat], [u(t, Γ) ~ 0, ic], Ω)))
+        @test_throws ArgumentError("unknown facet set :nosuch; the mesh has facet sets :bottom, :left, :right, :top") lower(
+            [heat], [u(t, Γ) ~ 0, ic], Ω
+        )
     end
 
     @testset "overlapping pieces" begin
@@ -40,21 +43,26 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         addfacetset!(grid, "inlet", x -> x[1] ≈ 0)
         Ω = MeshDomain(grid)
         Γ, Γl = boundarypiece.(Ω, (:inlet, :left))
-        msg = errmsg(() -> lower([heat], [u(t, Γ) ~ 0, u(t, Γl) ~ 1, ic], Ω))
-        @test occursin("share 2 facets", msg) && occursin("boundary pieces must be disjoint", msg)
+        @test_throws ArgumentError(
+            "facet sets :inlet and :left share 2 facets (first: cell 1, local facet 3); boundary pieces must be disjoint"
+        ) lower([heat], [u(t, Γ) ~ 0, u(t, Γl) ~ 1, ic], Ω)
     end
 
     @testset "trace without its time argument" begin
         Ω = box()
         Γ = first(sides(Ω))
-        @test occursin("trace is missing the time argument; write `u(t, Γ_left)`", errmsg(() -> lower([heat], [u(Γ) ~ 0, ic], Ω)))
+        @test_throws ArgumentError("u(Γ_left): trace is missing the time argument; write `u(t, Γ_left)`") lower(
+            [heat], [u(Γ) ~ 0, ic], Ω
+        )
     end
 
     @testset "normal derivative on another piece" begin
         Ω = box()
         Γl, Γr = sides(Ω)
-        msg = errmsg(() -> lower([heat], [NormalDerivative(Γl)(u(t, Γr)) ~ 0, ic], Ω))
-        @test occursin("which is not on Γ_left", msg)
+        @test_throws ArgumentError(
+            "Dn_left(u(t, Γ_right)) takes the normal derivative on Γ_left of an expression located at " *
+                "Any[PDEBase.Piece(Γ_right)], which is not on Γ_left; write the trace on the operator's piece"
+        ) lower([heat], [NormalDerivative(Γl)(u(t, Γr)) ~ 0, ic], Ω)
     end
 
     @testset "endpoint form on a mesh" begin
@@ -68,22 +76,38 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
     @testset "periodic conditions" begin
         Ω = box()
         Γl, Γr = sides(Ω)
-        msg = errmsg(() -> lower([heat], [u(t, Γl) ~ u(t, Γr), ic], Ω))
-        @test startswith(msg, "ArgumentError: periodic conditions need milestone M4 (Ferrite PeriodicDirichlet)")
+        @test_throws ArgumentError(
+            "periodic conditions need milestone M4 (Ferrite PeriodicDirichlet): u(t, Γ_left) ~ u(t, Γ_right)"
+        ) lower([heat], [u(t, Γl) ~ u(t, Γr), ic], Ω)
     end
 
     @testset "reserved options" begin
         Ω = box()
-        @test occursin("codegen = :mtk lands in M3", errmsg(() -> FEMDiscretization(Ω, t; codegen = :mtk)))
-        @test occursin("dirichlet = :eliminate lands in M4", errmsg(() -> FEMDiscretization(Ω, t; dirichlet = :eliminate)))
+        @test_throws ArgumentError("codegen = :mtk lands in M3; use the default codegen = :numeric") FEMDiscretization(
+            Ω, t; codegen = :mtk
+        )
+        @test_throws ArgumentError("dirichlet = :eliminate lands in M4; use the default dirichlet = :algebraic") FEMDiscretization(
+            Ω, t; dirichlet = :eliminate
+        )
+        @named steady = PDESystem(
+            [Dx(Dx(u(x, y))) + Dy(Dy(u(x, y))) ~ 0], [u(Γ) ~ 0 for Γ in sides(Ω)], [(x, y) ∈ Ω], [x, y], [u(x, y)], []
+        )
+        @test_throws ArgumentError("steady problems land in M4; give FEMDiscretization a time variable") discretize(
+            steady, FEMDiscretization(Ω)
+        )
     end
 
     @testset "nonlinear and time-dependent operators" begin
         Ω = box()
         nl = Dt(u(t, x, y)) ~ Dx((1 + u(t, x, y)^2) * Dx(u(t, x, y))) + Dy(Dy(u(t, x, y)))
-        @test occursin("nonlinear terms land in M3", errmsg(() -> lower([nl], [dirichlet(Ω); ic], Ω)))
+        @test_throws ArgumentError("nonlinear terms land in M3: equation 1 has the nonlinear term G₁*(U₁^2)*W₁") lower(
+            [nl], [dirichlet(Ω); ic], Ω
+        )
         td = Dt(u(t, x, y)) ~ Dx((1 + t) * Dx(u(t, x, y))) + Dy((1 + t) * Dy(u(t, x, y)))
-        @test occursin("time-dependent coefficients in the mass or stiffness operator land in M3", errmsg(() -> lower([td], [dirichlet(Ω); ic], Ω)))
+        @test_throws ArgumentError(
+            "time-dependent coefficients in the mass or stiffness operator land in M3: equation 1 has " *
+                "G₁*W₁ + G₂*W₂ + G₁*T*W₁ + G₂*T*W₂"
+        ) lower([td], [dirichlet(Ω); ic], Ω)
     end
 
     @testset "non-finite initial condition names the node" begin
@@ -105,14 +129,17 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
     @testset "no MeshDomain" begin
         Ω = box()
         domains = [(x, y) ∈ Rectangle([0.0, 0.0], [1.0, 1.0]), t ∈ Interval(0.0, 1.0)]
-        msg = errmsg(() -> lower([heat], [ic], Ω; domains))
-        @test occursin("has no spatial domain of the form (x, y) ∈ MeshDomain(mesh)", msg)
+        @test_throws ArgumentError(
+            "the PDESystem has no spatial domain of the form (x, y) ∈ MeshDomain(mesh); FEMDiscretization discretizes on a mesh"
+        ) lower([heat], [ic], Ω; domains)
     end
 
     @testset "time must be an interval" begin
         Ω = box()
         domains = [(x, y) ∈ Ω, t ∈ UnionDomain(Interval(0.0, 1.0), Interval(2.0, 3.0))]
-        @test occursin("time t must be paired with an interval", errmsg(() -> lower([heat], [ic], Ω; domains)))
+        @test_throws ArgumentError("time t must be paired with an interval, as in t ∈ Interval(0.0, 1.0)") lower(
+            [heat], [ic], Ω; domains
+        )
     end
 
     @testset "time must be the first argument" begin
@@ -135,7 +162,9 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         nodes = [Node(Vec(0.0, 0.0)), Node(Vec(1.0, 0.0)), Node(Vec(0.0, 1.0)), Node(Vec(2.0, 0.0)), Node(Vec(1.0, 1.0))]
         grid = Grid(Ferrite.AbstractCell[Triangle((1, 2, 3)), Quadrilateral((2, 4, 5, 3))], nodes)
         Ω = MeshDomain(grid)
-        @test occursin("mixed cell types, so every dependent variable needs a space", errmsg(() -> lower([heat], [ic], Ω)))
+        @test_throws ArgumentError(
+            "the mesh has mixed cell types, so every dependent variable needs a space in `spaces`; u(t, x, y) has none"
+        ) lower([heat], [ic], Ω)
     end
 
     @testset "opaque coefficient functions" begin
