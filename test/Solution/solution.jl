@@ -9,8 +9,8 @@ const P2 = Lagrange{RefTriangle, 2}()
 
 direct_eval(grid, dh, U, field, px, py) = evaluate_at_points(PointEvalHandler(grid, [Vec(px, py)]), dh, U, field)[1]
 
-# Checks shared by the square and the L-shape: the M2 exit criteria of spec section 7.8.
-function exit_criteria(grid, sol, syms)
+# Wrapper checks shared by the square, the L-shape and the two-field case.
+function wrapper_checks(grid, sol, syms)
     (; t, x, y, u, Γ, dh) = syms
     @test sol isa SciMLBase.PDETimeSeriesSolution
     @test sol.disc_data isa FEMMetadata
@@ -20,11 +20,12 @@ function exit_criteria(grid, sol, syms)
     for k in (1, nt ÷ 2, nt), (px, py) in ((0.2, 0.3), (0.45, 0.8), (0.9, 0.1))
         @test abs(sol(sol.t[k], px, py; dv = u(t, x, y)) - direct_eval(grid, dh, sol.original_sol.u[k], :u, px, py)) <= 1.0e-14
     end
-    # The wrapper reads the inlet dofs exactly; the solver holds them at sin(t) only to its tolerance.
-    inlet_dofs = intersect(findall(.!sol.prob.differential_vars), dof_range_global(dh, :u))
-    inlet_raw = permutedims(reduce(hcat, [sort(U[inlet_dofs]) for U in sol.original_sol.u]))
-    @test sort(sol[u(t, Γ)]; dims = 2) == inlet_raw
-    @test maximum(abs, sol[u(t, Γ)] .- sin.(sol.t)) <= 1.0e-3
+    @testset "wrapper trace equals the raw inlet dofs" begin
+        inlet_dofs = intersect(findall(.!sol.prob.differential_vars), dof_range_global(dh, :u))
+        inlet_raw = permutedims(reduce(hcat, [sort(U[inlet_dofs]) for U in sol.original_sol.u]))
+        @test sort(sol[u(t, Γ)]; dims = 2) == inlet_raw
+        @test maximum(abs, sol[u(t, Γ)] .- sin.(sol.t)) <= 1.0e-3
+    end
     @test isnan(sol(sol.t[end], 0.75, 0.75; dv = u(t, x, y))) == !inside(grid, 0.75, 0.75)
     @test_throws DomainError sol(sol.t[end] + 1, 0.2, 0.3; dv = u(t, x, y))
     @test_throws DomainError sol(sol.t[end] + 1, Γ; dv = u(t, x, y))
@@ -37,13 +38,15 @@ function exit_criteria(grid, sol, syms)
     return nothing
 end
 
+_stack_rows(rows) = permutedims(reduce(hcat, rows))
+
 inside(grid, px, py) = PointEvalHandler(grid, [Vec(px, py)]; warn = false).cells[1] !== nothing
 
 @testset "Unit square, P1" begin
     grid = with_inlet(square_grid(8))
     prob, syms = heat_problem(grid, (; u = P1))
     sol = solve(prob, DFBDF())
-    exit_criteria(grid, sol, syms)
+    wrapper_checks(grid, sol, syms)
     (; t, x, y, u, unknowns, Γ, dh) = syms
     U = u(t, x, y)
     nt, nv = length(sol.t), getnnodes(grid)
@@ -95,6 +98,12 @@ inside(grid, px, py) = PointEvalHandler(grid, [Vec(px, py)]; warn = false).cells
     fd = (sol(1.0, 0.21 + h, 0.33; dv = U) - sol(1.0, 0.21 - h, 0.33; dv = U)) / 2h
     @test gx ≈ fd rtol = 1.0e-6
     @test size(sol[Dx(U)]) == (nt, nv)
+    field = only(sol.disc_data.fields)
+    projector = FiniteElementMethod._gradient_projector(sol.disc_data, field)
+    @test sol[Dx(U)] == _stack_rows([FiniteElementMethod._nodal_gradient(sol.disc_data, field, 1, V, projector) for V in sol.original_sol.u])
+    sol[Dx(U)]
+    build_bytes = @allocated FiniteElementMethod._gradient_projector(sol.disc_data, field)
+    @test @allocated(sol[Dx(U)]) < 3 * build_bytes + nt * @allocated(FiniteElementMethod._nodal_gradient(sol.disc_data, field, 1, sol.original_sol.u[1], projector))
     @test size(sol[Dy(U)]) == (nt, nv)
     err = try
         sol[Dy(Dy(U))]
@@ -130,7 +139,7 @@ end
     prob, syms = heat_problem(grid, (; u = P1))
     sol = solve(prob, DFBDF())
     @test !inside(grid, 0.75, 0.75)
-    exit_criteria(grid, sol, syms)
+    wrapper_checks(grid, sol, syms)
     (; t, x, y, u) = syms
     @test length(sol[x]) == getnnodes(grid)
     @test all(isfinite, sol[u(t, x, y)])
@@ -142,7 +151,7 @@ end
     grid = with_inlet(square_grid(6))
     prob, syms = heat_problem(grid, (; u = P1, w = P2))
     sol = solve(prob, DFBDF())
-    exit_criteria(grid, sol, syms)
+    wrapper_checks(grid, sol, syms)
     (; t, x, y, u, w, unknowns, Γ, dh) = syms
     nt, nv = length(sol.t), getnnodes(grid)
     @test length(unknowns[2]) > nv

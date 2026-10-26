@@ -236,15 +236,21 @@ end
 
 _order(::Ferrite.Interpolation{<:Any, p}) where {p} = p
 
-# L2 projection of the cellwise gradient component `d` onto the field's own space, at the vertices.
-# Order 2p integrates both the mass matrix and the (p - 1)-degree gradient against p-degree tests.
-function _nodal_gradient(md, f::FieldInfo, d, U)
-    dh = _dh(md)
-    grid = _grid(md)
-    r = Ferrite.dof_range(dh, f.name)
+# L2 projection of the cellwise gradient onto the field's own space, assembled and factorised once
+# per field. Order 2p integrates both the mass matrix and the (p - 1)-degree gradient against
+# p-degree tests.
+function _gradient_projector(md, f::FieldInfo)
     qr = Ferrite.QuadratureRule{Ferrite.getrefshape(f.ip)}(2 * _order(f.ip))
-    cv = Ferrite.CellValues(qr, f.ip)
-    qpvals = [zeros(Ferrite.getnquadpoints(cv)) for _ in 1:Ferrite.getncells(grid)]
+    proj = Ferrite.L2Projector(f.ip, _grid(md); qr_lhs = qr)
+    return (; proj, qr, cv = Ferrite.CellValues(qr, f.ip))
+end
+
+# Gradient component `d` of field `f` for dof vector `U`, projected and read at the vertices.
+function _nodal_gradient(md, f::FieldInfo, d, U, projector)
+    (; proj, qr, cv) = projector
+    dh = _dh(md)
+    r = Ferrite.dof_range(dh, f.name)
+    qpvals = [zeros(Ferrite.getnquadpoints(cv)) for _ in 1:Ferrite.getncells(_grid(md))]
     for cell in Ferrite.CellIterator(dh)
         Ferrite.reinit!(cv, cell)
         u_cell = U[Ferrite.celldofs(cell)[r]]
@@ -252,7 +258,6 @@ function _nodal_gradient(md, f::FieldInfo, d, U)
             qpvals[Ferrite.cellid(cell)][q] = Ferrite.function_gradient(cv, q, u_cell)[d]
         end
     end
-    proj = Ferrite.L2Projector(f.ip, grid; qr_lhs = qr)
     return Ferrite.evaluate_at_grid_nodes(proj, Ferrite.project(proj, qpvals, qr))
 end
 
@@ -288,7 +293,10 @@ function Base.getindex(A::FEMSolution, sym::Num)
     i === nothing || return A.ivdomain[i]
     haskey(A.u, sym) && return A.u[sym]
     g = _gradkey(md, s)
-    g === nothing || return _stack(A, [_nodal_gradient(md, g..., U) for U in _states(A)])
+    if g !== nothing
+        projector = _gradient_projector(md, g[1])
+        return _stack(A, [_nodal_gradient(md, g..., U, projector) for U in _states(A)])
+    end
     f = _fieldinfo(md, s)
     f === nothing && _key_error(A, sym)
     Γ = _piece_arg(s)

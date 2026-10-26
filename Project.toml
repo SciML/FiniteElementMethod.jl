@@ -21,7 +21,7 @@ FiniteElementMethodFerriteGmshExt = "FerriteGmsh"
 
 [compat]
 DomainSets = "0.7, 0.8"
-Ferrite = "1"
+Ferrite = "1.7"
 FerriteGmsh = "1"
 LinearAlgebra = "1"
 ModelingToolkit = "11"
