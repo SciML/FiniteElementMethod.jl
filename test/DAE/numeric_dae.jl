@@ -154,6 +154,18 @@ heat_operators(fe; kw...) = FEMOperators(fe.M, fe.K, fe.F, [:u => 1:length(fe.F)
         Kz = sparse([1, 2, 3], [2, 2, 3], [1.0, 1.0, 1.0], 3, 3)
         @test_throws "no diagonal entry for prescribed dof 1" FEMOperators(copy(Kz), Kz, zeros(3), [:u => 1:3]; prescribed = [1])
         @test_throws DimensionMismatch numeric_dae_problem(ops, zeros(N + 1), (0.0, 1.0))
+        @test_throws "load vector has length 2" FEMOperators(Md, copy(Md), [5.0, 5.0], [:u => 1:3])
+        @test_throws "load vector has length 4" FEMOperators(Md, copy(Md), zeros(4), [:u => 1:3])
+        @test_throws "dirichlet_values has length 2" FEMOperators(Md, copy(Md), zeros(3), [:u => 1:3]; prescribed = [1], dirichlet_values = [0.0, 0.0])
+        # A zero row of M with a nonzero column (non-symmetric pattern, outside Galerkin):
+        # du of that algebraic variable is not zero and needs index reduction, so du0 is required.
+        pat = SparseMatrixCSC(2, 2, [1, 3, 5], [1, 2, 1, 2], [1.0, 0.0, 1.0, 0.0])
+        Kp = SparseMatrixCSC(2, 2, [1, 3, 5], [1, 2, 1, 2], [0.0, 0.0, 0.0, 1.0])
+        opsp = FEMOperators(pat, Kp, (out, t) -> (out .= (0.0, t); out), [:u => 1:2])
+        @test_throws "pass du0 explicitly" numeric_dae_problem(opsp, zeros(2), (0.0, 1.0))
+        probp = numeric_dae_problem(opsp, zeros(2), (0.0, 1.0); du0 = [-1.0, 1.0])
+        solp = solve(probp, DFBDF(); tol...)
+        @test solp.u[end] ≈ [-1.0, 1.0] atol = 1.0e-8
     end
 
     @testset "remade operator with a different pattern is rejected" begin
