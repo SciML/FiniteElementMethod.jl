@@ -265,7 +265,15 @@ function _nodal_gradient(md, f::FieldInfo, d, U, projector)
             qpvals[Ferrite.cellid(cell)][q] = Ferrite.function_gradient(cv, q, u_cell)[d]
         end
     end
-    return Ferrite.evaluate_at_grid_nodes(proj, Ferrite.project(proj, qpvals, qr))
+    return _project_at_nodes(proj, qpvals, qr)
+end
+
+_project_at_nodes(proj, qpvals, qr) = Ferrite.evaluate_at_grid_nodes(proj, Ferrite.project(proj, qpvals, qr))
+# Ferrite's projection assembles into real buffers, so complex data is projected part by part.
+function _project_at_nodes(proj, qpvals::Vector{<:Vector{<:Complex}}, qr)
+    re = _project_at_nodes(proj, [real.(v) for v in qpvals], qr)
+    im = _project_at_nodes(proj, [imag.(v) for v in qpvals], qr)
+    return complex.(re, im)
 end
 
 # `Differential(x)(u(t, x, y))` gives `(field, d)` with `x == x̄[d]`; anything else `nothing`.

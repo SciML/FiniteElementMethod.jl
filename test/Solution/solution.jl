@@ -327,3 +327,29 @@ end
     vals = sol([0.0, 1.0], [0.3, 2.0], 0.6; dv = u(t, x, y))
     @test eltype(vals) == ComplexF64 && vals[:, 1] ≈ [c, 2c] && all(isnan, vals[:, 2])
 end
+
+@testset "Complex gradients" begin
+    grid = with_inlet(square_grid(3))
+    a, b = 1.0 + 2.0im, 3.0 - 1.0im
+    for (ip, g, dgx, dgy) in (
+            (P1, p -> a * p[1] + b * p[2], p -> a, p -> b),
+            (P2, p -> a * p[1]^2 + b * p[1] * p[2], p -> 2a * p[1] + b * p[2], p -> b * p[1]),
+        )
+        dh = DofHandler(grid)
+        add!(dh, :u, ip)
+        close!(dh)
+        U = zeros(ComplexF64, ndofs(dh))
+        apply_analytical!(U, dh, :u, g)
+        sol, syms = steady_from_dofs(dh, (; u = ip), U)
+        (; x, y, u, Γ) = syms
+        nodes = Vec.(sol[x], sol[y])
+        @test sol[u(x, y)] ≈ g.(nodes) atol = 1.0e-12
+        @test sol[Differential(x)(u(x, y))] ≈ dgx.(nodes) atol = 1.0e-12
+        @test sol[Differential(y)(u(x, y))] ≈ dgy.(nodes) atol = 1.0e-12
+        p = Vec(0.3, 0.6)
+        @test sol(p[1], p[2]; dv = Differential(x)(u(x, y))) ≈ dgx(p) atol = 1.0e-12
+        @test sol(p[1], p[2]; dv = Differential(y)(u(x, y))) ≈ dgy(p) atol = 1.0e-12
+        # Inlet facets span y ∈ [0, 1/3], [1/3, 2/3], [2/3, 1]; -∂u/∂x is linear in y, so the facet mean is its midpoint value.
+        @test normal_flux(sol, u(x, y), Γ) ≈ [-dgx(Vec(0.0, ym)) for ym in (1 / 6, 1 / 2, 5 / 6)] atol = 1.0e-12
+    end
+end
