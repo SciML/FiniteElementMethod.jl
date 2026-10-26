@@ -21,3 +21,6 @@ versions = ["lts", "1", "pre"]
 
 [Assembly]
 versions = ["lts", "1", "pre"]
+
+[Frontend]
+versions = ["lts", "1", "pre"]

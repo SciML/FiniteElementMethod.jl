@@ -1,0 +1,191 @@
+# End-to-end tests, one per M2 code path: PDESystem -> DAEProblem -> solve, checked against an exact
+# solution. Each manufactured solution lies in the finite-element space and the quadrature is exact
+# for its data, so the nodal error is at the level of the time-integration tolerance.
+using Test
+using FiniteElementMethod: rectangle_grid
+using Ferrite: Triangle, Quadrilateral, Line
+
+include(joinpath(@__DIR__, "..", "shared", "frontend.jl"))
+include(joinpath(@__DIR__, "..", "shared", "lshape.jl"))
+
+using ModelingToolkit: t_nounits as t
+using Symbolics: Symbolics, @register_symbolic
+
+smooth_coef(x) = 1 + x^2
+@register_symbolic smooth_coef(x)
+Symbolics.@register_derivative smooth_coef(x) 1 2x
+
+@variables x y u(..) v(..)
+const Dt, Dx, Dy = Differential(t), Differential(x), Differential(y)
+const tol = 1.0e-8
+
+# u* = (1 + x + 2y)(1 + t) solves u_t = Δu + (1 + x + 2y) and is in every P1 and Q1 space.
+uexact(t_, x_, y_) = (1 + x_ + 2y_) * (1 + t_)
+heat_eq = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + (1 + x + 2y)
+ic = u(0, x, y) ~ 1 + x + 2y
+
+pieces(Ω) = boundarypiece.(Ref(Ω), (:left, :right, :bottom, :top))
+dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
+
+@testset verbose = true "end to end" begin
+    @testset "constant Dirichlet" begin
+        Ω = MeshDomain(rectangle_grid(Triangle, (4, 4)))
+        steady = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y)))
+        bcs = [[u(t, Γ) ~ 1 + x + 2y for Γ in pieces(Ω)]; ic]
+        sol, _ = fem_solve([steady], bcs, Ω, (x, y), t, [u(t, x, y)])
+        @test SciMLBase.successful_retcode(sol)
+        @test nodal_error(sol, u(t, x, y), (t_, x_, y_) -> 1 + x_ + 2y_) <= tol
+    end
+
+    @testset "time-dependent Dirichlet, P1 triangles" begin
+        Ω = MeshDomain(rectangle_grid(Triangle, (4, 4)))
+        sol, prob = fem_solve([heat_eq], [dirichlet_all(Ω); ic], Ω, (x, y), t, [u(t, x, y)])
+        @test SciMLBase.successful_retcode(sol)
+        @test nodal_error(sol, u(t, x, y), uexact) <= tol
+        space = sol.disc_data.space
+        @test !any(prob.differential_vars[space.ch.prescribed_dofs])
+        # The symbolic Dirichlet data agree with the ConstraintHandler, including at corners
+        # shared by two pieces, where the condition added last wins.
+        load = SciMLBase.SymbolicIndexingInterface.getp(prob.f.sys, prob.f.sys.Fop)(prob.p)
+        np = length(space.ch.prescribed_dofs)
+        @test FiniteElementMethod.dirichlet_values!(zeros(np), load, 0.3) ≈
+            FiniteElementMethod.dirichlet_values!(zeros(np), space, 0.3) atol = 1.0e-14
+    end
+
+    @testset "discretize returns the DAEProblem and forwards keywords" begin
+        Ω = MeshDomain(rectangle_grid(Triangle, (2, 2)))
+        @named pdesys = PDESystem([heat_eq], [dirichlet_all(Ω); ic], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
+        prob = discretize(pdesys, FEMDiscretization(Ω, t; saveat = 0.25); tstops = [0.5])
+        @test prob isa SciMLBase.DAEProblem
+        @test prob.kwargs[:saveat] == 0.25 && prob.kwargs[:tstops] == [0.5]
+        sol = solve(prob, EXACT_ROWS)
+        @test sol.t == 0:0.25:1
+        @test sol.disc_data isa FEMMetadata
+    end
+
+    @testset "P1 quadrilaterals" begin
+        Ω = MeshDomain(rectangle_grid(Quadrilateral, (3, 4)))
+        sol, _ = fem_solve([heat_eq], [dirichlet_all(Ω); ic], Ω, (x, y), t, [u(t, x, y)])
+        @test nodal_error(sol, u(t, x, y), uexact) <= tol
+    end
+
+    @testset "P2 triangles" begin
+        # q = 1 + x² + 2y² + xy has Δq = 6.
+        q(x_, y_) = 1 + x_^2 + 2y_^2 + x_ * y_
+        Ω = MeshDomain(rectangle_grid(Triangle, (3, 3)))
+        eq = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + q(x, y) - 6 * (1 + t)
+        bcs = [[u(t, Γ) ~ q(x, y) * (1 + t) for Γ in pieces(Ω)]; u(0, x, y) ~ q(x, y)]
+        sol, _ = fem_solve([eq], bcs, Ω, (x, y), t, [u(t, x, y)]; spaces = Dict(u => Lagrange{RefTriangle, 2}()))
+        @test nodal_error(sol, u(t, x, y), (t_, x_, y_) -> q(x_, y_) * (1 + t_)) <= tol
+    end
+
+    @testset "1D Line" begin
+        Ω = MeshDomain(rectangle_grid(Line, (5,)))
+        eq = Dt(u(t, x)) ~ Dx(Dx(u(t, x))) + (1 + x)
+        lo, hi = boundarypiece.(Ref(Ω), (:x1_lo, :x1_hi))
+        bcs = [u(t, lo) ~ 1 + t, NormalDerivative(hi)(u(t, hi)) ~ 1 + t, u(0, x) ~ 1 + x]
+        sol, _ = fem_solve([eq], bcs, Ω, (x,), t, [u(t, x)])
+        @test nodal_error(sol, u(t, x), (t_, x_) -> (1 + x_) * (1 + t_)) <= tol
+    end
+
+    @testset "Neumann" begin
+        Ω = MeshDomain(rectangle_grid(Triangle, (4, 4)))
+        Γl, Γr, Γb, Γt = pieces(Ω)
+        Dn(Γ) = NormalDerivative(Γ)
+        bcs = [
+            u(t, Γl) ~ (1 + 2y) * (1 + t),
+            Dn(Γr)(u(t, Γr)) ~ 1 + t,
+            Dn(Γb)(u(t, Γb)) ~ -2 * (1 + t),
+            Dn(Γt)(u(t, Γt)) ~ 2 * (1 + t),
+            ic,
+        ]
+        sol, _ = fem_solve([heat_eq], bcs, Ω, (x, y), t, [u(t, x, y)])
+        @test nodal_error(sol, u(t, x, y), uexact) <= tol
+    end
+
+    @testset "Robin with a conormal coefficient" begin
+        # Equation flux k∇u; the Robin condition is written against the conormal k·Dn.
+        Ω = MeshDomain(rectangle_grid(Triangle, (4, 4)))
+        Γl, Γr, Γb, Γt = pieces(Ω)
+        @parameters k α
+        eq = Dt(u(t, x, y)) ~ Dx(k * Dx(u(t, x, y))) + Dy(k * Dy(u(t, x, y))) + (1 + x + 2y)
+        bcs = [
+            u(t, Γl) ~ (1 + 2y) * (1 + t),
+            u(t, Γb) ~ (1 + x) * (1 + t),
+            u(t, Γt) ~ (3 + x) * (1 + t),
+            k * NormalDerivative(Γr)(u(t, Γr)) + α * u(t, Γr) ~ (k + α * (2 + 2y)) * (1 + t),
+            ic,
+        ]
+        sol, _ = fem_solve([eq], bcs, Ω, (x, y), t, [u(t, x, y)]; ps = [k => 2.0, α => 3.0])
+        @test nodal_error(sol, u(t, x, y), uexact) <= tol
+    end
+
+    @testset "mixed Dirichlet, Neumann and Robin pieces on one mesh" begin
+        Ω = MeshDomain(rectangle_grid(Quadrilateral, (4, 4)))
+        Γl, Γr, Γb, Γt = pieces(Ω)
+        bcs = [
+            u(t, Γl) ~ (1 + 2y) * (1 + t),
+            NormalDerivative(Γb)(u(t, Γb)) ~ -2 * (1 + t),
+            NormalDerivative(Γt)(u(t, Γt)) + u(t, Γt) ~ (5 + x) * (1 + t),
+            NormalDerivative(Γr)(u(t, Γr)) ~ 1 + t,
+            ic,
+        ]
+        sol, _ = fem_solve([heat_eq], bcs, Ω, (x, y), t, [u(t, x, y)])
+        @test nodal_error(sol, u(t, x, y), uexact) <= tol
+    end
+
+    @testset "Gmsh mesh and generated grid give the same exact solution" begin
+        ue(t_, x_, y_) = (1 + x_) * (1 + t_)
+        eq = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + (1 + x)
+        gmsh_Ω = MeshDomain(lshape_grid(; h = 0.5))
+        Γi, Γw, Γo = boundarypiece.(Ref(gmsh_Ω), (:inlet, :wall, :outlet))
+        bcs = [u(t, Γi) ~ 1 + t, u(t, Γw) ~ (1 + x) * (1 + t), NormalDerivative(Γo)(u(t, Γo)) ~ 1 + t, u(0, x, y) ~ 1 + x]
+        sol, _ = fem_solve([eq], bcs, gmsh_Ω, (x, y), t, [u(t, x, y)])
+        @test nodal_error(sol, u(t, x, y), ue) <= tol
+        box = MeshDomain(rectangle_grid(Triangle, (4, 4); hi = (2.0, 2.0)))
+        Γl, Γr, Γb, Γt = pieces(box)
+        bcs = [u(t, Γl) ~ 1 + t, u(t, Γb) ~ (1 + x) * (1 + t), u(t, Γt) ~ (1 + x) * (1 + t), NormalDerivative(Γr)(u(t, Γr)) ~ 1 + t, u(0, x, y) ~ 1 + x]
+        sol, _ = fem_solve([eq], bcs, box, (x, y), t, [u(t, x, y)])
+        @test nodal_error(sol, u(t, x, y), ue) <= tol
+    end
+
+    @testset "time-dependent source" begin
+        # u* = (1 + x + 2y)(1 + t²): the source 2t(1 + x + 2y) is reassembled at every t.
+        Ω = MeshDomain(rectangle_grid(Triangle, (4, 4)))
+        eq = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + 2t * (1 + x + 2y)
+        bcs = [[u(t, Γ) ~ (1 + x + 2y) * (1 + t^2) for Γ in pieces(Ω)]; ic]
+        sol, _ = fem_solve([eq], bcs, Ω, (x, y), t, [u(t, x, y)])
+        @test nodal_error(sol, u(t, x, y), (t_, x_, y_) -> (1 + x_ + 2y_) * (1 + t_^2)) <= 1.0e-6
+    end
+
+    @testset "algebraic row coupled to a parabolic field" begin
+        # u_t = Δu + v with the algebraic row 0 = Δv; u* = (1 + x + 2y)(1 + t), v* = 1 + x + 2y.
+        Ω = MeshDomain(rectangle_grid(Triangle, (4, 4)))
+        parabolic = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + v(t, x, y)
+        algebraic = 0 ~ Dx(Dx(v(t, x, y))) + Dy(Dy(v(t, x, y)))
+        bcs = [dirichlet_all(Ω); [v(t, Γ) ~ 1 + x + 2y for Γ in pieces(Ω)]; ic]
+        sol, prob = fem_solve(
+            [parabolic, algebraic], bcs, Ω, (x, y), t, [u(t, x, y), v(t, x, y)];
+            pairing = Dict(algebraic => v)
+        )
+        @test SciMLBase.successful_retcode(sol)
+        space = sol.disc_data.space
+        @test !any(prob.differential_vars[FiniteElementMethod.field_range(space, :v)])
+        @test nodal_error(sol, u(t, x, y), uexact) <= tol
+        @test nodal_error(sol, v(t, x, y), (t_, x_, y_) -> 1 + x_ + 2y_) <= tol
+    end
+
+    @testset "registered coefficient function in divergence form" begin
+        Ω = MeshDomain(rectangle_grid(Triangle, (4, 4)))
+        Γl, Γr, Γb, Γt = pieces(Ω)
+        # ∇·(a∇u) with a(x) = 1 + x², registered with its derivative; u* = x(1 + t) gives the source
+        # x - a'(x)(1 + t). The flux is isotropic, so Dn is a conormal condition on every face. Quadrature order 2 integrates a∇u·∇v and the source exactly on P1.
+        eq = Dt(u(t, x, y)) ~ Dx(smooth_coef(x) * Dx(u(t, x, y))) + Dy(smooth_coef(x) * Dy(u(t, x, y))) + x - 2x * (1 + t)
+        bcs = [
+            u(t, Γl) ~ 0, u(t, Γr) ~ 1 + t,
+            NormalDerivative(Γb)(u(t, Γb)) ~ 0, NormalDerivative(Γt)(u(t, Γt)) ~ 0, u(0, x, y) ~ x,
+        ]
+        sol, _ = fem_solve([eq], bcs, Ω, (x, y), t, [u(t, x, y)])
+        @test nodal_error(sol, u(t, x, y), (t_, x_, y_) -> x_ * (1 + t_)) <= tol
+    end
+end
