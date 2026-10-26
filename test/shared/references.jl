@@ -20,6 +20,32 @@ using .StrongFormSeam: analyse, BC, Weighted, ProductRule, PeriodicBC
 
 relerr(A, B) = norm(A - B) / max(norm(B), eps())
 
+const P0 = [0.0]            # parameter vector of a problem with no parameters
+const RIGHT = [1.0, 0.0]    # outward normal of the `right` facet set in 2D
+iso(a) = a * one(Tensor{2, 2})
+
+# Generated K, M, F against the hand-written reference, each to relative error `tol`.
+function check_operators(A, Kr, Mr, Fr; tol = 1.0e-14)
+    @test relerr(A.K, Kr) ≤ tol
+    @test relerr(A.M, Mr) ≤ tol
+    @test relerr(A.F, Fr) ≤ tol
+    return nothing
+end
+
+# Global dofs of field `f`, sorted.
+function field_dofs(setup, f)
+    return sort(unique(reduce(vcat, [celldofs(c)[dof_range(setup.dh, f)] for c in CellIterator(setup.dh)])))
+end
+
+# Conditions of a manufactured solution `ustar` for the unknown `U`: Dirichlet `u*` on every facet set except
+# `right`, and `∂ₓu = ∂ₓu*` on `right`, written as the user would (not the conormal), so the chain rescales it.
+function manufactured_bcs(U, ustar, sivs)
+    dim = length(sivs)
+    dirichlet = [BC(set, U ~ ustar) for set in FACETSETS[dim] if set != "right"]
+    neumann = BC("right", Differential(sivs[1])(U) ~ expand_derivatives(Differential(sivs[1])(ustar)), dim == 1 ? [1.0] : RIGHT)
+    return [dirichlet; neumann]
+end
+
 const SHAPES = Dict(Line => RefLine, Triangle => RefTriangle, Quadrilateral => RefQuadrilateral)
 const FACETSETS = Dict(1 => ("left", "right"), 2 => ("left", "right", "bottom", "top"))
 

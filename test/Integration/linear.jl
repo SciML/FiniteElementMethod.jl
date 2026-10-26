@@ -10,11 +10,10 @@ Dx, Dy, Dt = Differential(x), Differential(y), Differential(t)
 U = u(t, x, y)
 const PARAMS = [k, α, β, h]
 const PV = [2.0, 3.0, 0.5, 1.5]
-const RIGHT, TOP = [1.0, 0.0], [0.0, 1.0]
+const TOP = [0.0, 1.0]
 const TOL = 1.0e-14
 scalar_chain(eq, bcs; params = PARAMS) = chain([eq], bcs; depvars = [U], t, sivs = [x, y], params)
 
-iso(a) = a * one(Tensor{2, 2})
 opaque(z) = 1 + z^2 + sin(z)   # registered without a derivative rule
 @register_symbolic opaque(z)
 fsrc(X) = X[1] * X[2] + 1
@@ -25,10 +24,7 @@ const ROBIN_REF = ("top", 1, 1, X -> PV[2], X -> PV[3])
 # Compare the chain's K, M, F and Dirichlet data with the hand-written reference.
 function check_linear(setup, c; block, source = (e, X) -> fsrc(X), facets, dirichlet = DIR_REF, p = PV)
     A = assemble_linear(setup.ctx, c.kernels, p)
-    Kr, Mr, Fr = linear_reference(setup; block, source, facets)
-    @test relerr(A.K, Kr) ≤ TOL
-    @test relerr(A.M, Mr) ≤ TOL
-    @test relerr(A.F, Fr) ≤ TOL
+    check_operators(A, linear_reference(setup; block, source, facets)...; tol = TOL)
     ch, ch_ref = constraints(setup, c.dirichlet, p), constraints_reference(setup, dirichlet)
     @test ch.prescribed_dofs == ch_ref.prescribed_dofs
     @test dirichlet_values(ch) ≈ dirichlet_values(ch_ref) rtol = 1.0e-15
@@ -178,9 +174,7 @@ end
             SETUP; block = (e, b, X) -> (; κ = iso(Df(X)), β = Vec(2p[1] * tv * X[1], 0.0), c = 0.0, m = 1.0),
             source = (e, X) -> exp(-tv) * X[1]
         )
-        @test relerr(A.K, Kr) ≤ TOL
-        @test relerr(A.M, Mr) ≤ TOL
-        @test relerr(A.F, Fr) ≤ TOL
+        check_operators(A, Kr, Mr, Fr; tol = TOL)
         A
     end
     @test relerr(operators[1].K, operators[2].K) > 0.1
@@ -191,9 +185,9 @@ end
     # ∂ₜu = r⁻² ∂ᵣ(r² ∂ᵣu) on r ∈ [0.5, 1.5], ∂ᵣu = 2 at r = 1.5. ProductRule gives the non-symmetric
     # ∫u'v' − ∫(2/r)u'v; Weighted(r²) gives the symmetric ∫r²u'v' with mass r² and facet datum r²·2.
     @variables r
-    @variables u_rand(..)
+    @variables radial(..)
     Dr = Differential(r)
-    Ur = u_rand(t, r)
+    Ur = radial(t, r)
     setup = mesh_setup(Line, 1, 16; corners = (Vec(0.5), Vec(1.5)))
     eq = Dt(Ur) ~ 1 / r^2 * Dr(r^2 * Dr(Ur))
     bcs = [BC("right", Dr(Ur) ~ 2.0, [1.0])]
@@ -209,8 +203,8 @@ end
         setup; block = (e, b, X) -> (; κ = X[1]^2 * one1, β = Vec(0.0), c = 0.0, m = X[1]^2),
         source = (e, X) -> 0.0, facets = [("right", 1, 1, X -> 0.0, X -> 2.0 * X[1]^2)]
     )
-    @test relerr(Ap.K, Kp) ≤ TOL && relerr(Ap.M, Mp) ≤ TOL && relerr(Ap.F, Fp) ≤ TOL
-    @test relerr(Aw.K, Kw) ≤ TOL && relerr(Aw.M, Mw) ≤ TOL && relerr(Aw.F, Fw) ≤ TOL
+    check_operators(Ap, Kp, Mp, Fp; tol = TOL)
+    check_operators(Aw, Kw, Mw, Fw; tol = TOL)
     @test norm(Aw.K - Aw.K') ≤ TOL * norm(Aw.K)
     @test norm(Ap.K - Ap.K') > 1.0e-2 * norm(Ap.K)
     # Spec §5.1: ProductRule warns exactly once when it generates a correction term, Weighted never. The warning

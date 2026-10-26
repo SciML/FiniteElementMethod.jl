@@ -8,8 +8,6 @@ include(joinpath(@__DIR__, "..", "shared", "references.jl"))
 @variables u(..)
 Dx, Dy = Differential(x), Differential(y)
 U = u(t, x, y)
-const RIGHT = [1.0, 0.0]
-const P0 = [0.0]
 
 # Steady `0 ~ ∇·(k(u)∇u) + f` for the non-harmonic `u* = shift + sin(πx)cos(πy) + x²y` (red cell: Dauntless's
 # `eˣ sin y` has Δu* = 0), Dirichlet `u*` on left, bottom and top, and `∂ₙu = ∂ₓu*` on right, written as the
@@ -20,8 +18,7 @@ function diffusion_problem(ksym, knum; shift = 0.0)
     fsym = expand_derivatives(-(Dx(kstar * Dx(ustar)) + Dy(kstar * Dy(ustar))))
     hsym = expand_derivatives(Dx(ustar))
     eq = 0 ~ Dx(ksym(U) * Dx(U)) + Dy(ksym(U) * Dy(U)) + fsym
-    bcs = [BC("left", U ~ ustar), BC("bottom", U ~ ustar), BC("top", U ~ ustar), BC("right", Dx(U) ~ hsym, RIGHT)]
-    c = chain([eq], bcs; depvars = [U], t, sivs = [x, y])
+    c = chain([eq], manufactured_bcs(U, ustar, [x, y]); depvars = [U], t, sivs = [x, y])
     f, hf, exact = numeric(fsym, [x, y]), numeric(hsym, [x, y]), numeric(ustar, [x, y])
     reference(setup, uvec) = residual_reference(
         setup, uvec; flux = (e, Uq, ∇Uq, X) -> knum(Uq[1]) * ∇Uq[1], source = (e, Uq, ∇Uq, X) -> -f(X),

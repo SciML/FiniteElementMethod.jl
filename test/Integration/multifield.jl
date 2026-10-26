@@ -7,10 +7,6 @@ include(joinpath(@__DIR__, "..", "shared", "references.jl"))
 @variables u(..) w(..)
 Dx, Dy, Dt = Differential(x), Differential(y), Differential(t)
 U, Wf = u(t, x, y), w(t, x, y)
-const RIGHT = [1.0, 0.0]
-const P0 = [0.0]
-iso(s) = s * one(Tensor{2, 2})
-field_dofs(setup, f) = sort(unique(reduce(vcat, [celldofs(c)[dof_range(setup.dh, f)] for c in CellIterator(setup.dh)])))
 block_norms(A, setup) = [norm(A[I, J]) for I in field_dofs.(Ref(setup), setup.fields), J in field_dofs.(Ref(setup), setup.fields)]
 
 @testset "two-field reaction-diffusion with cross-diffusion (Schnakenberg)" begin
@@ -40,9 +36,7 @@ block_norms(A, setup) = [norm(A[I, J]) for I in field_dofs.(Ref(setup), setup.fi
         setup; block = (e, f, X) -> blocks[(e, f)], source = (e, X) -> e == 1 ? ap : bp,
         facets = [("right", 1, 1, X -> 0.0, X -> 0.1), ("right", 2, 2, X -> 0.0, X -> 0.2Dwp)]
     )
-    @test relerr(A.K, Kr) ≤ 1.0e-14
-    @test relerr(A.M, Mr) ≤ 1.0e-14
-    @test relerr(A.F, Fr) ≤ 1.0e-14
+    check_operators(A, Kr, Mr, Fr)
     # Block norms printed by scratch/dauntless/test_multifield.out on the same 16×16 P1 mesh.
     @test all(isapprox.(block_norms(A.K, setup), [69.6 20.9; 0.0 1390.0]; rtol = 5.0e-3, atol = 1.0e-12))
     @test all(isapprox.(block_norms(A.M, setup), [0.131 0.0; 0.0 0.131]; rtol = 5.0e-3, atol = 1.0e-12))
@@ -83,9 +77,7 @@ end
         Kr, Mr, Fr = linear_reference(
             setup; block = (e, f, X) -> blocks[(e, f)], source = (e, X) -> e == 2 ? exp(-tv) * sin(X[1]) : 0.0
         )
-        @test relerr(A.K, Kr) ≤ 1.0e-14
-        @test relerr(A.M, Mr) ≤ 1.0e-14
-        @test relerr(A.F, Fr) ≤ 1.0e-14
+        check_operators(A, Kr, Mr, Fr)
         @test norm(A.M[w_dofs, :]) == 0 && norm(A.M[:, w_dofs]) == 0
         A.F
     end
@@ -109,8 +101,7 @@ end
     )
     A = assemble_linear(setup.ctx, c.kernels, P0)
     Kr, Mr, Fr = linear_reference(setup; block = (e, f, X) -> blocks[(e, f)], source = (e, X) -> 0.0)
-    @test relerr(A.K, Kr) ≤ 1.0e-14
-    @test relerr(A.M, Mr) ≤ 1.0e-14
+    check_operators(A, Kr, Mr, Fr)
     @test norm(A.F) == 0
     ch = constraints(setup, c.dirichlet, P0)
     ch_ref = constraints_reference(setup, [("left", :p, (X, t) -> 0.0), ("right", :p, (X, t) -> 0.0)])
