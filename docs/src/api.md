@@ -1,12 +1,8 @@
 # API
 
-## Solution interface
+These are the package's internals during development; none of them is exported yet.
 
-```@docs
-FieldInfo
-FEMMetadata
-FiniteElementMethod.FEMInterpolant
-piece_nodes
-normal_flux
-write_vtk
+```@autodocs
+Modules = [FiniteElementMethod]
+Order = [:type, :function, :constant, :macro]
 ```

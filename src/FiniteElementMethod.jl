@@ -17,6 +17,7 @@ using SciMLBase: SciMLBase
 using SymbolicUtils: SymbolicUtils
 using Symbolics: Symbolics, Num
 
+include("weakform.jl")
 include("solution.jl")
 
 export FieldInfo, FEMMetadata, piece_nodes, normal_flux, write_vtk
