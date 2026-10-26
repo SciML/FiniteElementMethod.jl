@@ -57,7 +57,17 @@ function symbolic_value(ex, wf, args)
     return Float64(Symbolics.value(substitute(ex, vals; fold = Val(true))))
 end
 setslot(args, i, j, δ) = Base.setindex(args, Base.setindex(args[i], args[i][j] + δ, j), i)
-allocations(f, args) = (f(args...); @allocated f(args...))
+# Allocations of one call of `f` after warm-up, measured with explicit arguments: on Julia 1.10, `f(args...)`
+# with the 9-tuple of slots allocates in the caller (208 B) although the kernel call itself does not.
+allocations(f, args) = _allocations(f, args...)
+function _allocations(f, U, G, Ud, V, W, X, T, N, P)
+    f(U, G, Ud, V, W, X, T, N, P)
+    return @allocated f(U, G, Ud, V, W, X, T, N, P)
+end
+function _allocations(g, X, T, P)
+    g(X, T, P)
+    return @allocated g(X, T, P)
+end
 
 @testset "kernels of case $name" for (name, case) in CASES
     wf = weak_form(case())
