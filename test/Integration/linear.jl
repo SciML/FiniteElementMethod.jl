@@ -139,8 +139,11 @@ end
 
 @testset "Dirichlet: constant and time-dependent, at two times" begin
     c = scalar_chain(Dt(U) ~ Dx(Dx(U)) + Dy(Dy(U)), [BC("left", U ~ k), BC("bottom", U ~ sin(t) * x + h)])
-    ref = [("left", :u, (X, t) -> PV[1]), ("bottom", :u, (X, t) -> sin(t) * X[1] + PV[4])]
-    @test [(piece, field) for (piece, field, _) in c.dirichlet] == [("left", 1), ("bottom", 1)]
+    data = Dict("left" => (X, t) -> PV[1], "bottom" => (X, t) -> sin(t) * X[1] + PV[4])
+    @test Set((piece, field) for (piece, field, _) in c.dirichlet) == Set([("left", 1), ("bottom", 1)])
+    # The corner dof both pieces share takes the value of whichever Dirichlet the handler applies last, so the
+    # reference follows the chain's order (PDEBase orders essential conditions by its boundary map, the seam by input).
+    ref = [(piece, :u, data[piece]) for (piece, _, _) in c.dirichlet]
     for tv in (0.3, 1.1)
         ch, ch_ref = constraints(SETUP, c.dirichlet, PV; t = tv), constraints_reference(SETUP, ref; t = tv)
         @test ch.prescribed_dofs == ch_ref.prescribed_dofs
@@ -192,8 +195,9 @@ end
     eq = Dt(Ur) ~ 1 / r^2 * Dr(r^2 * Dr(Ur))
     bcs = [BC("right", Dr(Ur) ~ 2.0, [1.0])]
     one1 = one(Tensor{2, 1})
-    product = chain([eq], bcs; depvars = [Ur], t, sivs = [r], ibp = Dict(1 => ProductRule()))
-    weighted = chain([eq], bcs; depvars = [Ur], t, sivs = [r], ibp = Dict(1 => Weighted(r^2)))
+    domain = [(0.5, 1.5)]
+    product = chain([eq], bcs; depvars = [Ur], t, sivs = [r], domain, ibp = Dict(1 => ProductRule()))
+    weighted = chain([eq], bcs; depvars = [Ur], t, sivs = [r], domain, ibp = Dict(1 => Weighted(r^2)))
     Ap, Aw = (assemble_linear(setup.ctx, c.kernels, [0.0]) for c in (product, weighted))
     Kp, Mp, Fp = linear_reference(
         setup; block = (e, b, X) -> (; κ = one1, β = Vec(-2 / X[1]), c = 0.0, m = 1.0), source = (e, X) -> 0.0,
@@ -208,10 +212,10 @@ end
     @test norm(Aw.K - Aw.K') ≤ TOL * norm(Aw.K)
     @test norm(Ap.K - Ap.K') > 1.0e-2 * norm(Ap.K)
     # Spec §5.1: ProductRule warns exactly once when it generates a correction term, Weighted never. The warning
-    # belongs to PDEBase's analyse and the seam does not emit it, so the first check flips at the PDEBase swap.
+    # belongs to PDEBase's analyse; the seam does not emit it, so the first check is broken on the seam path.
     warnings(f) = count(log -> log.level == Base.CoreLogging.Warn, first(Test.collect_test_logs(f)))
-    @test_broken warnings(() -> chain([eq], bcs; depvars = [Ur], t, sivs = [r], ibp = Dict(1 => ProductRule()))) == 1
-    @test warnings(() -> chain([eq], bcs; depvars = [Ur], t, sivs = [r], ibp = Dict(1 => Weighted(r^2)))) == 0
+    @test_pdebase warnings(() -> chain([eq], bcs; depvars = [Ur], t, sivs = [r], domain, ibp = Dict(1 => ProductRule()))) == 1
+    @test warnings(() -> chain([eq], bcs; depvars = [Ur], t, sivs = [r], domain, ibp = Dict(1 => Weighted(r^2)))) == 0
 end
 
 @testset "periodic conditions are carried through weak_form untouched" begin
@@ -223,11 +227,19 @@ end
     periodic = [PeriodicBC("left", "right", 1, [2.0, 0.0])]
     plain = scalar_chain(eq, bcs)
     paired = chain([eq], bcs; depvars = [U], t, sivs = [x, y], params = PARAMS, periodic)
-    @test paired.wf.analysis.periodic == periodic
+    fields(bcs) = [(b.master, b.mirror, b.field, b.shift) for b in bcs]
+    @test fields(paired.wf.analysis.periodic) == fields(periodic)
     terms(wf) = [(v.eq, v.kind, v.integrand, v.timedep, v.paramdep) for v in wf.volume]
     facet_terms(wf) = [(f.eq, f.piece, f.kind, f.integrand, f.timedep, f.paramdep) for f in wf.facet]
     @test isequal(terms(paired.wf), terms(plain.wf))
     @test isequal(facet_terms(paired.wf), facet_terms(plain.wf))
     A, B = (assemble_linear(SETUP.ctx, c.kernels, PV) for c in (paired, plain))
     @test A.K == B.K && A.M == B.M && A.F == B.F
+    # The same pairing written as a trace equation, classified by PDEBase's stage d (seam path: broken).
+    function traced()
+        c = chain([eq], [bcs; u(t, -1.0, y) ~ u(t, 1.0, y)]; depvars = [U], t, sivs = [x, y], params = PARAMS)
+        return fields(c.wf.analysis.periodic) == [("left", "right", 1, 2.0)] &&
+            isequal(terms(c.wf), terms(plain.wf)) && isequal(facet_terms(c.wf), facet_terms(plain.wf))
+    end
+    @test_pdebase PDEBASE_PATH && traced()
 end

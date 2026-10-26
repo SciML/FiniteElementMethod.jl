@@ -16,7 +16,125 @@ using Symbolics
 using Test
 
 include(joinpath(@__DIR__, "strongform_seam.jl"))
-using .StrongFormSeam: analyse, BC, Weighted, ProductRule, PeriodicBC
+using .StrongFormSeam: StrongFormSeam, BC
+using DomainSets: DomainSets
+using ModelingToolkit: ModelingToolkit
+using PDEBase: PDEBase
+
+# The analysis switch. With a PDEBase whose StrongForm has `analyse` (SciML/PDEBase.jl#149, 4f536e4, and later) the
+# chain's analysis comes from PDEBase: the volume terms, and the boundary conditions on box faces, which the adapter
+# below rewrites as traces. Conditions on any other piece (a mesh facet set), which PDEBase cannot express until
+# strongform PR 5 (piece and NormalDerivative slotting), go through the seam's stage d against PDEBase's fluxes.
+# Released PDEBase has no StrongForm, and the whole analysis falls back to the seam. test/README.md says how to run
+# the PDEBase path locally.
+const PDEBASE_PATH = isdefined(PDEBase, :StrongForm) && isdefined(PDEBase.StrongForm, :analyse)
+const STRONGFORM = PDEBASE_PATH ? PDEBase.StrongForm : StrongFormSeam
+const Weighted, ProductRule, PeriodicBC = STRONGFORM.Weighted, STRONGFORM.ProductRule, STRONGFORM.PeriodicBC
+
+# `@test` on the PDEBase path and `@test_broken` on the seam path, for checks only PDEBase's analyse passes.
+macro test_pdebase(ex)
+    return esc(:(PDEBASE_PATH ? @test($ex) : @test_broken($ex)))
+end
+
+if PDEBASE_PATH
+    struct TimeDiscretization <: PDEBase.AbstractEquationSystemDiscretization
+        time::Any
+    end
+    PDEBase.get_time(d::TimeDiscretization) = d.time
+end
+
+# Box faces of the Ferrite facet sets the tests name, as (spatial variable index, side).
+const BOX_FACES = Dict("left" => (1, :lo), "right" => (1, :hi), "bottom" => (2, :lo), "top" => (2, :hi))
+
+# `ex`, a condition written with interior unknowns, as a condition on the box face `(d, side)`: every unknown
+# becomes its trace there, derivatives act on the trace, and the face coordinate takes the endpoint value.
+function on_face(ex, depvars, sivs, d, endpoint)
+    ex = Symbolics.unwrap(ex)
+    trace(u) = (
+        args = collect(Symbolics.arguments(u)); args[findfirst(a -> isequal(a, sivs[d]), args)] = endpoint;
+        Symbolics.operation(u)(args...)
+    )
+    isequal(ex, Symbolics.unwrap(sivs[d])) && return endpoint
+    Symbolics.iscall(ex) || return ex
+    op = Symbolics.operation(ex)
+    any(u -> isequal(ex, Symbolics.unwrap(u)), depvars) && return Symbolics.unwrap(trace(ex))
+    op isa Symbolics.Differential && return Symbolics.unwrap(op(on_face(only(Symbolics.arguments(ex)), depvars, sivs, d, endpoint)))
+    return Symbolics.unwrap(op(map(a -> on_face(a, depvars, sivs, d, endpoint), Symbolics.arguments(ex))...))
+end
+
+# Substitution renumbering PDEBase's field slots (`depvars(v)` order, which need not be the declared order) to the
+# declared order `perm[f]` that weak_form's positional pairing and the tests' DofHandler fields assume.
+function field_renumbering(slots, perm, dim)
+    rules = Dict{Num, Num}()
+    for (f, g) in enumerate(perm)
+        rules[slots.U[f]] = slots.U[g]
+        rules[slots.Ud[f]] = slots.Ud[g]
+        for d in 1:dim
+            rules[slots.G[(f - 1) * dim + d]] = slots.G[(g - 1) * dim + d]
+            for e in 1:dim
+                rules[slots.H[((f - 1) * dim + d - 1) * dim + e]] = slots.H[((g - 1) * dim + d - 1) * dim + e]
+            end
+        end
+    end
+    return ex -> Num(Symbolics.substitute(ex, rules))
+end
+
+#     analyse(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict(), periodic = [], domain = nothing)
+#
+# The seam's interface over either path. `bcs` holds seam `BC`s and, on the PDEBase path, raw trace `Equation`s
+# (periodic pairs). `domain` gives each spatial variable's interval, `[−1, 1]` by default as generate_grid's.
+function analyse(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict(), periodic = [], domain = nothing)
+    PDEBASE_PATH || return StrongFormSeam.analyse(eqs, bcs; depvars, t, sivs, params, ibp, periodic)
+    SF = PDEBase.StrongForm
+    intervals = domain === nothing ? [(-1.0, 1.0) for _ in sivs] : domain
+    box = Symbolics.Equation[]
+    pieces = Dict{Any, Any}()                       # BoxFace -> facet-set name
+    mesh = BC[]
+    for bc in bcs
+        if bc isa Symbolics.Equation
+            push!(box, bc)
+        elseif haskey(BOX_FACES, bc.piece) && BOX_FACES[bc.piece][1] <= length(sivs)
+            d, side = BOX_FACES[bc.piece]
+            endpoint = side === :lo ? intervals[d][1] : intervals[d][2]
+            push!(box, on_face(bc.eq.lhs, depvars, sivs, d, endpoint) ~ on_face(bc.eq.rhs, depvars, sivs, d, endpoint))
+        else
+            push!(mesh, bc)
+        end
+    end
+    for (d, x) in enumerate(sivs), (side, name) in ((:lo, d == 1 ? "left" : "bottom"), (:hi, d == 1 ? "right" : "top"))
+        pieces[SF.BoxFace(Symbolics.unwrap(x), side)] = name
+    end
+    ivs = [t; sivs]
+    domains = [t ∈ DomainSets.ClosedInterval(0.0, 1.0); [x ∈ DomainSets.ClosedInterval(I...) for (x, I) in zip(sivs, intervals)]]
+    sys = ModelingToolkit.PDESystem(eqs, box, domains, ivs, depvars, params; name = :sys)
+    PDEBase.cardinalize_eqs!(sys)
+    sys, replaced = PDEBase.make_pdesys_compatible(sys)
+    v = PDEBase.VariableMap(sys, TimeDiscretization(t); replaced_vars = replaced)
+    orders = Dict(x => PDEBase.d_orders(x, box) for x in PDEBase.all_ivs(v))
+    an = SF.analyse(sys, v, PDEBase.parse_bcs(box, v, orders); ibp)
+    dim = an.dim
+    perm = [findfirst(u -> isequal(Symbolics.operation(Symbolics.unwrap(u)), Symbolics.operation(Symbolics.unwrap(f))), depvars) for f in PDEBase.depvars(v)]
+    R = field_renumbering(an.slots, perm, dim)
+    flux = [R.(G) for G in an.flux]
+    conormal = map(an.conormal) do a
+        out = similar(a)
+        for (f, g) in enumerate(perm), d in 1:dim
+            out[(g - 1) * dim + d] = R(a[(f - 1) * dim + d])
+        end
+        out
+    end
+    essential = Any[SF.EssentialBC{Any}(pieces[b.piece], perm[b.field], b.g) for b in an.essential]
+    natural = Any[SF.NaturalBC{Any}(pieces[b.piece], b.eq, R(b.Φ)) for b in an.natural]
+    periodic_out = Any[SF.PeriodicBC{Any, typeof(b.shift)}(pieces[b.master], pieces[b.mirror], perm[b.field], b.shift) for b in an.periodic]
+    append!(periodic_out, [SF.PeriodicBC{Any, typeof(b.shift)}(b.master, b.mirror, b.field, b.shift) for b in periodic])
+    ess, nat = StrongFormSeam.boundary_conditions(mesh, flux, an.slots; depvars, t, sivs, params)
+    append!(essential, [SF.EssentialBC{Any}(b.piece, b.field, b.g) for b in ess])
+    append!(natural, [SF.NaturalBC{Any}(b.piece, b.eq, b.Φ) for b in nat])
+    return SF.StrongFormAnalysis{Any}(
+        an.slots, an.nfields, dim, R.(an.strong), R.(an.mass), flux, R.(an.remainder), conormal,
+        SF.EssentialBC{Any}[essential...], SF.NaturalBC{Any}[natural...], SF.PeriodicBC{Any}[periodic_out...]
+    )
+end
 
 relerr(A, B) = norm(A - B) / max(norm(B), eps())
 

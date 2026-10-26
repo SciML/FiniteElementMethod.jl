@@ -21,7 +21,7 @@ block_norms(A, setup) = [norm(A[I, J]) for I in field_dofs.(Ref(setup), setup.fi
         BC("left", Wf ~ 0.9),                                # essential, routed to field 2
     ]
     c = chain(eqs, bcs; depvars = [U, Wf], t, sivs = [x, y], params)
-    @test [(f.eq, f.kind) for f in c.wf.facet] == [(1, :source), (2, :source)]
+    @test Set((f.eq, f.kind) for f in c.wf.facet) == Set([(1, :source), (2, :source)])
     setup = mesh_setup(Triangle, 1, 16; fields = [:u, :w])
     Dup, Dwp, χp, ap, bp = pv
 
