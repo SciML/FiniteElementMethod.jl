@@ -63,10 +63,21 @@ function assemble_linear(ctx::AssemblyContext, kernels, p; t = 0.0, ch = nothing
     return (; M, K, F)
 end
 
-function assemble_linear!(M, K, F, ctx::AssemblyContext{NF}, kernels, p; t = 0.0) where {NF}
+const LINEAR_KINDS = (:mass, :bilinear, :source)
+
+"""
+    assemble_linear!(M, K, F, ctx, kernels, p; t = 0.0, kinds = (:mass, :bilinear, :source))
+
+Assemble in place the kernels of `kinds` only: `M` is overwritten when `:mass` is in `kinds`, `K` when `:bilinear`
+is, `F` when `:source` is, and the others are left as they are.
+"""
+function assemble_linear!(M, K, F, ctx::AssemblyContext{NF}, kernels, p; t = 0.0, kinds = LINEAR_KINDS) where {NF}
     ne = NF * Ferrite.getnbasefunctions(ctx.cv)
-    op = LinearOp(Ferrite.start_assemble(M), Ferrite.start_assemble(K, F), zeros(ne, ne), zeros(ne, ne), zeros(ne))
-    _assemble!(op, ctx, _split(ctx, kernels, (:mass, :bilinear, :source))..., p, t)
+    aM = Ferrite.start_assemble(M; fillzero = :mass in kinds)
+    aK = Ferrite.start_assemble(K; fillzero = :bilinear in kinds)
+    :source in kinds && fill!(F, 0)
+    op = LinearOp(aM, aK, F, zeros(ne, ne), zeros(ne, ne), zeros(ne))
+    _assemble!(op, ctx, _split(ctx, kernels, kinds)..., p, t)
     return M, K, F
 end
 
@@ -85,7 +96,8 @@ end
 
 function assemble_nonlinear!(r, J, ctx::AssemblyContext{NF}, kernels, u, p; t = 0.0) where {NF}
     ne = NF * Ferrite.getnbasefunctions(ctx.cv)
-    op = NonlinearOp(Ferrite.start_assemble(J, r), zeros(ne, ne), zeros(ne), u, zeros(ne))
+    fill!(r, 0)
+    op = NonlinearOp(Ferrite.start_assemble(J), r, zeros(ne, ne), zeros(ne), u, zeros(ne))
     _assemble!(op, ctx, _split(ctx, kernels, (:nonlinear,))..., p, t)
     return r, J
 end
@@ -93,13 +105,16 @@ end
 struct LinearOp{AM, AK}
     aM::AM
     aK::AK
+    F::Vector{Float64}
     Me::Matrix{Float64}
     Ke::Matrix{Float64}
     Fe::Vector{Float64}
 end
 
+# `aJ === nothing` assembles the residual only.
 struct NonlinearOp{AJ, U}
     aJ::AJ
+    r::Vector{Float64}
     Je::Matrix{Float64}
     re::Vector{Float64}
     u::U
@@ -180,7 +195,8 @@ function _start_cell!(op::LinearOp, dofs)
 end
 
 function _finish_cell!(op::LinearOp, dofs)
-    Ferrite.assemble!(op.aK, dofs, op.Ke, op.Fe)
+    Ferrite.assemble!(op.aK, dofs, op.Ke)
+    Ferrite.assemble!(op.F, dofs, op.Fe)
     Ferrite.assemble!(op.aM, dofs, op.Me)
     return nothing
 end
@@ -223,7 +239,11 @@ function _start_cell!(op::NonlinearOp, dofs)
     return nothing
 end
 
-_finish_cell!(op::NonlinearOp, dofs) = Ferrite.assemble!(op.aJ, dofs, op.Je, op.re)
+function _finish_cell!(op::NonlinearOp, dofs)
+    op.aJ === nothing || Ferrite.assemble!(op.aJ, dofs, op.Je)
+    Ferrite.assemble!(op.r, dofs, op.re)
+    return nothing
+end
 
 function _kernel!(op::NonlinearOp, k::KernelSpec, vals, xs, ranges::NTuple{NF}, p, t) where {NF}
     nb = Ferrite.getnbasefunctions(vals)
@@ -241,6 +261,7 @@ function _kernel!(op::NonlinearOp, k::KernelSpec, vals, xs, ranges::NTuple{NF}, 
         for i in 1:nb
             V, W = Ferrite.shape_value(vals, q, i), Ferrite.shape_gradient(vals, q, i)
             op.re[rows[i]] += k.f(U, G, Ud0, V, W, X, t, N, p) * dΩ
+            op.aJ === nothing && continue
             # promote: a generated tangent returns literal `0` (Int) for constant-zero entries, and indexing a
             # mixed tuple with a runtime index allocates
             dI = promote(k.tangent(U, G, Ud0, V, W, X, t, N, p)...)
