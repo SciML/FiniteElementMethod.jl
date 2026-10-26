@@ -13,6 +13,8 @@ using Ferrite: Ferrite
 using ModelingToolkit: ModelingToolkit
 using PDEBase: PDEBase
 using SciMLBase: SciMLBase
-using Symbolics: Symbolics
+using Symbolics: Symbolics, Num
+
+include("weakform.jl")
 
 end # module
