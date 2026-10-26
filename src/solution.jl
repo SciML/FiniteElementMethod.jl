@@ -295,6 +295,13 @@ function Base.getindex(A::FEMSolution, sym::Num)
         projector = _gradient_projector(md, g[1])
         return _stack(A, [_nodal_gradient(md, g..., U, projector) for U in _states(A)])
     end
+    if SymbolicUtils.iscall(s) && SymbolicUtils.operation(s) isa PDEBase.NormalDerivative
+        trace = Symbolics.unwrap(only(SymbolicUtils.arguments(s)))
+        f = _fieldinfo(md, trace)
+        Γ = _piece_arg(trace)
+        (f === nothing || !isequal(Γ, SymbolicUtils.operation(s).piece)) && _key_error(A, sym)
+        return normal_flux(A, f.dv, Γ)
+    end
     f = _fieldinfo(md, s)
     f === nothing && _key_error(A, sym)
     Γ = _piece_arg(s)
