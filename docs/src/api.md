@@ -67,6 +67,8 @@ FiniteElementMethod.state_slots
 FiniteElementMethod.weak_form
 FiniteElementMethod.emit_kernels
 FiniteElementMethod.emit_dirichlet
+FiniteElementMethod.find_differential
+FiniteElementMethod.underivable_function
 FiniteElementMethod.AssemblyContext
 FiniteElementMethod.assemble_linear
 FiniteElementMethod.assemble_nonlinear
