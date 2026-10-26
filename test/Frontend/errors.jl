@@ -101,6 +101,12 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         @test occursin("has no spatial domain of the form (x, y) ∈ MeshDomain(mesh)", msg)
     end
 
+    @testset "time must be an interval" begin
+        Ω = box()
+        domains = [(x, y) ∈ Ω, t ∈ UnionDomain(Interval(0.0, 1.0), Interval(2.0, 3.0))]
+        @test occursin("time t must be paired with an interval", errmsg(() -> lower([heat], [ic], Ω; domains)))
+    end
+
     @testset "mixed cell types need a space per variable" begin
         nodes = [Node(Vec(0.0, 0.0)), Node(Vec(1.0, 0.0)), Node(Vec(0.0, 1.0)), Node(Vec(2.0, 0.0)), Node(Vec(1.0, 1.0))]
         grid = Grid(Ferrite.AbstractCell[Triangle((1, 2, 3)), Quadrilateral((2, 4, 5, 3))], nodes)

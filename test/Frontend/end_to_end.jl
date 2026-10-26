@@ -2,7 +2,7 @@
 # solution. Each manufactured solution lies in the finite-element space and the quadrature is exact
 # for its data, so the nodal error is at the level of the time-integration tolerance.
 using Test
-using FiniteElementMethod: rectangle_grid
+using FiniteElementMethod: FiniteElementMethod, rectangle_grid
 using Ferrite: Triangle, Quadrilateral, Line
 
 include(joinpath(@__DIR__, "..", "shared", "frontend.jl"))
@@ -156,6 +156,30 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         bcs = [[u(t, Γ) ~ (1 + x + 2y) * (1 + t^2) for Γ in pieces(Ω)]; ic]
         sol, _ = fem_solve([eq], bcs, Ω, (x, y), t, [u(t, x, y)])
         @test nodal_error(sol, u(t, x, y), (t_, x_, y_) -> (1 + x_ + 2y_) * (1 + t_^2)) <= 1.0e-6
+    end
+
+    @testset "Dirichlet data defined only from the initial time on" begin
+        # sqrt(t - 0.5) is undefined at t = 0, so the space must be initialised at t0 = 1.
+        Ω = MeshDomain(rectangle_grid(Triangle, (2, 2)))
+        eq = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + 1 / (2 * sqrt(t - 0.5))
+        bcs = [[u(t, Γ) ~ sqrt(t - 0.5) for Γ in pieces(Ω)]; u(1.0, x, y) ~ sqrt(0.5)]
+        sol, _ = fem_solve([eq], bcs, Ω, (x, y), t, [u(t, x, y)]; tspan = (1.0, 2.0))
+        @test SciMLBase.successful_retcode(sol)
+        @test nodal_error(sol, u(t, x, y), (t_, x_, y_) -> sqrt(t_ - 0.5)) <= 1.0e-6
+    end
+
+    @testset "time-dependent load evaluations share no mutable state" begin
+        Ω = MeshDomain(rectangle_grid(Triangle, (24, 24)))
+        eq = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + sin(3t + x) * (1 + y)
+        @named pdesys = PDESystem([eq], [[u(t, Γ) ~ 0 for Γ in pieces(Ω)]; u(0, x, y) ~ 0], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
+        prob = discretize(pdesys, FEMDiscretization(Ω, t))
+        load = SciMLBase.SymbolicIndexingInterface.getp(prob.f.sys, prob.f.sys.Fop)(prob.p)
+        n = length(prob.u0)
+        times = range(0.0, 1.0; length = 32)
+        serial = [FiniteElementMethod.load!(zeros(n), load, τ) for τ in times]
+        concurrent = fetch.([Threads.@spawn FiniteElementMethod.load!(zeros(n), load, τ) for τ in times])
+        @test concurrent == serial
+        Threads.nthreads() > 1 || @info "load evaluations ran on one thread, so this test cannot see a race; run with JULIA_NUM_THREADS > 1"
     end
 
     @testset "algebraic row coupled to a parabolic field" begin

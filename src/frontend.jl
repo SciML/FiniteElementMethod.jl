@@ -214,7 +214,7 @@ function _parameter_values(pdesys, ctx)
     end
 end
 
-function _space(disc, ctx, analysis, dirichlet, pvals)
+function _space(disc, ctx, analysis, dirichlet, pvals, t0)
     grid = disc.domain.mesh
     shape = Ferrite.getrefshape(Ferrite.getcelltype(grid))
     names = Symbol[nameof(op) for op in ctx.ops]
@@ -226,7 +226,7 @@ function _space(disc, ctx, analysis, dirichlet, pvals)
         (names[bc.field], String(bc.piece.name), (x, t) -> g(x, t, pvals))
             for (bc, (_, _, g)) in zip(analysis.essential, dirichlet)
     ]
-    return FEMSpace(grid, names .=> ips; dirichlet = bcs, quadrature = disc.quadrature), names, ips
+    return FEMSpace(grid, names .=> ips; dirichlet = bcs, quadrature = disc.quadrature, t0), names, ips
 end
 
 # Nodal coordinates of every dof; Lagrange interpolation of `x_d` gives them exactly.
@@ -259,6 +259,46 @@ function _dirichlet_values(space, dirichlet, coords, pvals, t0)
     return values!, values!(zeros(length(dofs)), t0)
 end
 
+# Source-only assembly through m1's cell loop: the time-dependent load is re-evaluated at every
+# residual call, where assembling zero M and K blocks would dominate.
+struct SourceOp
+    F::Vector{Float64}
+    Fe::Vector{Float64}
+end
+
+_start_cell!(op::SourceOp, dofs) = (fill!(op.Fe, 0); nothing)
+_finish_cell!(op::SourceOp, dofs) = (Ferrite.assemble!(op.F, dofs, op.Fe); nothing)
+
+function _kernel!(op::SourceOp, k::KernelSpec, vals, xs, ranges::NTuple{NF}, p, t) where {NF}
+    rows = ranges[k.eq]
+    U0 = ntuple(_ -> 0.0, Val(NF))
+    for q in 1:Ferrite.getnquadpoints(vals)
+        dΩ = Ferrite.getdetJdV(vals, q)
+        X = Ferrite.spatial_coordinate(vals, q, xs)
+        G0 = _unit_gradient(Val(NF), 0, zero(X))
+        N = _normal(vals, q, X)
+        for i in 1:Ferrite.getnbasefunctions(vals)
+            V, W = Ferrite.shape_value(vals, q, i), Ferrite.shape_gradient(vals, q, i)
+            op.Fe[rows[i]] -= k.f(U0, G0, U0, V, W, X, t, N, p) * dΩ
+        end
+    end
+    return nothing
+end
+
+"Write `F = −∫source` of the `:source` kernels at time `t` into `F`."
+function assemble_sources!(F, ctx::AssemblyContext{NF}, kernels, p, t) where {NF}
+    fill!(F, 0)
+    op = SourceOp(F, zeros(NF * Ferrite.getnbasefunctions(ctx.cv)))
+    _assemble!(op, ctx, _split(ctx, kernels, (:source,))..., p, t)
+    return F
+end
+
+# `reinit!` mutates CellValues and FacetValues, so each load evaluation gets its own copies and
+# concurrent solves of one problem's remakes share no mutable state.
+function _fresh_values(ctx::AssemblyContext{NF, DH, CV, FV}) where {NF, DH, CV, FV}
+    return AssemblyContext{NF, DH, CV, FV}(ctx.dh, ctx.fields, copy(ctx.cv), copy(ctx.fv), ctx.facetsets)
+end
+
 function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
     kernels = emit_kernels(wf)
     timedep = [term.kind === :source && term.timedep for term in vcat(wf.volume, wf.facet)]
@@ -269,11 +309,7 @@ function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
     n = Ferrite.ndofs(space.dh)
     M, K, F = copy(space.pattern), copy(space.pattern), zeros(n)
     assemble_linear!(M, K, F, ctx, static, pvals; t = t0)
-    load = isempty(dynamic) ? F : function (out, t)
-            assemble_linear!(copy(space.pattern), copy(space.pattern), out, ctx, dynamic, pvals; t)
-            out .+= F
-            return out
-    end
+    load = isempty(dynamic) ? F : (out, t) -> (assemble_sources!(out, _fresh_values(ctx), dynamic, pvals, t); out .+= F)
     coords = _dof_coordinates(space)
     values!, values0 = _dirichlet_values(space, dirichlet, coords, pvals, t0)
     ops = FEMOperators(
@@ -336,8 +372,8 @@ function _lower(pdesys, disc::FEMDiscretization)
     _check_linear(wf)
     pvals = _parameter_values(sys, ctx)
     dirichlet = emit_dirichlet(an)
-    space, names, ips = _space(disc, ctx, an, dirichlet, pvals)
     t0, t1 = v.intervals[v.time]
+    space, names, ips = _space(disc, ctx, an, dirichlet, pvals, t0)
     timedep_dirichlet = any(bc -> _depends(bc.g, [an.slots.T]), an.essential)
     ops, coords = _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
     u0 = _initial_values(ics, ctx, space, coords, an, names, pvals)
@@ -358,6 +394,12 @@ Galerkin operators, with Dirichlet rows `u_d = g_d(t)` as algebraic equations, a
 analytic Jacobian and the `FEMMetadata` as its `problem_type`, so `solve` returns a
 `PDETimeSeriesSolution`. Nothing calls `mtkcompile`; anything this milestone cannot
 discretize raises. Keywords (after `disc.kwargs`) are passed to the `DAEProblem`.
+
+The Dirichlet rows are linear with identity Jacobian rows, so a Newton step with a current
+Jacobian satisfies them exactly. OrdinaryDiffEq's BDF methods reuse the Jacobian across
+step-size changes and then rescale the Newton step, which leaves these rows off by about the
+solver tolerance; `DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0))` refreshes it on every step
+size change and holds `u(t, Γ) ~ g(t)` to round-off.
 """
 function SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
     parts = _lower(pdesys, disc)
