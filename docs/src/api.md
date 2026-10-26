@@ -1,19 +1,8 @@
 # API
 
-These are internal building blocks of the Ferrite backend; none is exported yet.
+These are the package's internals during development; none of them is exported yet.
 
-## Meshes
-
-```@docs
-FiniteElementMethod.rectangle_grid
-FiniteElementMethod.check_facetsets
-```
-
-## Discrete space
-
-```@docs
-FiniteElementMethod.FEMSpace
-FiniteElementMethod.field_range
-FiniteElementMethod.prescribed_dofs
-FiniteElementMethod.dirichlet_values!
+```@autodocs
+Modules = [FiniteElementMethod]
+Order = [:type, :function, :constant, :macro]
 ```
