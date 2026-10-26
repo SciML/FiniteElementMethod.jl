@@ -16,5 +16,6 @@ using SciMLBase: SciMLBase
 using Symbolics: Symbolics, Num
 
 include("weakform.jl")
+include("kernels.jl")
 
 end # module
