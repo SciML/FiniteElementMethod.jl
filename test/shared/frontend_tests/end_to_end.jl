@@ -182,15 +182,15 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         Threads.nthreads() > 1 || @info "load evaluations ran on one thread, so this test cannot see a race; run with JULIA_NUM_THREADS > 1"
     end
 
-    @testset "algebraic row coupled to a parabolic field" begin
+    @testset "algebraic row coupled to a parabolic field, listed $(algebraic_first ? "first" : "second")" for algebraic_first in (false, true)
         # u_t = Δu + v with the algebraic row 0 = Δv; u* = (1 + x + 2y)(1 + t), v* = 1 + x + 2y.
         Ω = MeshDomain(rectangle_grid(Triangle, (4, 4)))
         parabolic = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + v(t, x, y)
         algebraic = 0 ~ Dx(Dx(v(t, x, y))) + Dy(Dy(v(t, x, y)))
         bcs = [dirichlet_all(Ω); [v(t, Γ) ~ 1 + x + 2y for Γ in pieces(Ω)]; ic]
+        eqs = algebraic_first ? [algebraic, parabolic] : [parabolic, algebraic]
         sol, prob = fem_solve(
-            [parabolic, algebraic], bcs, Ω, (x, y), t, [u(t, x, y), v(t, x, y)];
-            pairing = Dict(algebraic => v)
+            eqs, bcs, Ω, (x, y), t, [u(t, x, y), v(t, x, y)]; pairing = Dict(algebraic => v)
         )
         @test SciMLBase.successful_retcode(sol)
         space = sol.disc_data.space

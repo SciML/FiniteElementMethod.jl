@@ -57,6 +57,14 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         @test occursin("which is not on Γ_left", msg)
     end
 
+    @testset "endpoint form on a mesh" begin
+        # A mesh domain has no coordinate intervals, so u(t, 0, y) cannot name a face even when
+        # the mesh is a box; the condition must be a trace on a boundary piece.
+        Ω = box()
+        msg = errmsg(() -> lower([heat], [u(t, 0, y) ~ 0, ic], Ω))
+        @test occursin("write a trace on a boundary piece instead", msg)
+    end
+
     @testset "periodic conditions" begin
         Ω = box()
         Γl, Γr = sides(Ω)

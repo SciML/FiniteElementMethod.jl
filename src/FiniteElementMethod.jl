@@ -44,7 +44,7 @@ const MESH_PDEBASE = isdefined(PDEBase, :AbstractMeshDiscretization) &&
     isdefined(PDEBase, :classify_condition) && isdefined(PDEBase, :substitute_traces) &&
     isdefined(PDEBase, :PieceBoundary) && isdefined(PDEBase, :StrongForm) && all(
     name -> isdefined(getfield(PDEBase, :StrongForm), name),
-    (:analyse, :route_natural, :essential_condition, :pair_equations)
+    (:analyse, :declared_fields, :route_natural, :essential_condition, :pair_equations)
 )
 
 @static if MESH_PDEBASE

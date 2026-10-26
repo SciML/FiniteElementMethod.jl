@@ -44,7 +44,8 @@ Pieces come from `boundarypiece.(Ω, names)`; on an analytic DomainSets box writ
 Where pieces with Dirichlet conditions on the same field meet (a corner), the condition listed
 last in the `PDESystem`'s boundary conditions wins, as in Ferrite's `ConstraintHandler`.
 Fields are numbered in one order throughout (`DofHandler` blocks, array unknowns,
-`FEMMetadata.fields`), the order of `PDEBase.depvars`; equations are paired with fields
+`FEMMetadata.fields`), the declared order of the `PDESystem`'s dependent variables
+(`PDEBase.StrongForm.declared_fields`); equations are paired with fields
 through `PDEBase.StrongForm.pair_equations`.
 
 Parameters are substituted by the values given in the `PDESystem` when the operators are

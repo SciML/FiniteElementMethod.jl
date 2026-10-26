@@ -360,7 +360,7 @@ function _lower(pdesys, disc::FEMDiscretization)
     v = PDEBase.VariableMap(sys, disc; replaced_vars = replaced)
     PDEBase.interface_errors(sys, v, disc)
     ics, piecebcs = _split_conditions(sys.bcs, v, disc)
-    ctx = StrongForm.SlotContext(v)
+    ctx = StrongForm.SlotContext(sys, v)
     an = StrongForm.analyse(sys, v, Dict(); ibp = disc.ibp)
     an = _with_boundary_conditions(_paired(an, pdesys.eqs, ctx, disc), piecebcs, ctx)
     isempty(an.periodic) || throw(ArgumentError(_PERIODIC_M4))
@@ -382,7 +382,7 @@ function _lower(pdesys, disc::FEMDiscretization)
     dirichlet_values!(view(u0, ops.prescribed), ops.load, t0)
     iv = disc.time
     unknowns = [only(@variables $name(iv)[1:length(field_range(space, name))]) for name in names]
-    fields = [FieldInfo(dv, name, u, ip) for (dv, name, u, ip) in zip(PDEBase.depvars(v), names, unknowns, ips)]
+    fields = [FieldInfo(dv, name, u, ip) for (dv, name, u, ip) in zip(StrongForm.declared_fields(sys, v), names, unknowns, ips)]
     pieces = Dict{Any, String}(Γ => String(Γ.name) for Γ in PDEBase.boundarypieces(disc.domain))
     md = FEMMetadata(space, iv, v.x̄, fields, pieces, pdesys; u0)
     return (; ops, u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys))
