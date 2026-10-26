@@ -414,6 +414,8 @@ end
 SciMLBase.discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...) =
     DAEProblem(pdesys, disc; kwargs...)
 
+# `(sys, tspan)`, the shape PDEBase and MethodOfLines return.
 function SciMLBase.symbolic_discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
-    return DAEProblem(pdesys, disc).f.sys
+    prob = DAEProblem(pdesys, disc)
+    return prob.f.sys, prob.tspan
 end

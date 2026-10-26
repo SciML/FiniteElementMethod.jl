@@ -61,6 +61,9 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         sol = solve(prob, EXACT_ROWS)
         @test sol.t == 0:0.25:1
         @test sol.disc_data isa FEMMetadata
+        sys, tspan = SciMLBase.symbolic_discretize(pdesys, FEMDiscretization(Ω, t))
+        @test tspan == (0.0, 1.0)
+        @test sys isa ModelingToolkit.System
     end
 
     @testset "P1 quadrilaterals" begin
