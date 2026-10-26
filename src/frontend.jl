@@ -74,6 +74,12 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
                 "$(join(sort(string.(unknown)), ", ")); the dependent variables are $(join(sort(string.(dvs)), ", "))"
         )
     )
+    t = v.time
+    for u in dvs
+        args = SymbolicUtils.arguments(unwrap(u))
+        t !== nothing && any(a -> isequal(a, t), args) && !isequal(first(args), t) &&
+            throw(ArgumentError("time must be the first argument of $u; time-last ordering lands later"))
+    end
     grid = disc.domain.mesh
     if !isconcretetype(Ferrite.getcelltype(grid))
         unset = [u for u in PDEBase.depvars(v) if !haskey(disc.spaces, _field_op(u))]

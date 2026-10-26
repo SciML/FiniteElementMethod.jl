@@ -115,6 +115,15 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         @test occursin("time t must be paired with an interval", errmsg(() -> lower([heat], [ic], Ω; domains)))
     end
 
+    @testset "time must be the first argument" begin
+        Ω = box()
+        eq = Dt(u(x, y, t)) ~ Dx(Dx(u(x, y, t))) + Dy(Dy(u(x, y, t)))
+        bcs = [u(x, y, 0) ~ 0]
+        @test_throws ArgumentError("time must be the first argument of u(x, y, t); time-last ordering lands later") lower(
+            [eq], bcs, Ω; dvs = [u(x, y, t)]
+        )
+    end
+
     @testset "unknown spaces key" begin
         Ω = box()
         @test_throws ArgumentError(
