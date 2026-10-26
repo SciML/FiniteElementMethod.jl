@@ -1,17 +1,8 @@
 # API
 
-These functions are internal and not exported; they are documented here for contributors.
+These are the package's internals during development; none of them is exported yet.
 
-## DAE lowering
-
-```@docs
-FiniteElementMethod.FEMOperators
-FiniteElementMethod.FEMOp
-FiniteElementMethod.FEMLoad
-FiniteElementMethod.load!
-FiniteElementMethod.dirichlet_rates
-FiniteElementMethod.fem_system
-FiniteElementMethod.numeric_dae_problem
-FiniteElementMethod.consistent_du0
-FiniteElementMethod.check_finite_initial_condition
+```@autodocs
+Modules = [FiniteElementMethod]
+Order = [:type, :function, :constant, :macro]
 ```

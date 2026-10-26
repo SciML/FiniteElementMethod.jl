@@ -6,3 +6,6 @@ versions = ["lts", "1"]
 
 [DAE]
 versions = ["lts", "1", "pre"]
+
+[WeakForm]
+versions = ["lts", "1", "pre"]
