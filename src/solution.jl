@@ -197,9 +197,12 @@ coordinates of the trace values.
 piece_nodes(A::FEMSolution, Γ) = piece_nodes(A.disc_data, Γ)
 function piece_nodes(md::FEMMetadata, Γ)
     grid = _grid(md)
+    # The geometric interpolation's facet dofs are the facet's local nodes, mid-edge nodes included.
+    facet_nodes = Ferrite.dirichlet_facetdof_indices(_geometry(md))
     ids = Int[]
     for fi in _sorted_facets(md, Γ)
-        append!(ids, Ferrite.facets(Ferrite.getcells(grid, fi[1]))[fi[2]])
+        cell_nodes = Ferrite.getcells(grid, fi[1]).nodes
+        append!(ids, (cell_nodes[i] for i in facet_nodes[fi[2]]))
     end
     return sort!(unique!(ids))
 end
