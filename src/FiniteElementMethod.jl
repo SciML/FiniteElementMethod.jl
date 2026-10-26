@@ -42,7 +42,7 @@ export Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexa
 # StrongForm boundary routing is the compat floor.
 const MESH_PDEBASE = isdefined(PDEBase, :AbstractMeshDiscretization) &&
     isdefined(PDEBase, :classify_condition) && isdefined(PDEBase, :substitute_traces) &&
-    isdefined(PDEBase, :StrongForm) && all(
+    isdefined(PDEBase, :PieceBoundary) && isdefined(PDEBase, :StrongForm) && all(
     name -> isdefined(getfield(PDEBase, :StrongForm), name),
     (:analyse, :route_natural, :essential_condition, :pair_equations)
 )

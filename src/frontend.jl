@@ -2,11 +2,11 @@
 # strong form, this file slots the trace conditions on mesh pieces, projects with Galerkin, assembles
 # with m1's driver and lowers to the numeric DAE path.
 #
-# PDEBase's generic `symbolic_discretize` cannot drive a mesh discretization yet: it calls
-# `parse_bcs(bcs, v, orders)`, which has no mesh method and fails on traces. This driver calls the
-# same steps itself, in the same order.
-# Tracking: replace `_lower`'s hand-called steps with PDEBase hook methods once PDEBase has
-# `parse_bcs` for `AbstractMeshDiscretization` (spec §4.2, PieceBoundary).
+# This driver calls PDEBase's steps (make_pdesys_compatible, VariableMap, interface_errors,
+# parse_bcs, split_ics_bcs, StrongForm.analyse) itself rather than through the generic
+# `symbolic_discretize`, whose remaining hooks build an MTK system this numeric path does not use.
+# Tracking: move to PDEBase's `symbolic_discretize` with hook methods once a PDEBase release has
+# the mesh `parse_bcs` (PDEBase#152) and piece slotting in StrongForm.
 
 const _PERIODIC_M4 = "periodic conditions need milestone M4 (Ferrite PeriodicDirichlet)"
 
@@ -80,23 +80,21 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
     return nothing
 end
 
-# Initial conditions, and `piece => equation` for every boundary condition.
-function _split_conditions(bcs, v)
-    ics, piecebcs = Equation[], Pair{Any, Equation}[]
+# Initial conditions, and `piece => equation` for every boundary condition in input order.
+# PDEBase's mesh `parse_bcs` files the conditions by field and piece; FEM restores the input
+# order because the condition listed last wins at a dof shared by two Dirichlet pieces.
+# Tracking: use the boundary map's order directly once PDEBase keeps essential conditions in input order.
+function _split_conditions(bcs, v, disc)
     for eq in bcs
         length(_trace_pieces(eq.lhs - eq.rhs)) > 1 && throw(ArgumentError("$(_PERIODIC_M4): $eq"))
-        c = PDEBase.classify_condition(v, eq)
-        c.kind === :periodic && throw(ArgumentError("$(_PERIODIC_M4): $eq"))
-        if c.kind === :initial
-            push!(ics, eq)
-            continue
-        end
-        loc = only(c.locations)
-        loc isa PDEBase.Piece ||
-            throw(ArgumentError("condition $eq is on $loc; on a mesh, write it as a trace on a boundary piece"))
-        push!(piecebcs, loc.piece => eq)
     end
-    return ics, piecebcs
+    orders = Dict(x => PDEBase.d_orders(x, bcs) for x in PDEBase.all_ivs(v))
+    boundarymap = PDEBase.parse_bcs(bcs, v, orders, disc)
+    ics, bcmap = PDEBase.split_ics_bcs(boundarymap, v, disc)
+    position(eq) = findfirst(b -> isequal(b, eq), bcs)
+    piecebcs = Pair{Any, Equation}[b.piece => b.eq for bykey in values(bcmap) for bs in values(bykey) for b in bs]
+    sort!(piecebcs; by = pb -> position(last(pb)))
+    return Equation[b.eq for b in ics], unique(piecebcs)
 end
 
 _field_index(ctx, ex) = SymbolicUtils.iscall(ex) ?
@@ -361,7 +359,7 @@ function _lower(pdesys, disc::FEMDiscretization)
     sys, replaced = PDEBase.make_pdesys_compatible(pdesys)
     v = PDEBase.VariableMap(sys, disc; replaced_vars = replaced)
     PDEBase.interface_errors(sys, v, disc)
-    ics, piecebcs = _split_conditions(sys.bcs, v)
+    ics, piecebcs = _split_conditions(sys.bcs, v, disc)
     ctx = StrongForm.SlotContext(v)
     an = StrongForm.analyse(sys, v, Dict(); ibp = disc.ibp)
     an = _with_boundary_conditions(_paired(an, pdesys.eqs, ctx, disc), piecebcs, ctx)

@@ -3,9 +3,9 @@ using SciMLTesting, FiniteElementMethod
 # `Ferrite.DofOrder.FieldWise` is Ferrite's documented renumbering API but is not declared `public`;
 # ForwardDiff documents `derivative` as its API but does not declare it `public`;
 # `Ferrite.dirichlet_facetdof_indices` (a facet's local nodes) has no public spelling in Ferrite 1.
-# Tracking: drop NONPUBLIC_PDEBASE once the PDEBase compat floor includes PDEBase#148/#149,
-# which declare these public; ExplicitImports also scans the gated source on PDEBase 0.1.39.
-const NONPUBLIC_PDEBASE = (:make_pdesys_compatible, :route_natural, :essential_condition, :pair_equations)
+# Tracking: drop NONPUBLIC_PDEBASE once the PDEBase compat floor includes PDEBase#148/#149 and
+# declares `parse_bcs` public; ExplicitImports also scans the gated source on PDEBase 0.1.39.
+const NONPUBLIC_PDEBASE = (:make_pdesys_compatible, :parse_bcs, :route_natural, :essential_condition, :pair_equations)
 
 run_qa(
     FiniteElementMethod;
