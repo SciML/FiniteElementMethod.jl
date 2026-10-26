@@ -18,5 +18,6 @@ using Symbolics: Symbolics, Num
 include("weakform.jl")
 include("kernels.jl")
 include("assembly.jl")
+include("operators.jl")
 
 end # module
