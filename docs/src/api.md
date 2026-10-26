@@ -71,4 +71,5 @@ FiniteElementMethod.AssemblyContext
 FiniteElementMethod.assemble_linear
 FiniteElementMethod.assemble_nonlinear
 FiniteElementMethod._split
+FiniteElementMethod.assemble_sources!
 ```
