@@ -2,7 +2,8 @@
 # the in-place nonlinear operator: a LinearCache reassembles only the stale operators, and NonlinearOperator
 # matches assemble_nonlinear and central differences without allocating per cell.
 include(joinpath(@__DIR__, "..", "shared", "references.jl"))
-using FiniteElementMethod: LinearCache, update!, NonlinearOperator, residual!, jacobian!, residual_jacobian!
+using FiniteElementMethod: LinearCache, update!, NonlinearOperator, residual!, jacobian!, residual_jacobian!,
+    assemble_linear!
 
 @variables t x y k
 @variables u(..)
@@ -79,6 +80,28 @@ end
     @test relerr(r2, ref.r) ≤ 1.0e-14 && relerr(J2, ref.J) ≤ 1.0e-14
     R(v) = residual!(zeros(length(v)), op, v, P0, 0.0)
     @test tangent_error(R, J, u) ≤ 1.0e-9
+end
+
+@testset "residuals assemble into a view of a larger buffer" begin
+    c = nonlinear_problem()
+    setup = mesh_setup(Triangle, 1, 6)
+    n = ndofs(setup.dh)
+    op = NonlinearOperator(setup.ctx, c.kernels)
+    u = 0.5 .* randn(Xoshiro(7), n)
+    ref = assemble_nonlinear(setup.ctx, c.kernels, u, P0)
+    buffer = fill(NaN, n + 4)
+    residual!(view(buffer, 3:(n + 2)), op, u, P0, 0.0)
+    @test buffer[3:(n + 2)] == residual!(zeros(n), op, u, P0, 0.0)
+    @test relerr(buffer[3:(n + 2)], ref.r) ≤ 1.0e-14
+    @test all(isnan, buffer[[1, 2, n + 3, n + 4]])
+    buffer = fill(NaN, n + 4)
+    _, J = residual_jacobian!(view(buffer, 3:(n + 2)), similar(op.J), op, u, P0, 0.0)
+    @test relerr(buffer[3:(n + 2)], ref.r) ≤ 1.0e-14 && relerr(J, ref.J) ≤ 1.0e-14
+    lin = linear_problem()
+    A = fresh(setup, lin, [2.0], 0.5)
+    M, K, Fbuffer = similar(A.M), similar(A.K), fill(NaN, n + 4)
+    assemble_linear!(M, K, view(Fbuffer, 3:(n + 2)), setup.ctx, lin.kernels, [2.0]; t = 0.5)
+    @test relerr(Fbuffer[3:(n + 2)], A.F) ≤ 1.0e-14
 end
 
 @testset "residual! allocation does not scale with the mesh" begin

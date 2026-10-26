@@ -102,19 +102,19 @@ function assemble_nonlinear!(r, J, ctx::AssemblyContext{NF}, kernels, u, p; t = 
     return r, J
 end
 
-struct LinearOp{AM, AK}
+struct LinearOp{AM, AK, FV <: AbstractVector{Float64}}
     aM::AM
     aK::AK
-    F::Vector{Float64}
+    F::FV
     Me::Matrix{Float64}
     Ke::Matrix{Float64}
     Fe::Vector{Float64}
 end
 
 # `aJ === nothing` assembles the residual only.
-struct NonlinearOp{AJ, U}
+struct NonlinearOp{AJ, R <: AbstractVector{Float64}, U}
     aJ::AJ
-    r::Vector{Float64}
+    r::R
     Je::Matrix{Float64}
     re::Vector{Float64}
     u::U
