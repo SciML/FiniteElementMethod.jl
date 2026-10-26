@@ -1,11 +1,12 @@
 """
-    FEMSpace(grid, fields; dirichlet = (), quadrature = nothing)
+    FEMSpace(grid, fields; dirichlet = (), quadrature = nothing, t0 = 0.0)
 
 The Ferrite discrete space of a mesh discretization (spec §6.2-6.4). `fields` is an ordered collection of
 `name => interpolation` pairs; after `renumber!(dh, DofOrder.FieldWise())` field `k` occupies a contiguous
 block of the global dof vector, in declaration order. `dirichlet` is a collection of
 `(field, facetset_name, g)` with `g(x, t)`. `quadrature` is the quadrature order shared by every field,
-`2p` for the highest Lagrange order `p` by default (spec §5.6).
+`2p` for the highest Lagrange order `p` by default (spec §5.6). The constraint handler is first
+updated at `t0`, the initial time, since Dirichlet data need not be defined before it.
 
 Fields: `grid`, `dh` (the `DofHandler`), `ch` (the closed `ConstraintHandler`), `fields` (names in
 declaration order), `cellvalues` and `facetvalues` (`NamedTuple`s keyed by field), `ranges` (global dof
@@ -28,7 +29,9 @@ end
 
 _order(::Ferrite.Interpolation{shape, order}) where {shape, order} = order
 
-function FEMSpace(grid::Ferrite.Grid, fields; dirichlet = (), quadrature::Union{Nothing, Int} = nothing)
+function FEMSpace(
+        grid::Ferrite.Grid, fields; dirichlet = (), quadrature::Union{Nothing, Int} = nothing, t0::Real = 0.0
+    )
     names = Symbol[first(f) for f in fields]
     ips = Tuple(last(f) for f in fields)
     allunique(names) || throw(ArgumentError("field names must be unique; got $(names)"))
@@ -45,12 +48,16 @@ function FEMSpace(grid::Ferrite.Grid, fields; dirichlet = (), quadrature::Union{
     Ferrite.close!(dh)
     Ferrite.renumber!(dh, Ferrite.DofOrder.FieldWise())
 
+    # `close!(ch)` calls `update!(ch, 0.0)` itself; until it returns, evaluate the data at `t0` instead.
+    closed = Ref(false)
     ch = Ferrite.ConstraintHandler(dh)
     for (field, set, g) in dirichlet
-        Ferrite.add!(ch, Ferrite.Dirichlet(Symbol(field), Ferrite.getfacetset(grid, String(set)), g))
+        g_from_t0 = (x, t) -> g(x, closed[] ? t : t0)
+        Ferrite.add!(ch, Ferrite.Dirichlet(Symbol(field), Ferrite.getfacetset(grid, String(set)), g_from_t0))
     end
     Ferrite.close!(ch)
-    Ferrite.update!(ch, 0.0)
+    closed[] = true
+    Ferrite.update!(ch, t0)
 
     shape = Ferrite.getrefshape(first(ips))
     order = something(quadrature, 2 * maximum(_order, ips))
