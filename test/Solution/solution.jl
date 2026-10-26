@@ -246,3 +246,30 @@ end
     @test_throws DomainError sol(1.5, 0.2, 0.3; dv = u(t, x, y))
     @test_throws DomainError sol(-0.5, 0.2, 0.3; dv = u(t, x, y))
 end
+
+@testset "Quadratic geometry" begin
+    grid = with_inlet(generate_grid(QuadraticTriangle, (2, 2), Vec(0.0, 0.0), Vec(1.0, 1.0)))
+    for (g, dgx, dgy) in (
+            (x -> x[1] + 2x[2], x -> 1.0, x -> 2.0),
+            (x -> x[1]^2 + x[1] * x[2], x -> 2x[1] + x[2], x -> x[1]),
+        )
+        dh = DofHandler(grid)
+        add!(dh, :u, P2)
+        close!(dh)
+        U = zeros(ndofs(dh))
+        apply_analytical!(U, dh, :u, g)
+        sol, syms = steady_from_dofs(dh, (; u = P2), U)
+        (; x, y, u, Γ) = syms
+        p = Vec(0.3, 0.6)
+        @test sol(p[1], p[2]; dv = u(x, y)) ≈ g(p) atol = 1.0e-12
+        @test sol(p[1], p[2]; dv = Differential(x)(u(x, y))) ≈ dgx(p) atol = 1.0e-12
+        @test sol(p[1], p[2]; dv = Differential(y)(u(x, y))) ≈ dgy(p) atol = 1.0e-12
+        nodes = Vec.(sol[x], sol[y])
+        @test sol[u(x, y)] ≈ g.(nodes) atol = 1.0e-12
+        @test sol[Differential(x)(u(x, y))] ≈ dgx.(nodes) atol = 1.0e-12
+        @test sol[Differential(y)(u(x, y))] ≈ dgy.(nodes) atol = 1.0e-12
+        # Facet means of -∂u/∂x over the inlet's two facets, y ∈ [0, 1/2] and [1/2, 1].
+        inlet_flux = [-dgx(Vec(0.0, 0.25)), -dgx(Vec(0.0, 0.75))]
+        @test normal_flux(sol, u(x, y), Γ) ≈ inlet_flux atol = 1.0e-12
+    end
+end
