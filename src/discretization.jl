@@ -1,3 +1,9 @@
+# PDEBase's backend extension point: `MeshDomain(grid)` calls these on the native mesh.
+PDEBase.meshdim(grid::Ferrite.Grid) = _meshdim(grid)
+PDEBase.facetset_names(grid::Ferrite.Grid) = _facetset_names(grid)
+PDEBase.cellset_names(grid::Ferrite.Grid) = _cellset_names(grid)
+PDEBase.contains_point(grid::Ferrite.Grid, x) = _contains_point(grid, x)
+
 """
     AbstractTestSpace
 

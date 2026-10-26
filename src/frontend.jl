@@ -4,7 +4,9 @@
 #
 # PDEBase's generic `symbolic_discretize` cannot drive a mesh discretization yet: it calls
 # `parse_bcs(bcs, v, orders)`, which has no mesh method and fails on traces. This driver calls the
-# same steps itself, in the same order, until the `AbstractMeshDiscretization` `parse_bcs` lands.
+# same steps itself, in the same order.
+# Tracking: replace `_lower`'s hand-called steps with PDEBase hook methods once PDEBase has
+# `parse_bcs` for `AbstractMeshDiscretization` (spec §4.2, PieceBoundary).
 
 const _PERIODIC_M4 = "periodic conditions need milestone M4 (Ferrite PeriodicDirichlet)"
 
@@ -109,6 +111,8 @@ function _has_op(ex, T)
 end
 
 # Trace `u_f(t, Γ)` => `U[f]`, `Dn_Γ(u_f(t, Γ))` => `N·G_f` and `Dx_d(u_f(t, Γ))` => `G_f[d]`.
+# Tracking: delete `_trace_rules!` and `_slot_piece_condition` once PDEBase.StrongForm slots
+# piece traces and `NormalDerivative` (strongform-3 `boundary.jl`, "A NormalDerivative(Γ) method").
 function _trace_rules!(rules, ex, ctx, slots, eq)
     SymbolicUtils.iscall(ex) || return rules
     dim = length(ctx.sivs)

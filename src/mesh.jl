@@ -22,12 +22,6 @@ function _contains_point(grid::Ferrite.Grid{dim}, x) where {dim}
     return handler.cells[1] !== nothing
 end
 
-# PDEBase's backend extension point: `MeshDomain(grid)` calls these on the native mesh.
-PDEBase.meshdim(grid::Ferrite.Grid) = _meshdim(grid)
-PDEBase.facetset_names(grid::Ferrite.Grid) = _facetset_names(grid)
-PDEBase.cellset_names(grid::Ferrite.Grid) = _cellset_names(grid)
-PDEBase.contains_point(grid::Ferrite.Grid, x) = _contains_point(grid, x)
-
 # Ferrite's `generate_grid` face names, renamed to the PDEBase `BoundaryPiece` names of a box.
 const _BOX_FACE_NAMES = Dict(
     1 => ("left" => "x1_lo", "right" => "x1_hi"),

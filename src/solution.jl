@@ -300,7 +300,7 @@ function Base.getindex(A::FEMSolution, sym::Num)
         projector = _gradient_projector(md, g[1])
         return _stack(A, [_nodal_gradient(md, g..., U, projector) for U in _states(A)])
     end
-    if SymbolicUtils.iscall(s) && SymbolicUtils.operation(s) isa PDEBase.NormalDerivative
+    if SymbolicUtils.iscall(s) && _is_normal_derivative(SymbolicUtils.operation(s))
         trace = Symbolics.unwrap(only(SymbolicUtils.arguments(s)))
         f = _fieldinfo(md, trace)
         Γ = _piece_arg(trace)

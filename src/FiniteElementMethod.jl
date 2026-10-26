@@ -17,7 +17,7 @@ using LinearAlgebra: dot, mul!
 using ModelingToolkit: ModelingToolkit, @parameters, @variables, Differential, MTKParameters,
     ProblemTypeCtx, System, complete, getmetadata
 using NonlinearSolveFirstOrder: NewtonRaphson
-using PDEBase: PDEBase, StrongForm, MeshDomain, boundarypiece, boundarypieces, NormalDerivative
+using PDEBase: PDEBase
 using SciMLBase: SciMLBase, DAEFunction, DAEProblem
 using SciMLBase.SymbolicIndexingInterface: getp, variable_index
 using SparseArrays: SparseMatrixCSC, nonzeros, nzrange, rowvals
@@ -32,13 +32,30 @@ include("solution.jl")
 include("weakform.jl")
 include("kernels.jl")
 include("assembly.jl")
-include("discretization.jl")
-include("frontend.jl")
-
-export FEMDiscretization
 export FieldInfo, FEMMetadata, piece_nodes, normal_flux, write_vtk
 # Re-exported so that the user API of a FEM model needs no `using PDEBase, Ferrite`.
-export MeshDomain, boundarypiece, boundarypieces, NormalDerivative
 export Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexahedron
+
+# Whether the installed PDEBase has the mesh-discretization layer the PDESystem front end is
+# built on (spec §4). Without it the package still loads, with the Ferrite backend only.
+# Tracking: delete this gate once a PDEBase release with the mesh classifier and
+# StrongForm boundary routing is the compat floor.
+const MESH_PDEBASE = isdefined(PDEBase, :AbstractMeshDiscretization) &&
+    isdefined(PDEBase, :classify_condition) && isdefined(PDEBase, :substitute_traces) &&
+    isdefined(PDEBase, :StrongForm) && all(
+    name -> isdefined(getfield(PDEBase, :StrongForm), name),
+    (:analyse, :route_natural, :essential_condition, :pair_equations)
+)
+
+@static if MESH_PDEBASE
+    using PDEBase: StrongForm, MeshDomain, boundarypiece, boundarypieces, NormalDerivative
+    include("discretization.jl")
+    include("frontend.jl")
+    _is_normal_derivative(op) = op isa NormalDerivative
+    export FEMDiscretization
+    export MeshDomain, boundarypiece, boundarypieces, NormalDerivative
+else
+    _is_normal_derivative(op) = false
+end
 
 end # module
