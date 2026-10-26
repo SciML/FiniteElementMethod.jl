@@ -106,9 +106,10 @@ _vertex_coordinates(md, d) = [Ferrite.get_node_coordinate(n)[d] for n in Ferrite
 
 function _wrap_parts(sol, md::FEMMetadata, states)
     nt = length(states)
-    umap = Dict{Any, Matrix{Float64}}()
+    T = eltype(first(states))
+    umap = Dict{Any, Matrix{T}}()
     for f in md.fields
-        out = Matrix{Float64}(undef, nt, Ferrite.getnnodes(_grid(md)))
+        out = Matrix{T}(undef, nt, Ferrite.getnnodes(_grid(md)))
         for (k, U) in enumerate(states)
             out[k, :] .= Ferrite.evaluate_at_grid_nodes(_dh(md), U, f.name)
         end
@@ -139,7 +140,7 @@ SciMLBase.PDENoTimeSolution(sol::SciMLBase.PDENoTimeSolution, ::FEMMetadata) = s
 
 function SciMLBase.PDENoTimeSolution(sol::SciMLBase.NonlinearSolution{T}, md::FEMMetadata) where {T}
     umap, xs, dvs, interp = _wrap_parts(sol, md, [sol.u])
-    umap = Dict{Any, Vector{Float64}}(k => vec(v) for (k, v) in umap)
+    umap = Dict{Any, Vector{eltype(sol.u)}}(k => vec(v) for (k, v) in umap)
     ivs = Num.(md.x̄)
     return SciMLBase.PDENoTimeSolution{
         T, length(dvs), typeof(umap), typeof(md), typeof(sol), typeof(xs), typeof(ivs),
@@ -215,7 +216,8 @@ function _facet_normal_flux(md, f::FieldInfo, Γ, U)
     return map(_sorted_facets(md, Γ)) do fi
         Ferrite.reinit!(fv, Ferrite.getcoordinates(grid, fi[1]), fi[2])
         u_cell = U[Ferrite.celldofs(dh, fi[1])[r]]
-        flux = area = 0.0
+        flux = zero(eltype(U))
+        area = 0.0
         for q in 1:Ferrite.getnquadpoints(fv)
             dΓ = Ferrite.getdetJdV(fv, q)
             flux += dot(Ferrite.function_gradient(fv, q, u_cell), Ferrite.getnormal(fv, q)) * dΓ
@@ -255,7 +257,7 @@ function _nodal_gradient(md, f::FieldInfo, d, U, projector)
     (; proj, qr, cv) = projector
     dh = _dh(md)
     r = Ferrite.dof_range(dh, f.name)
-    qpvals = [zeros(Ferrite.getnquadpoints(cv)) for _ in 1:Ferrite.getncells(_grid(md))]
+    qpvals = [zeros(eltype(U), Ferrite.getnquadpoints(cv)) for _ in 1:Ferrite.getncells(_grid(md))]
     for cell in Ferrite.CellIterator(dh)
         Ferrite.reinit!(cv, cell)
         u_cell = U[Ferrite.celldofs(cell)[r]]
@@ -323,7 +325,7 @@ function _point_gradient(ph, md, f, d, U)
     dh = _dh(md)
     r = Ferrite.dof_range(dh, f.name)
     pv = Ferrite.PointValues(f.ip, _geometry(md))
-    out = fill(NaN, length(ph.cells))
+    out = fill(convert(eltype(U), NaN), length(ph.cells))
     for (i, loc) in enumerate(Ferrite.PointIterator(ph))
         loc === nothing && continue
         Ferrite.reinit!(pv, loc)
@@ -363,7 +365,7 @@ function _evaluate(A::FEMSolution, states, tshape, xs, dv, outside)
     elseif outside !== :nan
         throw(ArgumentError("outside must be :nan or :error, got $(repr(outside))"))
     end
-    out = Matrix{Float64}(undef, length(states), length(pts))
+    out = Matrix{eltype(first(states))}(undef, length(states), length(pts))
     for (k, U) in enumerate(states)
         out[k, :] .= g === nothing ? Ferrite.evaluate_at_points(ph, _dh(md), U, f.name) :
             _point_gradient(ph, md, f, g[2], U)

@@ -294,3 +294,36 @@ end
     @test sol(sol.t[k], Γ; dv = u(t, x, y)) ≈ sol[u(t, Γ)][k, :] atol = 1.0e-14
     @test maximum(abs, sol[u(t, Γ)] .- sin.(sol.t)) <= 1.0e-3
 end
+
+@testset "Complex coefficients" begin
+    grid = with_inlet(square_grid(2))
+    dh = DofHandler(grid)
+    add!(dh, :u, P1)
+    close!(dh)
+    c = 1.0 + 2.0im
+    U = fill(c, ndofs(dh))
+    nv = getnnodes(grid)
+
+    steady, syms = steady_from_dofs(dh, (; u = P1), U)
+    (; x, y, u, Γ) = syms
+    @test steady[u(x, y)] isa Vector{ComplexF64}
+    @test steady[u(x, y)] ≈ fill(c, nv)
+    @test steady(0.3, 0.6; dv = u(x, y)) ≈ c
+    vals = steady([0.3, 2.0], 0.6; dv = u(x, y))
+    @test eltype(vals) == ComplexF64 && vals[1] ≈ c && isnan(vals[2])
+    @test steady[u(Γ)] ≈ fill(c, length(piece_nodes(steady, Γ)))
+    @test abs(steady(0.3, 0.6; dv = Differential(x)(u(x, y)))) <= 1.0e-12
+    @test maximum(abs, steady[Differential(x)(u(x, y))]) <= 1.0e-12
+    @test maximum(abs, normal_flux(steady, u(x, y), Γ)) <= 1.0e-12
+
+    prob, tsyms = constant_problem(dh, (; u = P1), U, (0.0, 1.0))
+    raw = SciMLBase.build_solution(prob, DFBDF(), [0.0, 1.0], [U, 2U]; retcode = SciMLBase.ReturnCode.Success)
+    sol = SciMLBase.wrap_sol(raw)
+    (; t, x, y, u) = tsyms
+    @test sol isa SciMLBase.PDETimeSeriesSolution
+    @test sol[u(t, x, y)] isa Matrix{ComplexF64}
+    @test sol[u(t, x, y)] ≈ [fill(c, 1, nv); fill(2c, 1, nv)]
+    @test sol(1.0, 0.3, 0.6; dv = u(t, x, y)) ≈ 2c
+    vals = sol([0.0, 1.0], [0.3, 2.0], 0.6; dv = u(t, x, y))
+    @test eltype(vals) == ComplexF64 && vals[:, 1] ≈ [c, 2c] && all(isnan, vals[:, 2])
+end
