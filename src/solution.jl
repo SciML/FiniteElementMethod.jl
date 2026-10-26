@@ -234,7 +234,6 @@ function normal_flux(A::FEMSolution, dv, Γ)
     return _stack(A, [_facet_normal_flux(md, f, Γ, U) for U in _states(A)])
 end
 
-_order(::Ferrite.Interpolation{<:Any, p}) where {p} = p
 
 # L2 projection of the cellwise gradient component `d` onto the field's own space, at the vertices.
 # Order 2p integrates both the mass matrix and the (p - 1)-degree gradient against p-degree tests.
@@ -275,7 +274,7 @@ function _key_error(A, sym)
             "$sym is not a key of this solution. Index with an independent variable $(A.ivs), " *
                 "a dependent variable $(A.dvs), a trace u(t, Γ) on a boundary piece, or a first " *
                 "spatial derivative such as Differential(x)(u(t, x, y)); higher derivatives are not " *
-                "accepted. Facet normal fluxes come from normal_flux(sol, dv, Γ), and the dof " *
+                "accepted. Facet normal fluxes come from sol[Dn_Γ(u(t, Γ))] or normal_flux(sol, dv, Γ), and the dof " *
                 "coefficients from sol.original_sol[<array unknown>]."
         )
     )
@@ -289,6 +288,13 @@ function Base.getindex(A::FEMSolution, sym::Num)
     haskey(A.u, sym) && return A.u[sym]
     g = _gradkey(md, s)
     g === nothing || return _stack(A, [_nodal_gradient(md, g..., U) for U in _states(A)])
+    if SymbolicUtils.iscall(s) && SymbolicUtils.operation(s) isa PDEBase.NormalDerivative
+        trace = Symbolics.unwrap(only(SymbolicUtils.arguments(s)))
+        f = _fieldinfo(md, trace)
+        Γ = _piece_arg(trace)
+        (f === nothing || !isequal(Γ, SymbolicUtils.operation(s).piece)) && _key_error(A, sym)
+        return normal_flux(A, f.dv, Γ)
+    end
     f = _fieldinfo(md, s)
     f === nothing && _key_error(A, sym)
     Γ = _piece_arg(s)

@@ -1,5 +1,4 @@
-# Ferrite implementations of the PDEBase mesh-domain interface (spec §3.4, §6.1). They act on a plain
-# `Ferrite.Grid` so that `PDEBase.meshdim(::MeshDomain)` and friends can forward to them later.
+# Ferrite implementations of the PDEBase mesh-domain interface (spec §3.4, §6.1).
 
 _meshdim(::Ferrite.Grid{dim}) where {dim} = dim
 
@@ -22,6 +21,12 @@ function _contains_point(grid::Ferrite.Grid{dim}, x) where {dim}
     handler = Ferrite.PointEvalHandler(grid, point; warn = false, search_nneighbors = Ferrite.getnnodes(grid))
     return handler.cells[1] !== nothing
 end
+
+# PDEBase's backend extension point: `MeshDomain(grid)` calls these on the native mesh.
+PDEBase.meshdim(grid::Ferrite.Grid) = _meshdim(grid)
+PDEBase.facetset_names(grid::Ferrite.Grid) = _facetset_names(grid)
+PDEBase.cellset_names(grid::Ferrite.Grid) = _cellset_names(grid)
+PDEBase.contains_point(grid::Ferrite.Grid, x) = _contains_point(grid, x)
 
 # Ferrite's `generate_grid` face names, renamed to the PDEBase `BoundaryPiece` names of a box.
 const _BOX_FACE_NAMES = Dict(
