@@ -270,9 +270,9 @@ function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
     M, K, F = copy(space.pattern), copy(space.pattern), zeros(n)
     assemble_linear!(M, K, F, ctx, static, pvals; t = t0)
     load = isempty(dynamic) ? F : function (out, t)
-        assemble_linear!(copy(space.pattern), copy(space.pattern), out, ctx, dynamic, pvals; t)
-        out .+= F
-        return out
+            assemble_linear!(copy(space.pattern), copy(space.pattern), out, ctx, dynamic, pvals; t)
+            out .+= F
+            return out
     end
     coords = _dof_coordinates(space)
     values!, values0 = _dirichlet_values(space, dirichlet, coords, pvals, t0)
