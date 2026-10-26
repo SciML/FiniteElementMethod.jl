@@ -21,15 +21,15 @@ Checks that only PDEBase passes use `@test_pdebase`, which is `@test` on the PDE
 seam path.
 
 To run the Integration group on the PDEBase path, develop the strongform branch
-(xtalax-droid/PDEBase.jl `forge/strongform` at 6eeb591, which has box-face boundary conditions; its source is the
-same as 4f536e4, SciML/PDEBase.jl#149) into a throwaway environment. Never
+(xtalax-droid/PDEBase.jl `forge/strongform` at 80715ae, SciML/PDEBase.jl#148 and #149, with box-face boundary
+conditions, fields in declared order and conditions in input order) into a throwaway environment. Never
 commit a Project or Manifest that points at it. From the repository root:
 
 ```sh
 env=$(mktemp -d)
 julia --project="$env" -e 'using Pkg
     Pkg.develop(path = ".")
-    Pkg.add(url = "https://github.com/xtalax-droid/PDEBase.jl", rev = "6eeb591")
+    Pkg.add(url = "https://github.com/xtalax-droid/PDEBase.jl", rev = "80715ae")
     Pkg.add(["Test", "SafeTestsets", "SciMLTesting", "LinearAlgebra", "Random", "Ferrite", "Symbolics",
         "DomainSets", "ModelingToolkit"])'
 GROUP=Integration julia --project="$env" test/runtests.jl

@@ -139,11 +139,10 @@ end
 
 @testset "Dirichlet: constant and time-dependent, at two times" begin
     c = scalar_chain(Dt(U) ~ Dx(Dx(U)) + Dy(Dy(U)), [BC("left", U ~ k), BC("bottom", U ~ sin(t) * x + h)])
-    data = Dict("left" => (X, t) -> PV[1], "bottom" => (X, t) -> sin(t) * X[1] + PV[4])
-    @test Set((piece, field) for (piece, field, _) in c.dirichlet) == Set([("left", 1), ("bottom", 1)])
-    # The corner dof both pieces share takes the value of whichever Dirichlet the handler applies last, so the
-    # reference follows the chain's order (PDEBase orders essential conditions by its boundary map, the seam by input).
-    ref = [(piece, :u, data[piece]) for (piece, _, _) in c.dirichlet]
+    # Both paths emit conditions in input order; the corner dof both pieces share takes the value of the Dirichlet
+    # the handler applies last, so the reference uses the same order.
+    ref = [("left", :u, (X, t) -> PV[1]), ("bottom", :u, (X, t) -> sin(t) * X[1] + PV[4])]
+    @test [(piece, field) for (piece, field, _) in c.dirichlet] == [("left", 1), ("bottom", 1)]
     for tv in (0.3, 1.1)
         ch, ch_ref = constraints(SETUP, c.dirichlet, PV; t = tv), constraints_reference(SETUP, ref; t = tv)
         @test ch.prescribed_dofs == ch_ref.prescribed_dofs

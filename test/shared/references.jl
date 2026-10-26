@@ -23,7 +23,7 @@ using PDEBase: PDEBase
 
 # The analysis switch. With a PDEBase whose StrongForm has `analyse` (SciML/PDEBase.jl#149, 4f536e4, and later) the
 # chain's analysis comes from PDEBase: the volume terms, and the boundary conditions on box faces, which the adapter
-# below rewrites as traces. Conditions on any other piece (a mesh facet set), which PDEBase cannot express until
+# below rewrites as traces. PDEBase numbers fields in the declared order and emits conditions in input order. Conditions on any other piece (a mesh facet set), which PDEBase cannot express until
 # strongform PR 5 (piece and NormalDerivative slotting), go through the seam's stage d against PDEBase's fluxes.
 # Released PDEBase has no StrongForm, and the whole analysis falls back to the seam. test/README.md says how to run
 # the PDEBase path locally.
@@ -62,23 +62,6 @@ function on_face(ex, depvars, sivs, d, endpoint)
     return Symbolics.unwrap(op(map(a -> on_face(a, depvars, sivs, d, endpoint), Symbolics.arguments(ex))...))
 end
 
-# Substitution renumbering PDEBase's field slots (`depvars(v)` order, which need not be the declared order) to the
-# declared order `perm[f]` that weak_form's positional pairing and the tests' DofHandler fields assume.
-function field_renumbering(slots, perm, dim)
-    rules = Dict{Num, Num}()
-    for (f, g) in enumerate(perm)
-        rules[slots.U[f]] = slots.U[g]
-        rules[slots.Ud[f]] = slots.Ud[g]
-        for d in 1:dim
-            rules[slots.G[(f - 1) * dim + d]] = slots.G[(g - 1) * dim + d]
-            for e in 1:dim
-                rules[slots.H[((f - 1) * dim + d - 1) * dim + e]] = slots.H[((g - 1) * dim + d - 1) * dim + e]
-            end
-        end
-    end
-    return ex -> Num(Symbolics.substitute(ex, rules))
-end
-
 #     analyse(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict(), periodic = [], domain = nothing)
 #
 # The seam's interface over either path. `bcs` holds seam `BC`s and, on the PDEBase path, raw trace `Equation`s
@@ -112,27 +95,15 @@ function analyse(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict(), periodic
     v = PDEBase.VariableMap(sys, TimeDiscretization(t); replaced_vars = replaced)
     orders = Dict(x => PDEBase.d_orders(x, box) for x in PDEBase.all_ivs(v))
     an = SF.analyse(sys, v, PDEBase.parse_bcs(box, v, orders); ibp)
-    dim = an.dim
-    perm = [findfirst(u -> isequal(Symbolics.operation(Symbolics.unwrap(u)), Symbolics.operation(Symbolics.unwrap(f))), depvars) for f in PDEBase.depvars(v)]
-    R = field_renumbering(an.slots, perm, dim)
-    flux = [R.(G) for G in an.flux]
-    conormal = map(an.conormal) do a
-        out = similar(a)
-        for (f, g) in enumerate(perm), d in 1:dim
-            out[(g - 1) * dim + d] = R(a[(f - 1) * dim + d])
-        end
-        out
-    end
-    essential = Any[SF.EssentialBC{Any}(pieces[b.piece], perm[b.field], b.g) for b in an.essential]
-    natural = Any[SF.NaturalBC{Any}(pieces[b.piece], b.eq, R(b.Φ)) for b in an.natural]
-    periodic_out = Any[SF.PeriodicBC{Any, typeof(b.shift)}(pieces[b.master], pieces[b.mirror], perm[b.field], b.shift) for b in an.periodic]
-    append!(periodic_out, [SF.PeriodicBC{Any, typeof(b.shift)}(b.master, b.mirror, b.field, b.shift) for b in periodic])
-    ess, nat = StrongFormSeam.boundary_conditions(mesh, flux, an.slots; depvars, t, sivs, params)
-    append!(essential, [SF.EssentialBC{Any}(b.piece, b.field, b.g) for b in ess])
-    append!(natural, [SF.NaturalBC{Any}(b.piece, b.eq, b.Φ) for b in nat])
+    essential = SF.EssentialBC{Any}[SF.EssentialBC(pieces[b.piece], b.field, b.g) for b in an.essential]
+    natural = SF.NaturalBC{Any}[SF.NaturalBC(pieces[b.piece], b.eq, b.Φ) for b in an.natural]
+    periodic_out = SF.PeriodicBC{Any}[SF.PeriodicBC(pieces[b.master], pieces[b.mirror], b.field, b.shift) for b in an.periodic]
+    append!(periodic_out, periodic)
+    ess, nat = StrongFormSeam.boundary_conditions(mesh, an.flux, an.slots; depvars, t, sivs, params)
+    append!(essential, [SF.EssentialBC(b.piece, b.field, b.g) for b in ess])
+    append!(natural, [SF.NaturalBC(b.piece, b.eq, b.Φ) for b in nat])
     return SF.StrongFormAnalysis{Any}(
-        an.slots, an.nfields, dim, R.(an.strong), R.(an.mass), flux, R.(an.remainder), conormal,
-        SF.EssentialBC{Any}[essential...], SF.NaturalBC{Any}[natural...], SF.PeriodicBC{Any}[periodic_out...]
+        an.slots, an.nfields, an.dim, an.strong, an.mass, an.flux, an.remainder, an.conormal, essential, natural, periodic_out
     )
 end
 

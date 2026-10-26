@@ -77,8 +77,8 @@ rejects_trace(needle, bc) = PDEBASE_PATH && rejects(needle, [Dt(U) ~ Dx(Dx(U)) +
     # Box-face form of "operator and trace on different pieces": the x-derivative of the left trace against the
     # right trace.
     @test_pdebase rejects_trace("relates derivatives on two faces", Dx(u(t, -1.0, y)) ~ u(t, 1.0, y))
-    # Periodic traces whose faces are not related by a translation along one axis.
-    @test_pdebase rejects_trace("periodic pairing needs a translation", u(t, -1.0, y) ~ u(t, x, 1.0))
+    # Periodic-style traces on faces of different axes, not related by a translation along one axis.
+    @test_pdebase rejects_trace("relates values on two faces of different axes", u(t, -1.0, y) ~ u(t, x, 1.0))
 end
 
 # Rows that need piece and NormalDerivative slotting, which comes in PDEBase strongform PR 5 (not in 4f536e4). The
