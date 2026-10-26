@@ -24,7 +24,7 @@ uexact(t_, x_, y_) = (1 + x_ + 2y_) * (1 + t_)
 heat_eq = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + (1 + x + 2y)
 ic = u(0, x, y) ~ 1 + x + 2y
 
-pieces(Ω) = boundarypiece.(Ref(Ω), (:left, :right, :bottom, :top))
+pieces(Ω) = boundarypiece.(Ω, (:left, :right, :bottom, :top))
 dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
 
 @testset verbose = true "end to end" begin
@@ -82,7 +82,7 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
     @testset "1D Line" begin
         Ω = MeshDomain(rectangle_grid(Line, (5,)))
         eq = Dt(u(t, x)) ~ Dx(Dx(u(t, x))) + (1 + x)
-        lo, hi = boundarypiece.(Ref(Ω), (:x1_lo, :x1_hi))
+        lo, hi = boundarypiece.(Ω, (:x1_lo, :x1_hi))
         bcs = [u(t, lo) ~ 1 + t, NormalDerivative(hi)(u(t, hi)) ~ 1 + t, u(0, x) ~ 1 + x]
         sol, _ = fem_solve([eq], bcs, Ω, (x,), t, [u(t, x)])
         @test nodal_error(sol, u(t, x), (t_, x_) -> (1 + x_) * (1 + t_)) <= tol
@@ -138,7 +138,7 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         ue(t_, x_, y_) = (1 + x_) * (1 + t_)
         eq = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + (1 + x)
         gmsh_Ω = MeshDomain(lshape_grid(; h = 0.5))
-        Γi, Γw, Γo = boundarypiece.(Ref(gmsh_Ω), (:inlet, :wall, :outlet))
+        Γi, Γw, Γo = boundarypiece.(gmsh_Ω, (:inlet, :wall, :outlet))
         bcs = [u(t, Γi) ~ 1 + t, u(t, Γw) ~ (1 + x) * (1 + t), NormalDerivative(Γo)(u(t, Γo)) ~ 1 + t, u(0, x, y) ~ 1 + x]
         sol, _ = fem_solve([eq], bcs, gmsh_Ω, (x, y), t, [u(t, x, y)])
         @test nodal_error(sol, u(t, x, y), ue) <= tol

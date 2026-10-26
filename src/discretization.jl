@@ -38,6 +38,9 @@ Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknow
   - `codegen = :mtk` and `dirichlet = :eliminate` are reserved for later milestones and
     raise; remaining keywords are passed to the `DAEProblem`.
 
+Pieces come from `boundarypiece.(Ω, names)`; on an analytic DomainSets box write
+`boundarypiece.(Ref(rect), names)`, since DomainSets types do not broadcast as scalars.
+
 Parameters are substituted by the values given in the `PDESystem` when the operators are
 assembled, so `remake` with new parameter values does not reassemble them.
 """

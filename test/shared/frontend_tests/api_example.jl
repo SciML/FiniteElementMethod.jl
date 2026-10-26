@@ -16,8 +16,7 @@ include(joinpath(@__DIR__, "..", "lshape.jl"))
 
     grid = lshape_grid()                   # Gmsh physical groups "inlet", "wall", "outlet" become facet sets
     Ω = MeshDomain(grid)
-    # Tracking: drop `Ref` once PDEBase defines `Base.broadcastable(::MeshDomain)`.
-    Γ_in, Γ_wall, Γ_out = boundarypiece.(Ref(Ω), (:inlet, :wall, :outlet))
+    Γ_in, Γ_wall, Γ_out = boundarypiece.(Ω, (:inlet, :wall, :outlet))
     Dn_wall, Dn_out = NormalDerivative(Γ_wall), NormalDerivative(Γ_out)
 
     eqs = [Dt(u(t, x, y)) ~ Dx(k * Dx(u(t, x, y))) + Dy(k * Dy(u(t, x, y))) + 1]

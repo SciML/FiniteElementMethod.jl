@@ -24,7 +24,7 @@ function lower(eqs, bcs, Ω; dvs = [u(t, x, y)], domains = [(x, y) ∈ Ω, t ∈
 end
 
 box() = MeshDomain(rectangle_grid(Triangle, (2, 2)))
-sides(Ω) = boundarypiece.(Ref(Ω), (:left, :right, :bottom, :top))
+sides(Ω) = boundarypiece.(Ω, (:left, :right, :bottom, :top))
 dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
 
 @testset verbose = true "front-end errors" begin
@@ -39,7 +39,7 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         grid = rectangle_grid(Triangle, (2, 2))
         addfacetset!(grid, "inlet", x -> x[1] ≈ 0)
         Ω = MeshDomain(grid)
-        Γ, Γl = boundarypiece.(Ref(Ω), (:inlet, :left))
+        Γ, Γl = boundarypiece.(Ω, (:inlet, :left))
         msg = errmsg(() -> lower([heat], [u(t, Γ) ~ 0, u(t, Γl) ~ 1, ic], Ω))
         @test occursin("share 2 facets", msg) && occursin("boundary pieces must be disjoint", msg)
     end
@@ -120,10 +120,10 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         @test occursin("operator opaque is not supported by the strong-form analysis", errmsg(() -> lower([state], [dirichlet(Ω); ic], Ω)))
         nondiv = Dt(u(t, x, y)) ~ opaque(x) * (Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))))
         @test occursin("is not differentiable; write the equation in divergence form or register the derivative", errmsg(() -> lower([nondiv], [dirichlet(Ω); ic], Ω)))
-        # Spec §8.2 accepts an opaque coefficient without a derivative in divergence form, but
-        # PDEBase.StrongForm.analyse derivative-expands the whole strong residual and rejects it.
+        # Spec §8.2: an opaque coefficient without a registered derivative is accepted in divergence form.
         div = Dt(u(t, x, y)) ~ Dx(opaque(x) * Dx(u(t, x, y))) + Dy(opaque(x) * Dy(u(t, x, y)))
-        @test_broken errmsg(() -> lower([div], [dirichlet(Ω); ic], Ω)) == ""
+        sol = solve(lower([div], [[u(t, Γ) ~ 1 for Γ in sides(Ω)]; ic], Ω), EXACT_ROWS)
+        @test SciMLBase.successful_retcode(sol)
     end
 
     @testset "a piece with no condition warns when its flux is not zero" begin
