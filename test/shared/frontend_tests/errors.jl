@@ -115,6 +115,13 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         @test occursin("time t must be paired with an interval", errmsg(() -> lower([heat], [ic], Ω; domains)))
     end
 
+    @testset "unknown spaces key" begin
+        Ω = box()
+        @test_throws ArgumentError(
+            "`spaces` has keys that are not dependent variables of the system: v; the dependent variables are u(t, x, y)"
+        ) lower([heat], [dirichlet(Ω); ic], Ω; spaces = Dict(v => Lagrange{RefTriangle, 2}()))
+    end
+
     @testset "mixed cell types need a space per variable" begin
         nodes = [Node(Vec(0.0, 0.0)), Node(Vec(1.0, 0.0)), Node(Vec(0.0, 1.0)), Node(Vec(2.0, 0.0)), Node(Vec(1.0, 1.0))]
         grid = Grid(Ferrite.AbstractCell[Triangle((1, 2, 3)), Quadrilateral((2, 4, 5, 3))], nodes)

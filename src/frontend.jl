@@ -65,6 +65,15 @@ end
 
 function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.VariableMap, disc::FEMDiscretization)
     _check_domains(pdesys, disc)
+    dvs = PDEBase.depvars(v)
+    ops = [_field_op(u) for u in dvs]
+    unknown = [k for k in keys(disc.spaces) if !any(op -> isequal(op, k), ops)]
+    isempty(unknown) || throw(
+        ArgumentError(
+            "`spaces` has keys that are not dependent variables of the system: " *
+                "$(join(sort(string.(unknown)), ", ")); the dependent variables are $(join(sort(string.(dvs)), ", "))"
+        )
+    )
     grid = disc.domain.mesh
     if !isconcretetype(Ferrite.getcelltype(grid))
         unset = [u for u in PDEBase.depvars(v) if !haskey(disc.spaces, _field_op(u))]
