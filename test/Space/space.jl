@@ -150,6 +150,21 @@ end
         @test dirichlet_values!(vals, space, t) === vals
         @test vals ≈ expected[pd]
     end
+
+    # Data defined only from the initial time on: the constructor must not evaluate it at t = 0.
+    late = [(:u, :left, (x, t) -> sqrt(t - 0.5))]
+    @test_throws DomainError FEMSpace(grid, [:u => P1]; dirichlet = late)
+    space = FEMSpace(grid, [:u => P1]; dirichlet = late, t0 = 1)
+    @test dirichlet_values!(zeros(5), space, 1.0) ≈ fill(sqrt(0.5), 5)
+    @test dirichlet_values!(zeros(5), space, 2.0) ≈ fill(sqrt(1.5), 5)
+
+    # Time-independent one-argument data, with and without t0.
+    for t0 in (0.0, 1)
+        space = FEMSpace(grid, [:u => P1]; dirichlet = [(:u, :left, x -> 1.0 + x[2])], t0)
+        expected = zeros(ndofs(space))
+        apply_analytical!(expected, space.dh, :u, x -> 1.0 + x[2])
+        @test dirichlet_values!(zeros(5), space, 3.0) ≈ expected[prescribed_dofs(space)]
+    end
 end
 
 @testset "facet-set validation" begin
