@@ -246,3 +246,51 @@ end
     @test_throws DomainError sol(1.5, 0.2, 0.3; dv = u(t, x, y))
     @test_throws DomainError sol(-0.5, 0.2, 0.3; dv = u(t, x, y))
 end
+
+@testset "Quadratic geometry" begin
+    grid = with_inlet(generate_grid(QuadraticTriangle, (2, 2), Vec(0.0, 0.0), Vec(1.0, 1.0)))
+    for (g, dgx, dgy) in (
+            (x -> x[1] + 2x[2], x -> 1.0, x -> 2.0),
+            (x -> x[1]^2 + x[1] * x[2], x -> 2x[1] + x[2], x -> x[1]),
+        )
+        dh = DofHandler(grid)
+        add!(dh, :u, P2)
+        close!(dh)
+        U = zeros(ndofs(dh))
+        apply_analytical!(U, dh, :u, g)
+        sol, syms = steady_from_dofs(dh, (; u = P2), U)
+        (; x, y, u, Γ) = syms
+        p = Vec(0.3, 0.6)
+        @test sol(p[1], p[2]; dv = u(x, y)) ≈ g(p) atol = 1.0e-12
+        @test sol(p[1], p[2]; dv = Differential(x)(u(x, y))) ≈ dgx(p) atol = 1.0e-12
+        @test sol(p[1], p[2]; dv = Differential(y)(u(x, y))) ≈ dgy(p) atol = 1.0e-12
+        nodes = Vec.(sol[x], sol[y])
+        @test sol[u(x, y)] ≈ g.(nodes) atol = 1.0e-12
+        @test sol[Differential(x)(u(x, y))] ≈ dgx.(nodes) atol = 1.0e-12
+        @test sol[Differential(y)(u(x, y))] ≈ dgy.(nodes) atol = 1.0e-12
+        # Facet means of -∂u/∂x over the inlet's two facets, y ∈ [0, 1/2] and [1/2, 1].
+        inlet_flux = [-dgx(Vec(0.0, 0.25)), -dgx(Vec(0.0, 0.75))]
+        @test normal_flux(sol, u(x, y), Γ) ≈ inlet_flux atol = 1.0e-12
+        nodes_on_inlet = piece_nodes(sol, Γ)
+        @test nodes_on_inlet == findall(n -> get_node_coordinate(n)[1] == 0.0, getnodes(grid))
+        @test length(nodes_on_inlet) == 5
+        @test sol[u(Γ)] == sol[u(x, y)][nodes_on_inlet]
+        @test sol[u(Γ)] ≈ g.(Vec.(sol[x][nodes_on_inlet], sol[y][nodes_on_inlet])) atol = 1.0e-12
+        @test sol(Γ; dv = u(x, y)) == sol[u(Γ)]
+    end
+end
+
+@testset "Quadratic geometry, transient trace" begin
+    grid = with_inlet(generate_grid(QuadraticTriangle, (2, 2), Vec(0.0, 0.0), Vec(1.0, 1.0)))
+    prob, syms = heat_problem(grid, (; u = P2))
+    sol = solve(prob, DFBDF())
+    (; t, x, y, u, Γ) = syms
+    nodes_on_inlet = piece_nodes(sol, Γ)
+    @test sort(nodes_on_inlet) == findall(n -> get_node_coordinate(n)[1] == 0.0, getnodes(grid))
+    @test all(iszero, sol[x][nodes_on_inlet])
+    @test size(sol[u(t, Γ)]) == (length(sol.t), 5)
+    @test sol[u(t, Γ)] == sol[u(t, x, y)][:, nodes_on_inlet]
+    k = length(sol.t) ÷ 2
+    @test sol(sol.t[k], Γ; dv = u(t, x, y)) ≈ sol[u(t, Γ)][k, :] atol = 1.0e-14
+    @test maximum(abs, sol[u(t, Γ)] .- sin.(sol.t)) <= 1.0e-3
+end

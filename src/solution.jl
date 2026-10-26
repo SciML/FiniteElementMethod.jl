@@ -100,6 +100,8 @@ end
 
 _dh(md::FEMMetadata) = md.space.dh
 _grid(md::FEMMetadata) = _dh(md).grid
+# Ferrite's FE values default to linear geometry, which breaks on quadratic cells.
+_geometry(md::FEMMetadata) = Ferrite.geometric_interpolation(Ferrite.getcelltype(_grid(md)))
 _vertex_coordinates(md, d) = [Ferrite.get_node_coordinate(n)[d] for n in Ferrite.getnodes(_grid(md))]
 
 function _wrap_parts(sol, md::FEMMetadata, states)
@@ -195,9 +197,12 @@ coordinates of the trace values.
 piece_nodes(A::FEMSolution, Γ) = piece_nodes(A.disc_data, Γ)
 function piece_nodes(md::FEMMetadata, Γ)
     grid = _grid(md)
+    # The geometric interpolation's facet dofs are the facet's local nodes, mid-edge nodes included.
+    facet_nodes = Ferrite.dirichlet_facetdof_indices(_geometry(md))
     ids = Int[]
     for fi in _sorted_facets(md, Γ)
-        append!(ids, Ferrite.facets(Ferrite.getcells(grid, fi[1]))[fi[2]])
+        cell_nodes = Ferrite.getcells(grid, fi[1]).nodes
+        append!(ids, (cell_nodes[i] for i in facet_nodes[fi[2]]))
     end
     return sort!(unique!(ids))
 end
@@ -206,7 +211,7 @@ function _facet_normal_flux(md, f::FieldInfo, Γ, U)
     dh = _dh(md)
     grid = _grid(md)
     r = Ferrite.dof_range(dh, f.name)
-    fv = Ferrite.FacetValues(Ferrite.FacetQuadratureRule{Ferrite.getrefshape(f.ip)}(2), f.ip)
+    fv = Ferrite.FacetValues(Ferrite.FacetQuadratureRule{Ferrite.getrefshape(f.ip)}(2), f.ip, _geometry(md))
     return map(_sorted_facets(md, Γ)) do fi
         Ferrite.reinit!(fv, Ferrite.getcoordinates(grid, fi[1]), fi[2])
         u_cell = U[Ferrite.celldofs(dh, fi[1])[r]]
@@ -240,7 +245,7 @@ end
 function _gradient_projector(md, f::FieldInfo)
     qr = Ferrite.QuadratureRule{Ferrite.getrefshape(f.ip)}(2 * _order(f.ip))
     proj = Ferrite.L2Projector(f.ip, _grid(md); qr_lhs = qr)
-    return (; proj, qr, cv = Ferrite.CellValues(qr, f.ip))
+    return (; proj, qr, cv = Ferrite.CellValues(qr, f.ip, _geometry(md)))
 end
 
 # Gradient component `d` of field `f` for dof vector `U`, projected and read at the vertices.
@@ -322,7 +327,7 @@ _axis(a) = a isa AbstractVector ? collect(a) : [a]
 function _point_gradient(ph, md, f, d, U)
     dh = _dh(md)
     r = Ferrite.dof_range(dh, f.name)
-    pv = Ferrite.PointValues(f.ip)
+    pv = Ferrite.PointValues(f.ip, _geometry(md))
     out = fill(NaN, length(ph.cells))
     for (i, loc) in enumerate(Ferrite.PointIterator(ph))
         loc === nothing && continue
