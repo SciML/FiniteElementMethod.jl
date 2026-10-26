@@ -48,12 +48,15 @@ function FEMSpace(
     Ferrite.close!(dh)
     Ferrite.renumber!(dh, Ferrite.DofOrder.FieldWise())
 
-    # `close!(ch)` calls `update!(ch, 0.0)` itself; until it returns, evaluate the data at `t0` instead.
+    # `close!(ch)` calls `update!(ch, 0.0)` itself; until it returns, time-dependent data are evaluated at
+    # `t0` instead. Time-independent `g(x)` is passed through for Ferrite's own arity detection.
+    t0 = float(t0)
     closed = Ref(false)
+    X = typeof(Ferrite.get_node_coordinate(grid, 1))
     ch = Ferrite.ConstraintHandler(dh)
     for (field, set, g) in dirichlet
-        g_from_t0 = (x, t) -> g(x, closed[] ? t : t0)
-        Ferrite.add!(ch, Ferrite.Dirichlet(Symbol(field), Ferrite.getfacetset(grid, String(set)), g_from_t0))
+        f = hasmethod(g, Tuple{X, typeof(t0)}) ? (x, t) -> g(x, closed[] ? t : t0) : g
+        Ferrite.add!(ch, Ferrite.Dirichlet(Symbol(field), Ferrite.getfacetset(grid, String(set)), f))
     end
     Ferrite.close!(ch)
     closed[] = true
