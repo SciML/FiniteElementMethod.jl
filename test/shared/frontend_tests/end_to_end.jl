@@ -15,7 +15,7 @@ smooth_coef(x) = 1 + x^2
 @register_symbolic smooth_coef(x)
 Symbolics.@register_derivative smooth_coef(x) 1 2x
 
-@variables x y u(..) v(..)
+@variables x y u(..) v(..) w(..)
 const Dt, Dx, Dy = Differential(t), Differential(x), Differential(y)
 const tol = 1.0e-8
 
@@ -197,6 +197,31 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         @test !any(prob.differential_vars[FiniteElementMethod.field_range(space, :v)])
         @test nodal_error(sol, u(t, x, y), uexact) <= tol
         @test nodal_error(sol, v(t, x, y), (t_, x_, y_) -> 1 + x_ + 2y_) <= tol
+    end
+
+    @testset "two fields keep their identity; the Dirichlet condition listed last wins at a corner" begin
+        # Declared [u, w], equations listed [w, u]; u* = (1 + x + 2y)(1 + t), w* = (2 - x + y)(1 + t).
+        we(t_, x_, y_) = (2 - x_ + y_) * (1 + t_)
+        Ω = MeshDomain(rectangle_grid(Triangle, (4, 4)))
+        Γl, Γr, Γb, Γt = pieces(Ω)
+        w_eq = Dt(w(t, x, y)) ~ Dx(Dx(w(t, x, y))) + Dy(Dy(w(t, x, y))) + (2 - x + y)
+        u_eq = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + (1 + x + 2y)
+        # The bottom data for u differ from u* only at the corner (0, 0) it shares with the left piece.
+        bump = ifelse(x < 1.0e-9, 5.0, 0.0)
+        u_bcs(bottom_last) = bottom_last ?
+            [u(t, Γl) ~ (1 + 2y) * (1 + t), u(t, Γb) ~ (1 + x) * (1 + t) + bump] :
+            [u(t, Γb) ~ (1 + x) * (1 + t) + bump, u(t, Γl) ~ (1 + 2y) * (1 + t)]
+        for bottom_last in (true, false)
+            bcs = [
+                u_bcs(bottom_last); u(t, Γr) ~ (2 + 2y) * (1 + t); u(t, Γt) ~ (3 + x) * (1 + t);
+                [w(t, Γ) ~ (2 - x + y) * (1 + t) for Γ in pieces(Ω)];
+                ic; w(0, x, y) ~ 2 - x + y
+            ]
+            sol, _ = fem_solve([w_eq, u_eq], bcs, Ω, (x, y), t, [u(t, x, y), w(t, x, y)])
+            @test nodal_error(sol, w(t, x, y), we) <= tol
+            corner = findfirst(i -> sol[x][i] == 0 && sol[y][i] == 0, eachindex(sol[x]))
+            @test sol[u(t, x, y)][:, corner] ≈ (1 .+ sol.t) .+ (bottom_last ? 5 : 0) atol = tol
+        end
     end
 
     @testset "registered coefficient function in divergence form" begin

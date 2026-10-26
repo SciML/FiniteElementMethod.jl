@@ -41,6 +41,12 @@ Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknow
 Pieces come from `boundarypiece.(Ω, names)`; on an analytic DomainSets box write
 `boundarypiece.(Ref(rect), names)`, since DomainSets types do not broadcast as scalars.
 
+Where pieces with Dirichlet conditions on the same field meet (a corner), the condition listed
+last in the `PDESystem`'s boundary conditions wins, as in Ferrite's `ConstraintHandler`.
+Fields are numbered in one order throughout (`DofHandler` blocks, array unknowns,
+`FEMMetadata.fields`), the order of `PDEBase.depvars`; equations are paired with fields
+through `PDEBase.StrongForm.pair_equations`.
+
 Parameters are substituted by the values given in the `PDESystem` when the operators are
 assembled, so `remake` with new parameter values does not reassemble them.
 """
