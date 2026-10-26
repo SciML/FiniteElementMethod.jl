@@ -61,6 +61,10 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         sol = solve(prob, EXACT_ROWS)
         @test sol.t == 0:0.25:1
         @test sol.disc_data isa FEMMetadata
+        @test discretize(pdesys, FEMDiscretization(Ω, t; saveat = 0.25); saveat = 0.5).kwargs[:saveat] == 0.5
+        reserved = "keyword `name` is set by the FEM discretization and cannot be passed; the reserved keywords are iv, unknowns, du0, coordinate, name"
+        @test_throws ArgumentError(reserved) FEMDiscretization(Ω, t; name = :other)
+        @test_throws ArgumentError(replace(reserved, "`name`" => "`du0`")) discretize(pdesys, FEMDiscretization(Ω, t); du0 = zeros(3))
         sys, tspan = SciMLBase.symbolic_discretize(pdesys, FEMDiscretization(Ω, t))
         @test tspan == (0.0, 1.0)
         @test sys isa ModelingToolkit.System

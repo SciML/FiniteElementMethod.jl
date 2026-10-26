@@ -36,7 +36,9 @@ Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknow
   - `pairing`: equation `=>` dependent variable it is tested with, needed for an equation
     with no time derivative of its own, such as `0 ~ Dxx(v) + f`.
   - `codegen = :mtk` and `dirichlet = :eliminate` are reserved for later milestones and
-    raise; remaining keywords are passed to the `DAEProblem`.
+    raise; remaining keywords are passed to the `DAEProblem`, where a keyword given at the
+    `DAEProblem`/`discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate` and `name`
+    are set by the discretization and rejected.
 
 Pieces come from `boundarypiece.(Ω, names)`; on an analytic DomainSets box write
 `boundarypiece.(Ref(rect), names)`, since DomainSets types do not broadcast as scalars.
@@ -64,6 +66,21 @@ struct FEMDiscretization{T} <: PDEBase.AbstractMeshDiscretization
     kwargs::NamedTuple
 end
 
+# Keywords of `numeric_dae_problem` that the front end sets itself.
+const _RESERVED_KWARGS = (:iv, :unknowns, :du0, :coordinate, :name)
+
+function _check_reserved(kwargs)
+    for k in keys(kwargs)
+        k in _RESERVED_KWARGS && throw(
+            ArgumentError(
+                "keyword `$k` is set by the FEM discretization and cannot be passed; the reserved keywords are " *
+                    join(_RESERVED_KWARGS, ", ")
+            )
+        )
+    end
+    return nothing
+end
+
 function FEMDiscretization(
         domain::PDEBase.MeshDomain, time = nothing; spaces = Dict(), quadrature = nothing,
         test_space = Galerkin(), ibp = Dict(), pairing = Dict(), codegen::Symbol = :numeric,
@@ -78,6 +95,7 @@ function FEMDiscretization(
     dirichlet === :algebraic || throw(ArgumentError("dirichlet must be :algebraic, got $(repr(dirichlet))"))
     test_space isa Galerkin ||
         throw(ArgumentError("test space $(test_space) lands in M4; only Galerkin() is supported"))
+    _check_reserved(kwargs)
     return FEMDiscretization{typeof(time)}(
         domain, time, Dict{Any, Ferrite.Interpolation}(_field_op(k) => ip for (k, ip) in spaces),
         quadrature, test_space, Dict{Any, StrongForm.IBPPolicy}(ibp), Dict{Equation, Any}(pairing),

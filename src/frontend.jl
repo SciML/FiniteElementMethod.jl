@@ -395,7 +395,9 @@ Discretize `pdesys` with `disc` and return the `DAEProblem` `M du + K u = F(t)` 
 Galerkin operators, with Dirichlet rows `u_d = g_d(t)` as algebraic equations, a sparse
 analytic Jacobian and the `FEMMetadata` as its `problem_type`, so `solve` returns a
 `PDETimeSeriesSolution`. Nothing calls `mtkcompile`; anything this milestone cannot
-discretize raises. Keywords (after `disc.kwargs`) are passed to the `DAEProblem`.
+discretize raises. Keywords are passed to the `DAEProblem` after `disc.kwargs`, so a keyword
+given here wins; the keywords the discretization sets (`iv`, `unknowns`, `du0`, `coordinate`,
+`name`) are rejected.
 
 The Dirichlet rows are linear with identity Jacobian rows, so a Newton step with a current
 Jacobian satisfies them exactly. OrdinaryDiffEq's BDF methods reuse the Jacobian across
@@ -404,6 +406,7 @@ solver tolerance; `DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0))` refreshes it 
 size change and holds `u(t, Γ) ~ g(t)` to round-off.
 """
 function SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
+    _check_reserved(kwargs)
     parts = _lower(pdesys, disc)
     return numeric_dae_problem(
         parts.ops, parts.u0, parts.tspan, parts.md;
