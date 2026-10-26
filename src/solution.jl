@@ -47,6 +47,11 @@ function FEMMetadata(space, time, x̄, fields, pieces, pdesys; u0 = Float64[])
     )
 end
 
+function Base.show(io::IO, md::FEMMetadata{hasTime}) where {hasTime}
+    names = join((f.name for f in md.fields), ", ")
+    return print(io, "FEMMetadata(fields = [", names, "], ndofs = ", Ferrite.ndofs(md.space.dh), ", hasTime = ", hasTime === Val(true), ")")
+end
+
 const FEMTimeSolution = SciMLBase.PDETimeSeriesSolution{T, N, S, <:FEMMetadata} where {T, N, S}
 const FEMSteadySolution = SciMLBase.PDENoTimeSolution{T, N, S, <:FEMMetadata} where {T, N, S}
 const FEMSolution = Union{FEMTimeSolution, FEMSteadySolution}

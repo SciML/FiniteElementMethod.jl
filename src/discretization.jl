@@ -110,3 +110,10 @@ function _field_op(dv)
 end
 
 PDEBase.get_time(disc::FEMDiscretization) = disc.time
+
+function Base.show(io::IO, disc::FEMDiscretization)
+    return print(
+        io, "FEMDiscretization(", Ferrite.getncells(disc.domain.mesh), " cells, time = ", disc.time,
+        ", codegen = :", disc.codegen, ")"
+    )
+end
