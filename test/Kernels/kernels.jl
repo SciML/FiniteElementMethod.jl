@@ -191,3 +191,20 @@ end
     _, _, g = only(emit_dirichlet(case_i()))
     @test owner(g) === FiniteElementMethod
 end
+
+@testset "expression form of case $name round-trips" for (name, case) in CASES
+    wf = weak_form(case())
+    compiled, generated = emit_kernels(wf), emit_kernels(wf; expression = Val(true))
+    @test length(generated) == length(compiled)
+    for (k, e) in zip(compiled, generated)
+        @test (e.eq, e.kind, e.piece) == (k.eq, k.kind, k.piece)
+        args = random_args(wf.analysis)
+        for (g, ex, call_args) in ((k.f, e.f, args), (k.tangent, e.tangent, args), (k.coeffs, e.coeffs, args[6:9]))
+            @test (g === nothing) == (ex === nothing)
+            g === nothing && continue
+            @test ex isa Expr
+            evaluated = Core.eval(@__MODULE__, ex)
+            @test isequal(Base.invokelatest(evaluated, call_args...), g(call_args...))
+        end
+    end
+end

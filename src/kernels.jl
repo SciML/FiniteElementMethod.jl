@@ -3,7 +3,10 @@
 kernel_slots(wf::WeakForm) = kernel_slots(wf.analysis.slots, wf.test)
 kernel_slots(s, test) = (s.U, s.G, s.Ud, test.V, test.W, s.X, s.T, s.N, s.P)
 
-compile(ex, slots) = Symbolics.build_function(ex, slots...; expression = Val(false), expression_module = @__MODULE__)
+# `expression = Val(true)` returns the generated `Expr` instead of the compiled function. `build_function` tests
+# `expression == Val{true}`, the type, so the instance is converted.
+build(ex, slots, ::Val{E}) where {E} = Symbolics.build_function(ex, slots...; expression = Val{E}, expression_module = @__MODULE__)
+compile(ex, slots; expression = Val(false)) = build(ex, slots, expression)
 
 "The first unevaluated `Differential` call in `ex`, or `nothing`."
 function find_differential(ex)
@@ -59,17 +62,19 @@ Base.:*(::StructuralZero, ::StructuralZero) = StructuralZero()
 
 # A tuple-valued function of `slots`, allocation-free with `Vec` and tuple arguments. Constant entries are
 # compiled as `Float64`, constant zeros as `zero`.
-function compile_tuple(exs, slots; zero = 0.0)
+function compile_tuple(exs, slots; zero = 0.0, expression = Val(false))
     entries = map(exs) do ex
         x = Symbolics.unwrap(ex)
         SU.isconst(x) || return x
         value = SU.unwrap_const(x)
         return iszero(value) ? zero : Float64(value)
     end
-    return Symbolics.build_function(SU.Code.MakeTuple(entries), slots...; expression = Val(false), expression_module = @__MODULE__)
+    return build(SU.Code.MakeTuple(entries), slots, expression)
 end
 
-compile_tangent(ex, s, slots) = compile_tuple([checked_derivative(ex, x) for x in [s.U; s.G]], slots)
+function compile_tangent(ex, s, slots; expression = Val(false))
+    return compile_tuple([checked_derivative(ex, x) for x in [s.U; s.G]], slots; expression)
+end
 
 """
     compile_coeffs(kind, ex, slots, test)
@@ -83,7 +88,7 @@ which case the kernel keeps the per-shape-function `f`. It is `nothing` when
 - a coefficient depends on a trial or test slot, i.e. on `U`, `G`, `Ud`, `V` or `W`.
 Terms built by `weak_form` always have a coefficient form; the fallback serves hand-built integrands.
 """
-function compile_coeffs(kind, ex, s, test)
+function compile_coeffs(kind, ex, s, test; expression = Val(false))
     kind === :nonlinear && return nothing
     w = [test.V; test.W]
     trial = kind === :mass ? s.Ud : [s.U; s.G]
@@ -97,17 +102,17 @@ function compile_coeffs(kind, ex, s, test)
     end
     isequal(Symbolics.expand(ex - linear), 0) || return nothing
     any(e -> depends(e, [s.U; s.G; s.Ud; w]), exs) && return nothing
-    return compile_tuple(exs, (s.X, s.T, s.N, s.P); zero = StructuralZero())
+    return compile_tuple(exs, (s.X, s.T, s.N, s.P); zero = StructuralZero(), expression)
 end
 
 # `f` is compiled only when the driver will call it: without `coeffs`, or for `:nonlinear` terms.
-function kernel(eq, kind, piece, integrand, wf::WeakForm; coeffs = true)
+function kernel(eq, kind, piece, integrand, wf::WeakForm; coeffs = true, expression = Val(false))
     slots = kernel_slots(wf)
     s = wf.analysis.slots
     assert_differentiated(integrand)
-    c = coeffs ? compile_coeffs(kind, integrand, s, wf.test) : nothing
-    tangent = kind === :nonlinear ? compile_tangent(integrand, s, slots) : nothing
-    f = c === nothing ? compile(integrand, slots) : nothing
+    c = coeffs ? compile_coeffs(kind, integrand, s, wf.test; expression) : nothing
+    tangent = kind === :nonlinear ? compile_tangent(integrand, s, slots; expression) : nothing
+    f = c === nothing ? compile(integrand, slots; expression) : nothing
     return KernelSpec(eq, kind, piece, f, tangent, c)
 end
 
@@ -124,16 +129,19 @@ function fused_terms(wf::WeakForm)
 end
 
 """
-    emit_kernels(wf::WeakForm; coeffs = true)
+    emit_kernels(wf::WeakForm; coeffs = true, expression = Val(false))
 
 One `KernelSpec` per equation, kind and piece of `wf` (the terms sharing them are summed), as a tuple. Linear
 kinds carry `coeffs`, the coefficient form the driver contracts with the shape functions, and then no `f`
 (see [`compile_coeffs`](@ref) for the exceptions). `:nonlinear` kernels carry `f(U, G, Ud, V, W, X, T, N, P)`,
 the scalar integrand, and `tangent`, with the same arguments, returning the tuple `∂I/∂[U; G]` (length
 `nf + nf*dim`). `coeffs = false` emits `f` for every kernel instead. Array slots accept `Vec`, tuples or vectors.
+
+`expression = Val(true)` returns the same `KernelSpec`s with the generated `Expr` in place of each function, for
+inspecting or diffing the generated code; evaluating an `Expr` gives the function the default call compiles.
 """
-function emit_kernels(wf::WeakForm; coeffs = true)
-    return Tuple(kernel(eq, kind, piece, integrand, wf; coeffs) for (eq, kind, piece, integrand) in fused_terms(wf))
+function emit_kernels(wf::WeakForm; coeffs = true, expression = Val(false))
+    return Tuple(kernel(eq, kind, piece, integrand, wf; coeffs, expression) for (eq, kind, piece, integrand) in fused_terms(wf))
 end
 
 """
