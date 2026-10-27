@@ -9,7 +9,6 @@ FEMDiscretization
 FiniteElementMethod.SciMLBase.DAEProblem(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
 FiniteElementMethod.AbstractTestSpace
 FiniteElementMethod.Galerkin
-FiniteElementMethod.SUPG
 FiniteElementMethod.assemble_sources!
 ```
 
@@ -36,9 +35,24 @@ disc = FEMDiscretization(Ω, t; spaces = Dict(u1 => P2, u2 => P2, p => P1), pair
 The continuity equation has no time derivative and no pressure, so `pairing` names the field
 it is tested with. The pressure rows are algebraic, and with Dirichlet velocity on the whole
 boundary the pressure is fixed only up to a constant: give it a Dirichlet condition on one
-small piece (a single facet set). Because the velocity rows of the DAE do not determine the
-pressure at the initial time (an index-2 system), start from a velocity that is discretely
-divergence free, such as zero, and solve with `DFBDF`.
+small piece (a single facet set), or leave an outflow piece with the natural condition.
+
+The pressure is absent from its own rows, so the DAE has index 2. Two things make `DFBDF` step
+it: start from a velocity that is discretely divergence free (zero, with zero Dirichlet data
+at the initial time) and a pressure initial condition, and leave the algebraic rows out of the
+error control with a large `abstol` on them, since the pressure's local error does not shrink
+with the step:
+
+```julia
+prob = discretize(pdesys, disc)
+abstol = [d ? 1.0e-8 : 1.0e8 for d in prob.differential_vars]
+sol = solve(prob, DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0)); abstol, reltol = 1.0e-8)
+```
+
+Without the `abstol`, the step size collapses near the initial time (`dt` below `eps` at
+`t ≈ 1e-10` on a 16 × 16 Taylor–Hood mesh). When the linear solver then reports the Newton
+matrix as singular, LinearSolve falls back to a sparse QR factorization, which can take
+minutes and tens of gigabytes on a saddle-point system.
 
 A field can live on part of the mesh: `regions = Dict(w => Region(Ω, :name))` restricts `w`
 to the cell set `name`, through a Ferrite `SubDofHandler`. Outside its region the field has no
@@ -50,7 +64,7 @@ cells, it has the natural zero-flux condition.
 
 ## Streamline-upwind Petrov–Galerkin
 
-`test_space = SUPG(τ)` tests every equation with `v + τ b·∇v` on every cell, where `b` is the
+`test_space = SUPG(τ)` ([`SUPG`](@ref)) tests every equation with `v + τ b·∇v` on every cell, where `b` is the
 advection velocity read from the equation (the coefficient of `∇u`), or `SUPG(τ; b = [b1, b2])`.
 `τ` is a number, an expression, or a function `τ(hK, b)` of the cell diameter `hK` and `b`:
 

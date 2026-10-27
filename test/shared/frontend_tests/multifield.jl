@@ -38,14 +38,26 @@ function halves_grid(n)
     return grid
 end
 
+# The unit square with one bottom facet, at the corner (0, 0), split off "bottom" into the piece "corner".
+function corner_grid(ct, n)
+    grid = rectangle_grid(ct, (n, n))
+    bottom = getfacetset(grid, "bottom")
+    facet_nodes(fi) = Ferrite.facets(grid.cells[fi[1]])[fi[2]]
+    corner = Set(fi for fi in bottom if all(nd -> grid.nodes[nd].x[1] < 1 / n + 1.0e-12, facet_nodes(fi)))
+    delete!(grid.facetsets, "bottom")
+    addfacetset!(grid, "bottom", setdiff(bottom, corner))
+    addfacetset!(grid, "corner", corner)
+    return grid
+end
+
 rates(errs) = [log2(errs[i] / errs[i + 1]) for i in 1:(length(errs) - 1)]
 
 @testset verbose = true "multi-field front end" begin
     @testset "unequal orders, $(ct)s: rates p + 1 for both fields" for ct in (Triangle, Quadrilateral)
         # u in P2/Q2, w in P1/Q1. w's equation reads u but not the reverse, so u keeps its own rate.
         U, W = u(t, x, y), w(t, x, y)
-        ue(t_, x_, y_) = (1 + t_) * sin(pi * x_) * sin(pi * y_) + x_
-        we(t_, x_, y_) = (1 + t_) * cos(x_ + y_)
+        u_exact(t_, x_, y_) = (1 + t_) * sin(pi * x_) * sin(pi * y_) + x_
+        w_exact(t_, x_, y_) = (1 + t_) * cos(x_ + y_)
         f1 = sin(pi * x) * sin(pi * y) * (1 + 2pi^2 * (1 + t))
         f2 = cos(x + y) * (3 + 2t) - ((1 + t) * sin(pi * x) * sin(pi * y) + x)
         eqs = [Dt(U) ~ Δ(U) + f1, Dt(W) ~ Δ(W) + U + f2]
@@ -68,18 +80,52 @@ rates(errs) = [log2(errs[i] / errs[i + 1]) for i in 1:(length(errs) - 1)]
             @test length(prob.u0) == nu + nw
             # Vertex values are uniform across orders: one column per mesh vertex for both fields.
             @test size(sol[U], 2) == size(sol[W], 2) == (n + 1)^2
-            (rms_error(sol, U, ue), rms_error(sol, W, we))
+            (rms_error(sol, U, u_exact), rms_error(sol, W, w_exact))
         end
         @test all(>(2.7), rates(first.(errs)))
         @test all(>(1.8), rates(last.(errs)))
+    end
+
+    @testset "Taylor–Hood Stokes, $(ct)s: velocity rate 3, pressure rate 2" for ct in (Triangle, Quadrilateral)
+        # Stream function ψ = x²(1 − x)²y²(1 − y)², u = (ψ_y, −ψ_x), which vanishes on the boundary, and p = x³ − y³;
+        # the source makes (u, p) steady. Marched from u = 0 to the steady state (the slowest Stokes mode decays like
+        # e^{−52t}). The continuity rows are algebraic and the pressure is absent from them (index 2): the pressure
+        # starts from its exact values, is pinned on the one-facet piece "corner", and is left out of the error
+        # control through a large abstol, without which DFBDF fails at t ≈ 1e-10 on the 16 × 16 meshes.
+        U1, U2, P = u1(t, x, y), u2(t, x, y), p(t, x, y)
+        ψ = x^2 * (1 - x)^2 * y^2 * (1 - y)^2
+        u1s, u2s, ps = expand_derivatives(Dy(ψ)), expand_derivatives(-Dx(ψ)), x^3 - y^3
+        f1, f2 = expand_derivatives(-Δ(u1s) + Dx(ps)), expand_derivatives(-Δ(u2s) + Dy(ps))
+        continuity = 0 ~ Dx(U1) + Dy(U2)
+        eqs = [Dt(U1) ~ Δ(U1) - Dx(P) + f1, Dt(U2) ~ Δ(U2) - Dy(P) + f2, continuity]
+        exact = map(e -> Symbolics.build_function(e, x, y; expression = Val(false)), (u1s, u2s, ps))
+        shape = SHAPE[ct]
+        errs = map((4, 8, 16)) do n
+            Ω = MeshDomain(corner_grid(ct, n))
+            Γs = boundarypiece.(Ω, (:left, :right, :bottom, :top, :corner))
+            bcs = [
+                [u1(t, Γ) ~ 0 for Γ in Γs]; [u2(t, Γ) ~ 0 for Γ in Γs]; p(t, Γs[end]) ~ x^3 - y^3;
+                u1(0, x, y) ~ 0; u2(0, x, y) ~ 0; p(0, x, y) ~ x^3 - y^3
+            ]
+            @named stokes = PDESystem(eqs, bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.5)], [t, x, y], [U1, U2, P], [])
+            P2, P1 = Lagrange{shape, 2}(), Lagrange{shape, 1}()
+            prob = discretize(stokes, FEMDiscretization(Ω, t; spaces = Dict(u1 => P2, u2 => P2, p => P1), pairing = Dict(continuity => p)))
+            @test count(.!prob.differential_vars) > length(FiniteElementMethod.field_range(prob.problem_type.space, :p))
+            abstol = [d ? 1.0e-8 : 1.0e8 for d in prob.differential_vars]
+            sol = solve(prob, EXACT_ROWS; abstol, reltol = 1.0e-8)
+            @test SciMLBase.successful_retcode(sol)
+            [rms_error(sol, dv, (_, x_, y_) -> e(x_, y_)) for (dv, e) in zip((U1, U2, P), exact)]
+        end
+        @test all(>(2.7), rates(getindex.(errs, 1))) && all(>(2.7), rates(getindex.(errs, 2)))
+        @test all(>(1.7), rates(getindex.(errs, 3)))
     end
 
     @testset "a field on a region reads NaN outside it" begin
         # u everywhere, w on the cells left of x = 1/2 only. w* = (1 + 2y)(1 + t) has zero flux through the
         # interface x = 1/2, where w gets the natural condition; both exact solutions are in P1.
         U, W = u(t, x, y), w(t, x, y)
-        ue(t_, x_, y_) = (1 + x_ + 2y_) * (1 + t_)
-        we(t_, x_, y_) = (1 + 2y_) * (1 + t_)
+        u_exact(t_, x_, y_) = (1 + x_ + 2y_) * (1 + t_)
+        w_exact(t_, x_, y_) = (1 + 2y_) * (1 + t_)
         eqs = [Dt(U) ~ Δ(U) + (1 + x + 2y), Dt(W) ~ Δ(W) + U - (1 + x + 2y) * (1 + t) + (1 + 2y)]
         Ω = MeshDomain(halves_grid(4))
         Γ = Dict(n => boundarypiece(Ω, n) for n in HALF_PIECES)
@@ -93,15 +139,15 @@ rates(errs) = [log2(errs[i] / errs[i + 1]) for i in 1:(length(errs) - 1)]
         space = sol.disc_data.space
         @test length(space.dh.subdofhandlers) == 2
         @test length(FiniteElementMethod.field_range(space, :w)) == 15   # the 3 × 5 vertices with x ≤ 1/2
-        @test nodal_error(sol, U, ue) <= 1.0e-8
+        @test nodal_error(sol, U, u_exact) <= 1.0e-8
         xs, ys = sol[x], sol[y]
         inside = findall(<=(0.5 + 1.0e-12), xs)
         outside = findall(>(0.5 + 1.0e-12), xs)
         wv = sol[W]
         @test all(isnan, wv[:, outside])
-        @test maximum(abs(wv[k, i] - we(sol.t[k], xs[i], ys[i])) for k in eachindex(sol.t), i in inside) <= 1.0e-8
+        @test maximum(abs(wv[k, i] - w_exact(sol.t[k], xs[i], ys[i])) for k in eachindex(sol.t), i in inside) <= 1.0e-8
         vals = @test_logs (:warn, r"could not be evaluated") sol(0.5, [0.25, 0.75], 0.5; dv = W)
-        @test vals[1] ≈ we(0.5, 0.25, 0.5) atol = 1.0e-8
+        @test vals[1] ≈ w_exact(0.5, 0.25, 0.5) atol = 1.0e-8
         @test isnan(vals[2])
         grad = @test_logs sol(0.5, [0.25, 0.75], 0.5; dv = Dy(W))
         @test grad[1] ≈ 3.0 atol = 1.0e-8

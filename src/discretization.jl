@@ -92,7 +92,7 @@ function FEMDiscretization(
         throw(ArgumentError("test_space must be Galerkin() or SUPG(τ; b = nothing), got $(repr(test_space))"))
     for (dv, region) in regions
         region isa PDEBase.Region && region.parent === domain ||
-            throw(ArgumentError("the region of $dv must be a Region of the FEMDiscretization's MeshDomain, as Region(Ω, name); got $(repr(region))"))
+            throw(ArgumentError("the region of $(_field_op(dv)) must be a Region of the FEMDiscretization's MeshDomain, as Region(Ω, name); got $(repr(region))"))
     end
     _check_reserved(kwargs)
     return FEMDiscretization{typeof(time)}(
