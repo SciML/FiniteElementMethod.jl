@@ -198,7 +198,7 @@ end
     # reports although they only grow on the first cell.
     ctx = SETUP.ctx
     M, K, F = operators(SETUP)
-    ne = getnbasefunctions(ctx.cv)
+    ne = getnbasefunctions(ctx.cellvalues.u)
     xs = getcoordinates(first(CellIterator(SETUP.dh)))
     ranges = (dof_range(SETUP.dh, :u),)
     lop = LinearOp(start_assemble(M), start_assemble(K), F, zeros(ne, ne), zeros(ne, ne), zeros(ne))
@@ -210,8 +210,9 @@ end
         volume, groups = _split(ctx, kernels, kinds)
         counts = zeros(Int, length(groups))
         fi = FacetIndex(1, 1)
-        @test isempty(check_allocs(_kernels!, map(typeof, (op, volume, ctx.cv, xs, ranges, PV, 0.0))))
-        @test isempty(check_allocs(_facet_groups!, map(typeof, (op, groups, counts, 1, fi, ctx.fv, xs, ranges, PV, 0.0))))
+        cvs, fvs = values(ctx.cellvalues), values(ctx.facetvalues)
+        @test isempty(check_allocs(_kernels!, map(typeof, (op, volume, cvs, xs, ranges, PV, 0.0))))
+        @test isempty(check_allocs(_facet_groups!, map(typeof, (op, groups, counts, 1, fi, fvs, fvs, xs, ranges, PV, 0.0))))
         @test isempty(check_allocs(_start_cell!, map(typeof, (op, celldofs(first(CellIterator(SETUP.dh)))))))
     end
 end

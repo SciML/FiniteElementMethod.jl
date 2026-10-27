@@ -1,31 +1,51 @@
 # Generic Ferrite assembly driver for per-quadrature-point kernels (spec §6.5, §6.6).
-# One pass over the cells: each cell is reinitialised once, every volume kernel and every facet kernel whose
-# piece contains one of the cell's facets adds into the same element scratch, which is assembled once.
-# Kernels are iterated as a tuple through recursive calls, so each kernel's loop is compiled for its own type.
+# One pass over the cells of each SubDofHandler: each cell is reinitialised once, every volume kernel and every
+# facet kernel whose piece contains one of the cell's facets adds into the same element scratch, which is assembled
+# once. Kernels are iterated as a tuple through recursive calls, so each kernel's loop is compiled for its own type.
+# Each field has its own values (spec §6.2): equation `e` is tested with the shape functions of field `e`, and
+# the trial functions of field `b` come from the values of field `b`, so fields of different order couple.
 
 """
-    AssemblyContext(dh, fields, cv, fv, pieces = Dict())
+    AssemblyContext(dh, fields, cellvalues, facetvalues, pieces = Dict())
 
 What the driver needs to assemble kernels: the `DofHandler`, its field names in equation/field index order, the
-`CellValues` and `FacetValues` shared by all fields, and `pieces`, a map from boundary piece to its facet set,
-given as a facet-set name of the grid or as a set of `FacetIndex`. Each facet set is copied at construction, so
-changing the caller's set or the grid's facet sets afterwards does not affect the context; build a new one instead.
+`CellValues` and `FacetValues` of each field, and `pieces`, a map from boundary piece to its facet set, given as a
+facet-set name of the grid or as a set of `FacetIndex`.
+
+`cellvalues` and `facetvalues` are each a `NamedTuple` keyed by field name, a tuple in field order, or a single
+values object shared by all fields. The values of all fields must use one quadrature rule. A field may be missing
+from some `SubDofHandler`s of `dh` (a field on a region): there it has no dofs, its equation is not assembled and
+its state slots are zero.
+
+Each facet set is copied at construction, so changing the caller's set or the grid's facet sets afterwards does not
+affect the context; build a new one instead.
 """
-struct AssemblyContext{NF, DH <: Ferrite.DofHandler, CV, FV}
+struct AssemblyContext{NF, DH <: Ferrite.DofHandler, CV <: NamedTuple, FV <: NamedTuple}
     dh::DH
     fields::Vector{Symbol}
-    cv::CV
-    fv::FV
+    cellvalues::CV
+    facetvalues::FV
     facetsets::Dict{Any, Any}
     facetcells::BitSet   # cells with a facet in some piece; the others skip the per-facet membership tests
 end
 
 function AssemblyContext(dh::Ferrite.DofHandler, fields, cv, fv, pieces = Dict())
     fields = collect(Symbol, fields)
-    nb = Ferrite.getnbasefunctions(cv)
+    names = Tuple(fields)
+    cellvalues, facetvalues = _per_field(cv, names, "cell"), _per_field(fv, names, "facet")
     for f in fields
-        length(Ferrite.dof_range(dh, f)) == nb ||
-            throw(ArgumentError("field $f has $(length(Ferrite.dof_range(dh, f))) dofs per cell, but the CellValues have $nb base functions; all fields must share one interpolation"))
+        any(sdh -> f in sdh.field_names, dh.subdofhandlers) ||
+            throw(ArgumentError("field $f is not a field of the DofHandler, whose fields are $(dh.field_names)"))
+    end
+    for sdh in dh.subdofhandlers, f in sdh.field_names
+        f in names || continue
+        n, nb = length(Ferrite.dof_range(sdh, f)), Ferrite.getnbasefunctions(cellvalues[f])
+        n == nb || throw(ArgumentError("field $f has $n dofs per cell, but its CellValues have $nb base functions"))
+    end
+    for (what, vs) in (("CellValues", cellvalues), ("FacetValues", facetvalues))
+        nq = unique(Ferrite.getnquadpoints(v) for v in vs)
+        length(nq) == 1 ||
+            throw(ArgumentError("the $what of all fields must share one quadrature rule, but they have $(join(nq, ", ")) quadrature points"))
     end
     facetsets = Dict{Any, Any}()
     for (piece, set) in pieces
@@ -33,8 +53,27 @@ function AssemblyContext(dh::Ferrite.DofHandler, fields, cv, fv, pieces = Dict()
     end
     ncells = Ferrite.getncells(dh.grid)
     facetcells = BitSet(fi[1] for set in values(facetsets) for fi in set if 1 ≤ fi[1] ≤ ncells)
-    return AssemblyContext{length(fields), typeof(dh), typeof(cv), typeof(fv)}(dh, fields, cv, fv, facetsets, facetcells)
+    NF = length(fields)
+    return AssemblyContext{NF, typeof(dh), typeof(cellvalues), typeof(facetvalues)}(dh, fields, cellvalues, facetvalues, facetsets, facetcells)
 end
+
+# Values keyed by field: a NamedTuple in field order from a NamedTuple, a tuple, or one shared object.
+function _per_field(v::NamedTuple, names, what)
+    for f in names
+        haskey(v, f) || throw(ArgumentError("no $what values given for field $f; the $what values have keys $(keys(v))"))
+    end
+    return NamedTuple{names}(map(f -> v[f], names))
+end
+function _per_field(v::Tuple, names, what)
+    length(v) == length(names) ||
+        throw(ArgumentError("$(length(v)) $what values given for the $(length(names)) fields $(collect(names))"))
+    return NamedTuple{names}(v)
+end
+_per_field(v, names, what) = NamedTuple{names}(map(_ -> v, names))
+
+# The dofs of `field` in the cells of `sdh`, empty where the field is absent.
+_field_range(sdh, field) = field in sdh.field_names ? Ferrite.dof_range(sdh, field) : (1:0)
+_max_ndofs(dh) = maximum(Ferrite.ndofs_per_cell, dh.subdofhandlers)
 
 function _named_facetset(grid, piece, name)
     try
@@ -72,8 +111,8 @@ const LINEAR_KINDS = (:mass, :bilinear, :source)
 Assemble in place the kernels of `kinds` only: `M` is overwritten when `:mass` is in `kinds`, `K` when `:bilinear`
 is, `F` when `:source` is, and the others are left as they are.
 """
-function assemble_linear!(M, K, F, ctx::AssemblyContext{NF}, kernels, p; t = 0.0, kinds = LINEAR_KINDS) where {NF}
-    ne = NF * Ferrite.getnbasefunctions(ctx.cv)
+function assemble_linear!(M, K, F, ctx::AssemblyContext, kernels, p; t = 0.0, kinds = LINEAR_KINDS)
+    ne = _max_ndofs(ctx.dh)
     aM = Ferrite.start_assemble(M; fillzero = :mass in kinds)
     aK = Ferrite.start_assemble(K; fillzero = :bilinear in kinds)
     :source in kinds && fill!(F, 0)
@@ -95,32 +134,38 @@ function assemble_nonlinear(ctx::AssemblyContext, kernels, u, p; t = 0.0, ch = n
     return (; r, J)
 end
 
-function assemble_nonlinear!(r, J, ctx::AssemblyContext{NF}, kernels, u, p; t = 0.0) where {NF}
-    ne = NF * Ferrite.getnbasefunctions(ctx.cv)
+function assemble_nonlinear!(r, J, ctx::AssemblyContext, kernels, u, p; t = 0.0)
+    ne = _max_ndofs(ctx.dh)
     fill!(r, 0)
     op = NonlinearOp(Ferrite.start_assemble(J), r, zeros(ne, ne), zeros(ne), u, zeros(ne))
     _assemble!(op, ctx, _split(ctx, kernels, (:nonlinear,))..., p, t)
     return r, J
 end
 
-struct LinearOp{AM, AK, FV <: AbstractVector{Float64}}
+struct LinearOp{AM, AK, FV <: AbstractVector{Float64}, ME <: AbstractMatrix{Float64}, FE <: AbstractVector{Float64}}
     aM::AM
     aK::AK
     F::FV
-    Me::Matrix{Float64}
-    Ke::Matrix{Float64}
-    Fe::Vector{Float64}
+    Me::ME
+    Ke::ME
+    Fe::FE
 end
 
 # `aJ === nothing` assembles the residual only.
-struct NonlinearOp{AJ, R <: AbstractVector{Float64}, U}
+struct NonlinearOp{AJ, R <: AbstractVector{Float64}, U, JE <: AbstractMatrix{Float64}, RE <: AbstractVector{Float64}}
     aJ::AJ
     r::R
-    Je::Matrix{Float64}
-    re::Vector{Float64}
+    Je::JE
+    re::RE
     u::U
-    u_elem::Vector{Float64}
+    u_elem::RE
 end
+
+# The op with element scratch of `n` dofs: the buffers themselves when they have that size, else views into them.
+_scratch(A::AbstractMatrix, n) = size(A, 1) == n ? A : view(A, 1:n, 1:n)
+_scratch(a::AbstractVector, n) = length(a) == n ? a : view(a, 1:n)
+_sized(op::LinearOp, n) = LinearOp(op.aM, op.aK, op.F, _scratch(op.Me, n), _scratch(op.Ke, n), _scratch(op.Fe, n))
+_sized(op::NonlinearOp, n) = NonlinearOp(op.aJ, op.r, _scratch(op.Je, n), _scratch(op.re, n), op.u, _scratch(op.u_elem, n))
 
 "Volume kernels of `kinds` as a tuple, and one `(facet set, kernel tuple, piece)` group per facet piece."
 function _split(ctx::AssemblyContext{NF}, kernels, kinds) where {NF}
@@ -170,22 +215,15 @@ function _fuse(kernels)
     return Tuple(out)
 end
 
-# Function barrier: `volume` and `groups` are concrete tuples from here on.
 function _assemble!(op, ctx::AssemblyContext{NF}, volume::Tuple, groups::Tuple, p, t) where {NF}
-    (; dh, cv, fv) = ctx
-    ranges = ntuple(f -> Ferrite.dof_range(dh, ctx.fields[f]), Val(NF))
     counts = zeros(Int, length(groups))
-    for cell in Ferrite.CellIterator(dh)
-        Ferrite.reinit!(cv, cell)
-        _start_cell!(op, Ferrite.celldofs(cell))
-        xs = Ferrite.getcoordinates(cell)
-        _kernels!(op, volume, cv, xs, ranges, p, t)
-        if !isempty(groups) && Ferrite.cellid(cell) in ctx.facetcells
-            for lf in 1:Ferrite.nfacets(cell)
-                _facet_groups!(op, groups, counts, 1, Ferrite.FacetIndex(Ferrite.cellid(cell), lf), fv, xs, ranges, p, t)
-            end
-        end
-        _finish_cell!(op, Ferrite.celldofs(cell))
+    # each values object once, also when fields share it
+    cvs, fvs = values(ctx.cellvalues), values(ctx.facetvalues)
+    unique_cvs, unique_fvs = Tuple(unique(objectid, cvs)), Tuple(unique(objectid, fvs))
+    for sdh in ctx.dh.subdofhandlers
+        ranges = ntuple(f -> _field_range(sdh, ctx.fields[f]), Val(NF))
+        sop = _sized(op, Ferrite.ndofs_per_cell(sdh))
+        _assemble_cells!(sop, ctx, sdh, cvs, fvs, unique_cvs, unique_fvs, ranges, volume, groups, counts, p, t)
     end
     for (g, (set, _, piece)) in enumerate(groups)
         counts[g] == length(set) ||
@@ -194,21 +232,62 @@ function _assemble!(op, ctx::AssemblyContext{NF}, volume::Tuple, groups::Tuple, 
     return nothing
 end
 
-_facet_groups!(op, ::Tuple{}, counts, g, fi, fv, xs, ranges, p, t) = nothing
-function _facet_groups!(op, groups::Tuple, counts, g, fi, fv, xs, ranges, p, t)
+# Function barrier: the kernels, values and ranges are concrete from here on.
+function _assemble_cells!(op, ctx, sdh, cvs, fvs, unique_cvs, unique_fvs, ranges, volume, groups, counts, p, t)
+    for cell in Ferrite.CellIterator(sdh)
+        _reinit_all!(unique_cvs, cell)
+        _start_cell!(op, Ferrite.celldofs(cell))
+        xs = Ferrite.getcoordinates(cell)
+        _kernels!(op, volume, cvs, xs, ranges, p, t)
+        if !isempty(groups) && Ferrite.cellid(cell) in ctx.facetcells
+            for lf in 1:Ferrite.nfacets(cell)
+                fi = Ferrite.FacetIndex(Ferrite.cellid(cell), lf)
+                _facet_groups!(op, groups, counts, 1, fi, fvs, unique_fvs, xs, ranges, p, t)
+            end
+        end
+        _finish_cell!(op, Ferrite.celldofs(cell))
+    end
+    return nothing
+end
+
+# The loops over fields and values below recurse over tuples and `Val`s with explicit arguments instead of taking
+# closures: a closure capturing arrays is heap-allocated whenever the compiler declines to inline it, which costs
+# an allocation per quadrature point and shape function.
+_reinit_all!(::Tuple{}, args...) = nothing
+@inline function _reinit_all!(vs::Tuple, args...)
+    Ferrite.reinit!(first(vs), args...)
+    return _reinit_all!(Base.tail(vs), args...)
+end
+
+# `block!(Val(b), args...)` for b = 1, …, B in order.
+@inline _fields!(block!::F, ::Val{0}, args...) where {F} = nothing
+@inline function _fields!(block!::F, ::Val{B}, args...) where {F, B}
+    _fields!(block!, Val(B - 1), args...)
+    block!(Val(B), args...)
+    return nothing
+end
+
+_facet_groups!(op, ::Tuple{}, counts, g, fi, fvs, unique_fvs, xs, ranges, p, t) = nothing
+function _facet_groups!(op, groups::Tuple, counts, g, fi, fvs, unique_fvs, xs, ranges, p, t)
     set, kernels, _ = first(groups)
     if fi in set
-        Ferrite.reinit!(fv, xs, fi[2])
+        _reinit_all!(unique_fvs, xs, fi[2])
         counts[g] += 1
-        _kernels!(op, kernels, fv, xs, ranges, p, t)
+        _kernels!(op, kernels, fvs, xs, ranges, p, t)
     end
-    return _facet_groups!(op, Base.tail(groups), counts, g + 1, fi, fv, xs, ranges, p, t)
+    return _facet_groups!(op, Base.tail(groups), counts, g + 1, fi, fvs, unique_fvs, xs, ranges, p, t)
 end
 
 _kernels!(op, ::Tuple{}, vals, xs, ranges, p, t) = nothing
 function _kernels!(op, kernels::Tuple, vals, xs, ranges, p, t)
-    _kernel!(op, first(kernels), vals, xs, ranges, p, t)
+    _fields!(_kernel_on_eq!, Val(length(ranges)), op, first(kernels), vals, xs, ranges, p, t)
     return _kernels!(op, Base.tail(kernels), vals, xs, ranges, p, t)
+end
+
+# The kernel's equation `E` as a compile-time constant, so `vals[E]` is concrete when the fields' values differ.
+@inline function _kernel_on_eq!(::Val{E}, op, k, vals, xs, ranges, p, t) where {E}
+    k.eq == E && _kernel!(op, k, Val(E), vals, xs, ranges, p, t)
+    return nothing
 end
 
 _normal(vals::Ferrite.AbstractFacetValues, q, X) = Ferrite.getnormal(vals, q)
@@ -249,32 +328,43 @@ end
     return ntuple(@inline(s -> _test_contract(c, ψ, (s - 1) * NW)), Val(NS))
 end
 
-@inline _static_foreach(f, ::Val{N}) where {N} = (ntuple(@inline(b -> (f(b); nothing)), Val(N)); nothing)
 
 @inline _add!(Ae, row, col, value, dΩ) = (Ae[row, col] += value * dΩ; nothing)
 _add!(Ae, row, col, ::StructuralZero, dΩ) = nothing
 
-# Row `row` of a mass block, trial slots Ud: Σ_j tt[b] φ_j for every field b; nothing for an absent block.
-_mass_row!(Ae, row, ranges::NTuple{NF}, ::Nothing, vals, q, nb, dΩ) where {NF} = nothing
-function _mass_row!(Ae, row, ranges::NTuple{NF}, tt, vals, q, nb, dΩ) where {NF}
-    for j in 1:nb
-        φ = Ferrite.shape_value(vals, q, j)
-        _static_foreach(@inline(b -> _add!(Ae, row, ranges[b][j], tt[b] * φ, dΩ)), Val(NF))
+# Row `row` of a mass block, trial slots Ud: Σ_j tt[b] φ_j over the trial functions of every field b; nothing for
+# an absent block.
+_mass_row!(Ae, row, ranges::NTuple{NF}, ::Nothing, vals, q, dΩ) where {NF} = nothing
+function _mass_row!(Ae, row, ranges::NTuple{NF}, tt, vals, q, dΩ) where {NF}
+    return _fields!(_mass_block!, Val(NF), Ae, row, ranges, tt, vals, q, dΩ)
+end
+@inline function _mass_block!(::Val{B}, Ae, row, ranges, tt, vals, q, dΩ) where {B}
+    return _mass_block!(Ae, row, ranges[B], tt[B], vals[B], q, dΩ)
+end
+_mass_block!(Ae, row, cols, ::StructuralZero, vb, q, dΩ) = nothing
+function _mass_block!(Ae, row, cols, coef, vb, q, dΩ)
+    for j in eachindex(cols)
+        _add!(Ae, row, cols[j], coef * Ferrite.shape_value(vb, q, j), dΩ)
     end
     return nothing
 end
 
-# Row `row` of a state block, trial slots [U; G]: Σ_j (tt[U_b] φ_j + Σ_d tt[G_bd] ∂_d φ_j) for every field b.
-_state_row!(Ae, row, ranges::NTuple{NF}, ::Nothing, vals, q, nb, dΩ) where {NF} = nothing
-function _state_row!(Ae, row, ranges::NTuple{NF}, tt, vals, q, nb, dΩ) where {NF}
-    for j in 1:nb
-        χ = _test_basis(vals, q, j)
-        DIM = length(χ) - 1
-        _static_foreach(Val(NF)) do b
-            @inline
-            value = tt[b] * χ[1] + _sum(ntuple(@inline(d -> tt[NF + (b - 1) * DIM + d] * χ[1 + d]), Val(DIM)))
-            _add!(Ae, row, ranges[b][j], value, dΩ)
-        end
+# Row `row` of a state block, trial slots [U; G]: Σ_j (tt[U_b] φ_j + Σ_d tt[G_bd] ∂_d φ_j) over the trial functions
+# of every field b.
+_state_row!(Ae, row, ranges::NTuple{NF}, ::Nothing, vals, q, dΩ) where {NF} = nothing
+function _state_row!(Ae, row, ranges::NTuple{NF}, tt::NTuple{NS, Any}, vals, q, dΩ) where {NF, NS}
+    return _fields!(_state_block!, Val(NF), Ae, row, ranges, tt, vals, q, dΩ, Val(NS ÷ NF - 1))
+end
+@inline function _state_block!(::Val{B}, Ae, row, ranges::NTuple{NF}, tt, vals, q, dΩ, ::Val{DIM}) where {B, NF, DIM}
+    tG = ntuple(@inline(d -> tt[NF + (B - 1) * DIM + d]), Val(DIM))
+    return _state_block!(Ae, row, ranges[B], tt[B], tG, vals[B], q, dΩ)
+end
+_state_block!(Ae, row, cols, ::StructuralZero, ::Tuple{Vararg{StructuralZero}}, vb, q, dΩ) = nothing
+function _state_block!(Ae, row, cols, tU, tG::NTuple{DIM, Any}, vb, q, dΩ) where {DIM}
+    for j in eachindex(cols)
+        χ = _test_basis(vb, q, j)
+        value = tU * χ[1] + _sum(ntuple(@inline(d -> tG[d] * χ[1 + d]), Val(DIM)))
+        _add!(Ae, row, cols[j], value, dΩ)
     end
     return nothing
 end
@@ -284,19 +374,20 @@ _coeffs(c, args...) = c(args...)
 _trial_coeffs(::Nothing, ψ::NTuple{NW}, ::Val{NS}) where {NW, NS} = nothing
 _test_contract(::Nothing, ψ::NTuple{NW}) where {NW} = StructuralZero()
 
-function _kernel!(op::LinearOp, blk::LinearBlock, vals, xs, ranges::NTuple{NF}, p, t) where {NF}
-    nb = Ferrite.getnbasefunctions(vals)
-    rows = ranges[blk.eq]
-    for q in 1:Ferrite.getnquadpoints(vals)
-        dΩ = Ferrite.getdetJdV(vals, q)
-        X = Ferrite.spatial_coordinate(vals, q, xs)
-        N = _normal(vals, q, X)
+function _kernel!(op::LinearOp, blk::LinearBlock, ::Val{E}, vals, xs, ranges::NTuple{NF}, p, t) where {E, NF}
+    rows = ranges[E]
+    isempty(rows) && return nothing
+    ve = vals[E]
+    for q in 1:Ferrite.getnquadpoints(ve)
+        dΩ = Ferrite.getdetJdV(ve, q)
+        X = Ferrite.spatial_coordinate(ve, q, xs)
+        N = _normal(ve, q, X)
         cM, cK, cF = _coeffs(blk.mass, X, t, N, p), _coeffs(blk.bilinear, X, t, N, p), _coeffs(blk.source, X, t, N, p)
-        for i in 1:nb
-            ψ = _test_basis(vals, q, i)
+        for i in eachindex(rows)
+            ψ = _test_basis(ve, q, i)
             op.Fe[rows[i]] -= _test_contract(cF, ψ) * dΩ
-            _mass_row!(op.Me, rows[i], ranges, _trial_coeffs(cM, ψ, Val(NF)), vals, q, nb, dΩ)
-            _state_row!(op.Ke, rows[i], ranges, _trial_coeffs(cK, ψ, Val(NF * length(ψ))), vals, q, nb, dΩ)
+            _mass_row!(op.Me, rows[i], ranges, _trial_coeffs(cM, ψ, Val(NF)), vals, q, dΩ)
+            _state_row!(op.Ke, rows[i], ranges, _trial_coeffs(cK, ψ, Val(NF * length(ψ))), vals, q, dΩ)
         end
     end
     return nothing
@@ -304,31 +395,40 @@ end
 
 # A kernel without `coeffs`: evaluate `f` with a unit trial function, exact because these kinds are linear in the
 # state.
-function _kernel!(op::LinearOp, k::KernelSpec, vals, xs, ranges::NTuple{NF}, p, t) where {NF}
-    nb = Ferrite.getnbasefunctions(vals)
-    rows = ranges[k.eq]
+function _kernel!(op::LinearOp, k::KernelSpec, ::Val{E}, vals, xs, ranges::NTuple{NF}, p, t) where {E, NF}
+    rows = ranges[E]
+    isempty(rows) && return nothing
+    ve = vals[E]
     mass = k.kind === :mass
     Ae = mass ? op.Me : op.Ke
     U0 = ntuple(_ -> 0.0, Val(NF))
-    for q in 1:Ferrite.getnquadpoints(vals)
-        dΩ = Ferrite.getdetJdV(vals, q)
-        X = Ferrite.spatial_coordinate(vals, q, xs)
-        N = _normal(vals, q, X)
+    for q in 1:Ferrite.getnquadpoints(ve)
+        dΩ = Ferrite.getdetJdV(ve, q)
+        X = Ferrite.spatial_coordinate(ve, q, xs)
+        N = _normal(ve, q, X)
         G0 = _unit_gradient(Val(NF), 0, zero(X))
-        for i in 1:nb
-            V, W = Ferrite.shape_value(vals, q, i), Ferrite.shape_gradient(vals, q, i)
+        for i in eachindex(rows)
+            V, W = Ferrite.shape_value(ve, q, i), Ferrite.shape_gradient(ve, q, i)
             if k.kind === :source
                 op.Fe[rows[i]] -= k.f(U0, G0, U0, V, W, X, t, N, p) * dΩ
                 continue
             end
-            for b in 1:NF, j in 1:nb
-                φ, ∇φ = Ferrite.shape_value(vals, q, j), Ferrite.shape_gradient(vals, q, j)
-                unit = _unit(Val(NF), b, φ)
-                value = mass ? k.f(U0, G0, unit, V, W, X, t, N, p) :
-                    k.f(unit, _unit_gradient(Val(NF), b, ∇φ), U0, V, W, X, t, N, p)
-                Ae[rows[i], ranges[b][j]] += value * dΩ
-            end
+            _fields!(_unit_trial_block!, Val(NF), Ae, rows[i], ranges, vals, k, mass, (V, W, X, t, N, p), q, dΩ)
         end
+    end
+    return nothing
+end
+
+@inline function _unit_trial_block!(::Val{B}, Ae, row, ranges::NTuple{NF}, vals, k, mass, (V, W, X, t, N, p), q, dΩ) where {B, NF}
+    vb, cols = vals[B], ranges[B]
+    U0 = ntuple(_ -> 0.0, Val(NF))
+    G0 = _unit_gradient(Val(NF), 0, zero(X))
+    for j in eachindex(cols)
+        φ, ∇φ = Ferrite.shape_value(vb, q, j), Ferrite.shape_gradient(vb, q, j)
+        unit = _unit(Val(NF), B, φ)
+        value = mass ? k.f(U0, G0, unit, V, W, X, t, N, p) :
+            k.f(unit, _unit_gradient(Val(NF), B, ∇φ), U0, V, W, X, t, N, p)
+        Ae[row, cols[j]] += value * dΩ
     end
     return nothing
 end
@@ -348,35 +448,55 @@ function _finish_cell!(op::NonlinearOp, dofs)
     return nothing
 end
 
-function _kernel!(op::NonlinearOp, k::KernelSpec, vals, xs, ranges::NTuple{NF}, p, t) where {NF}
-    nb = Ferrite.getnbasefunctions(vals)
-    rows = ranges[k.eq]
+# State of each field at a quadrature point: zero where the field has no dofs.
+_field_value(vf, q, u, range) = isempty(range) ? 0.0 : Ferrite.function_value(vf, q, u, range)
+_field_gradient(vf, q, u, range, X) = isempty(range) ? zero(X) : Ferrite.function_gradient(vf, q, u, range)
+_field_values(::Tuple{}, q, u, ::Tuple{}) = ()
+@inline function _field_values(vals::Tuple, q, u, ranges::Tuple)
+    return (_field_value(first(vals), q, u, first(ranges)), _field_values(Base.tail(vals), q, u, Base.tail(ranges))...)
+end
+_field_gradients(::Tuple{}, q, u, ::Tuple{}, X) = ()
+@inline function _field_gradients(vals::Tuple, q, u, ranges::Tuple, X)
+    return (_field_gradient(first(vals), q, u, first(ranges), X), _field_gradients(Base.tail(vals), q, u, Base.tail(ranges), X)...)
+end
+
+function _kernel!(op::NonlinearOp, k::KernelSpec, ::Val{E}, vals, xs, ranges::NTuple{NF}, p, t) where {E, NF}
+    rows = ranges[E]
+    isempty(rows) && return nothing
+    ve = vals[E]
     u_elem = op.u_elem
     Ud0 = ntuple(_ -> 0.0, Val(NF))
-    for q in 1:Ferrite.getnquadpoints(vals)
-        dΩ = Ferrite.getdetJdV(vals, q)
-        X = Ferrite.spatial_coordinate(vals, q, xs)
-        N = _normal(vals, q, X)
+    for q in 1:Ferrite.getnquadpoints(ve)
+        dΩ = Ferrite.getdetJdV(ve, q)
+        X = Ferrite.spatial_coordinate(ve, q, xs)
+        N = _normal(ve, q, X)
         DIM = length(X)
-        U = ntuple(f -> Ferrite.function_value(vals, q, u_elem, ranges[f]), Val(NF))
-        grads = ntuple(f -> Ferrite.function_gradient(vals, q, u_elem, ranges[f]), Val(NF))
+        U = _field_values(vals, q, u_elem, ranges)
+        grads = _field_gradients(vals, q, u_elem, ranges, X)
         G = ntuple(m -> grads[cld(m, DIM)][mod1(m, DIM)], Val(NF * length(X)))
-        for i in 1:nb
-            V, W = Ferrite.shape_value(vals, q, i), Ferrite.shape_gradient(vals, q, i)
+        for i in eachindex(rows)
+            V, W = Ferrite.shape_value(ve, q, i), Ferrite.shape_gradient(ve, q, i)
             op.re[rows[i]] += k.f(U, G, Ud0, V, W, X, t, N, p) * dΩ
             op.aJ === nothing && continue
-            # promote: a generated tangent returns literal `0` (Int) for constant-zero entries, and indexing a
-            # mixed tuple with a runtime index allocates
+            # promote: a hand-built tangent may return literal `0` (Int) entries, and indexing a mixed tuple with a
+            # runtime index allocates
             dI = promote(k.tangent(U, G, Ud0, V, W, X, t, N, p)...)
-            for b in 1:NF, j in 1:nb
-                φ, ∇φ = Ferrite.shape_value(vals, q, j), Ferrite.shape_gradient(vals, q, j)
-                value = dI[b] * φ
-                for d in 1:DIM
-                    value += dI[NF + (b - 1) * DIM + d] * ∇φ[d]
-                end
-                op.Je[rows[i], ranges[b][j]] += value * dΩ
-            end
+            _fields!(_tangent_block!, Val(NF), op.Je, rows[i], ranges, vals, dI, q, dΩ)
         end
+    end
+    return nothing
+end
+
+@inline function _tangent_block!(::Val{B}, Je, row, ranges::NTuple{NF}, vals, dI, q, dΩ) where {B, NF}
+    vb, cols = vals[B], ranges[B]
+    for j in eachindex(cols)
+        φ, ∇φ = Ferrite.shape_value(vb, q, j), Ferrite.shape_gradient(vb, q, j)
+        DIM = length(∇φ)
+        value = dI[B] * φ
+        for d in 1:DIM
+            value += dI[NF + (B - 1) * DIM + d] * ∇φ[d]
+        end
+        Je[row, cols[j]] += value * dΩ
     end
     return nothing
 end
