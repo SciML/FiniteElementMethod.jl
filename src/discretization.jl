@@ -12,6 +12,9 @@ PDEBase.contains_point(grid::Ferrite.Grid, x) = _contains_point(grid, x)
 Finite-element discretization of a `PDESystem` whose spatial domain is the mesh domain `Ω`
 (of a `Ferrite.Grid`), with time variable `t`. `DAEProblem(pdesys, disc)` assembles the
 Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknown per field.
+Without `t` the discretization is steady: the `PDESystem` must have no time variable, and
+`discretize` (or `NonlinearProblem(pdesys, disc)`) returns a `NonlinearProblem` whose `solve`
+gives a `PDENoTimeSolution`.
 
   - `spaces`: dependent variable (`u` or `u(t, x, y)`) `=>` `Ferrite.Interpolation`; the
     default is `Lagrange{RefShape, 1}()` on the mesh's reference shape. Fields may have
@@ -27,21 +30,22 @@ Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknow
     stabilisation of every equation; linear terms only, and `τ` cannot reference parameters.
   - `ibp`: equation (or its index) `=>` `PDEBase.StrongForm` integration-by-parts policy.
   - `pairing`: equation `=>` dependent variable it is tested with, needed for an equation
-    with no time derivative of its own, such as `0 ~ Dxx(v) + f`.
+    with no time derivative of its own, such as `0 ~ Dxx(v) + f`. In a steady system the
+    equations not named here take the remaining dependent variables in declared order.
   - `algebraic_abstol`: the absolute tolerance the `DAEProblem` carries for its algebraic rows
     (those with `differential_vars` false: algebraic fields and Dirichlet rows), so that they
     are left out of the solver's error control. `:auto` sets `1e8` when the system has index
     2, that is when an algebraic field's own unknowns are absent from its equation (the
     pressure in `0 ~ Dx(u1) + Dy(u2)`), and nothing otherwise; a positive number sets that
-    value on the algebraic rows of any system; `nothing` sets nothing. The differential rows get the `abstol` passed to
-    `FEMDiscretization` or `DAEProblem` if it is a number, else OrdinaryDiffEq's default
-    `1e-6`; an array `abstol` passed there is used as it is. An `abstol` passed to `solve`
-    replaces the problem's whole vector. This keyword is not in the spec (§7.1, §7.6): without
-    it, `DFBDF` drives the step size of an index-2 system below `eps` near the initial time,
-    since the local error of the index-2 unknowns does not shrink with the step.
+    value on the algebraic rows of any system; `nothing` sets nothing. The differential rows
+    get the `abstol` passed to `FEMDiscretization` or `DAEProblem` if it is a number, else
+    OrdinaryDiffEq's default `1e-6`; an array `abstol` passed there is used as it is. An
+    `abstol` passed to `solve` replaces the problem's whole vector. This keyword is not in the spec (§7.1, §7.6): without it, `DFBDF`
+    drives the step size of an index-2 system below `eps` near the initial time, since the
+    local error of the index-2 unknowns does not shrink with the step.
   - `codegen = :mtk` and `dirichlet = :eliminate` are reserved for later milestones and
-    raise; remaining keywords are passed to the `DAEProblem`, where a keyword given at the
-    `DAEProblem`/`discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate` and `name`
+    raise; remaining keywords are passed to the `DAEProblem` (or `NonlinearProblem`), where a
+    keyword given at the `DAEProblem`/`NonlinearProblem`/`discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate` and `name`
     are set by the discretization and rejected.
 
 Pieces come from `boundarypiece.(Ω, names)`; on an analytic DomainSets box write

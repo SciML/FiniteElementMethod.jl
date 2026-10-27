@@ -423,7 +423,8 @@ _xml_escape(str) = replace(str, '&' => "&amp;", '<' => "&lt;", '>' => "&gt;", '"
 
 Write one `.vtu` file per saved time, `"\$(base)_0001.vtu"` and so on, with every field as
 point data, plus a ParaView collection `"\$(base).pvd"` that maps them to `sol.t`. Returns the
-path of the `.pvd` file.
+path of the `.pvd` file. A steady solution is written to the single file `"\$(base).vtu"`,
+whose path is returned.
 """
 function write_vtk(A::FEMTimeSolution, base::AbstractString)
     dh = _dh(A.disc_data)
@@ -447,4 +448,12 @@ function write_vtk(A::FEMTimeSolution, base::AbstractString)
         """
     )
     return pvd
+end
+
+function write_vtk(A::FEMSteadySolution, base::AbstractString)
+    dh = _dh(A.disc_data)
+    Ferrite.VTKGridFile(base, dh) do vtk
+        Ferrite.write_solution(vtk, dh, only(_states(A)))
+    end
+    return base * ".vtu"
 end
