@@ -29,7 +29,7 @@ using FiniteElementMethod, ModelingToolkit, DomainSets, OrdinaryDiffEqBDF
 using OrdinaryDiffEqBDF: NLNewton
 using LinearSolve: UMFPACKFactorization
 using ModelingToolkit: t_nounits as t
-using SciMLBase: SciMLBase, CheckInit
+using SciMLBase: SciMLBase, CheckInit, init, solve!
 using Ferrite: Ferrite
 
 include(joinpath(@__DIR__, "mesh.jl"))
@@ -98,18 +98,22 @@ end
 """
     dfg_solve(; h = 0.04, hc = 0.0025, tend = 60.0, alg = DFG_ALG, abstol = 1e-7, reltol = 1e-7)
 
-Mesh, discretize and solve 2D-1; returns `(; sol, prob, coefficients, ndofs, build_s, solve_s)` with the
-coefficients `(cD, cL, Δp)` at `tend`.
+Mesh, discretize and solve 2D-1; returns `(; sol, prob, coefficients, dxdt, ndofs, build_s, solve_s)` with the
+coefficients `(cD, cL, Δp)` at `tend`. `dxdt` is the integrator's derivative at `tend`, used in the `∂ₜu` term of
+the force functional: with `save_everystep = false` the saved solution has only its two end points, and its
+derivative is the slope between them, not the derivative at `tend`.
 """
 function dfg_solve(; h = 0.04, hc = 0.0025, tend = 60.0, alg = DFG_ALG, abstol = 1.0e-7, reltol = 1.0e-7)
     grid = dfg_channel_grid(; h, hc)
     build_s = @elapsed prob = dfg_problem(grid; tend)
-    solve_s = @elapsed sol = check_solved(solve(prob, alg; abstol = differential_abstol(prob, abstol), reltol, save_everystep = false))
+    integrator = init(prob, alg; abstol = differential_abstol(prob, abstol), reltol, save_everystep = false)
+    solve_s = @elapsed solve!(integrator)
+    sol = check_solved(SciMLBase.wrap_sol(integrator.sol))
     dh = sol.disc_data.space.dh
     xend = sol.original_sol.u[end]
-    dxdt = sol.original_sol(tend, Val{1})
+    dxdt = copy(integrator.du)
     coefficients = dfg_coefficients(dh, xend; ν = 1.0e-3, Umean = 0.2, dxdt)
-    return (; sol, prob, coefficients, ndofs = length(prob.u0), build_s, solve_s)
+    return (; sol, prob, coefficients, dxdt, ndofs = length(prob.u0), build_s, solve_s)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

@@ -18,6 +18,18 @@ if FiniteElementMethod.MESH_PDEBASE
         @test terminated.retcode == SciMLBase.ReturnCode.Terminated
         @test_throws "the DFG solve stopped at t = " check_solved(terminated)
         c = r.coefficients
+        # The force functional gets the integrator's final derivative, which vanishes at the steady state and
+        # satisfies the DAE there, not the slope between the two saved end points (about |u|/t_end).
+        dv = r.prob.differential_vars
+        x_end = r.sol.original_sol.u[end]
+        @test maximum(abs, r.dxdt[dv]) <= 1.0e-6
+        residual = zeros(length(x_end))
+        r.prob.f(residual, r.dxdt, x_end, r.prob.p, last(r.prob.tspan))
+        @test maximum(abs, residual[dv]) <= 1.0e-9
+        steady = dfg_coefficients(r.sol.disc_data.space.dh, x_end; ν = 1.0e-3, Umean = 0.2)
+        for k in (:cD, :cL)
+            @test c[k] ≈ steady[k] rtol = 1.0e-8
+        end
         for k in (:cD, :cL, :Δp)
             lo, hi = DFG_2D1_BANDS[k]
             @test lo <= c[k] <= hi
@@ -29,7 +41,7 @@ if FiniteElementMethod.MESH_PDEBASE
         dh_ref, x_ref, _ = dfg_reference_steady(grid; pressure = :strong)
         ref = dfg_coefficients(dh_ref, x_ref; ν = 1.0e-3, Umean = 0.2)
         for k in (:cD, :cL, :Δp)
-            @test c[k] ≈ ref[k] rtol = 1.0e-5
+            @test c[k] ≈ ref[k] rtol = 1.0e-7
         end
     end
 else
