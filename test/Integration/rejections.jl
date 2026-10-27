@@ -14,7 +14,7 @@ U, Wf = u(t, x, y), w(t, x, y)
 opaque(z) = 1 + z^2   # registered without a derivative rule
 @register_symbolic opaque(z)
 
-run_chain(eqs, bcs = BC[]; depvars = [U]) = chain(eqs, bcs; depvars, t, sivs = [x, y])
+run_chain(eqs, bcs = BC[]; depvars = [U], kw...) = chain(eqs, bcs; depvars, t, sivs = [x, y], kw...)
 rejects(needle, eqs, bcs = BC[]; kw...) = raises(() -> run_chain(eqs, bcs; kw...), needle)
 wording(seam, pdebase) = PDEBASE_PATH ? pdebase : seam
 
@@ -81,20 +81,31 @@ rejects_trace(needle, bc) = PDEBASE_PATH && rejects(needle, [Dt(U) ~ Dx(Dx(U)) +
     @test_pdebase rejects_trace("relates values on two faces of different axes", u(t, -1.0, y) ~ u(t, x, 1.0))
 end
 
-# Rows that need piece and NormalDerivative slotting, which comes in PDEBase strongform PR 5 (not in 4f536e4). The
-# probe flips (an unexpected pass) when NormalDerivative exists, the signal to write the real end-to-end rows.
-has_normal_derivative() = isdefined(Symbolics, :NormalDerivative) || isdefined(PDEBase, :NormalDerivative)
+# Conditions on the pieces of a MeshDomain need PDEBase's piece and NormalDerivative slotting (PDEBase#154, the M0
+# stack); without it these rows are broken. `makebc(Γ, Dn)` builds the condition from piece and operator constructors.
+function mesh_rejects(needle, makebc)
+    PDEBASE_MESH || return false
+    Ω = mesh_domain(mesh_setup(Triangle, 1, 2))
+    bc = makebc(name -> PDEBase.boundarypiece(Ω, name), PDEBase.NormalDerivative)
+    return rejects(needle, [Dt(U) ~ Dx(Dx(U)) + Dy(Dy(U))], [bc]; Ω)
+end
 
-@testset "rows awaiting PDEBase strongform PR 5 (piece and NormalDerivative slotting)" begin
-    # Symbolic normal slot N in a facet kernel, from Dn_Γ(u) on a mesh piece; the seam only takes constant normals.
-    @test_broken has_normal_derivative()
-    # "NormalDerivative(Γa) applied to a trace on Γb" on mesh pieces.
-    @test_broken has_normal_derivative()
+@testset "conditions on mesh pieces" begin
+    # "NormalDerivative(Γa) applied to a trace on Γb" (Appendix A).
+    @test_pdebase_mesh mesh_rejects("not on Γ_right", (Γ, Dn) -> Dn(Γ(:right))(u(t, Γ(:left))) ~ 1.0)
+    # A Cartesian derivative of a trace on a mesh piece is not its normal derivative.
+    @test_pdebase_mesh mesh_rejects("write the normal derivative", (Γ, Dn) -> Dx(u(t, Γ(:right))) ~ 1.0)
 end
 
 @testset "boundary piece with no facet set (assembly driver)" begin
     setup = mesh_setup(Triangle, 1, 4)
-    c = run_chain([Dt(U) ~ Dx(Dx(U)) + Dy(Dy(U))], [BC("inlet", Dx(U) ~ 1.0, [-1.0, 0.0])])
+    c = if PDEBASE_MESH
+        Ω = mesh_domain(setup; names = [:left, :right, :bottom, :top, :inlet])
+        inlet = PDEBase.boundarypiece(Ω, :inlet)
+        run_chain([Dt(U) ~ Dx(Dx(U)) + Dy(Dy(U))], [PDEBase.NormalDerivative(inlet)(u(t, inlet)) ~ 1.0]; Ω)
+    else
+        run_chain([Dt(U) ~ Dx(Dx(U)) + Dy(Dy(U))], [BC("inlet", Dx(U) ~ 1.0, [-1.0, 0.0])])
+    end
     @test_throws "no facet set is given for piece inlet" assemble_linear(setup.ctx, c.kernels, [0.0])
     @test_throws "no facet set named" AssemblyContext(setup.dh, [:u], setup.cv, setup.fv, Dict("inlet" => "inlet"))
 end

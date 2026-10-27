@@ -20,13 +20,16 @@ using .StrongFormSeam: StrongFormSeam, BC
 using DomainSets: DomainSets
 using ModelingToolkit: ModelingToolkit
 using PDEBase: PDEBase
+using SciMLBase: SciMLBase
 
 # The analysis switch. With a PDEBase whose StrongForm has `analyse` (SciML/PDEBase.jl#149, 4f536e4, and later) the
 # chain's analysis comes from PDEBase: the volume terms, and the boundary conditions on box faces, which the adapter
-# below rewrites as traces. PDEBase numbers fields in the declared order and emits conditions in input order. Conditions on any other piece (a mesh facet set), which PDEBase cannot express until
-# strongform PR 5 (piece and NormalDerivative slotting), go through the seam's stage d against PDEBase's fluxes.
-# Released PDEBase has no StrongForm, and the whole analysis falls back to the seam. test/README.md says how to run
-# the PDEBase path locally.
+# below rewrites as traces. PDEBase numbers fields in the declared order and emits conditions in input order.
+# With the whole M0 stack (MeshDomain, BoundaryPiece and NormalDerivative slotting, PDEBase#154), conditions on mesh
+# pieces go through PDEBase too, written with `NormalDerivative` on a `MeshDomain` (the `Ω` keyword below); without
+# it, interior-form conditions on a non-box piece fall back to the seam's stage d against PDEBase's fluxes. Released
+# PDEBase has no StrongForm, and the whole analysis falls back to the seam. test/README.md says how to run the
+# PDEBase paths locally.
 const PDEBASE_PATH = isdefined(PDEBase, :StrongForm) && isdefined(PDEBase.StrongForm, :analyse)
 const STRONGFORM = PDEBASE_PATH ? PDEBase.StrongForm : StrongFormSeam
 const Weighted, ProductRule, PeriodicBC = STRONGFORM.Weighted, STRONGFORM.ProductRule, STRONGFORM.PeriodicBC
@@ -36,11 +39,66 @@ macro test_pdebase(ex)
     return esc(:(PDEBASE_PATH ? @test($ex) : @test_broken($ex)))
 end
 
+const PDEBASE_MESH = PDEBASE_PATH && isdefined(PDEBase, :MeshDomain) && isdefined(PDEBase, :NormalDerivative)
+
+# `@test` with PDEBase's mesh pieces and `@test_broken` without them.
+macro test_pdebase_mesh(ex)
+    return esc(:(PDEBASE_MESH ? @test($ex) : @test_broken($ex)))
+end
+
 if PDEBASE_PATH
     struct TimeDiscretization <: PDEBase.AbstractEquationSystemDiscretization
         time::Any
     end
     PDEBase.get_time(d::TimeDiscretization) = d.time
+end
+
+if PDEBASE_MESH
+    # A Ferrite grid's facet sets as the pieces of a PDEBase `MeshDomain`.
+    struct FacetSetMesh
+        dim::Int
+        names::Vector{Symbol}
+    end
+    PDEBase.meshdim(m::FacetSetMesh) = m.dim
+    PDEBase.facetset_names(m::FacetSetMesh) = Tuple(m.names)
+
+    # A mesh discretization that stops `symbolic_discretize` once the boundary map is parsed and keeps it.
+    struct MeshDiscretization <: PDEBase.AbstractMeshDiscretization
+        time::Any
+        captured::Base.RefValue{Any}
+    end
+    PDEBase.get_time(d::MeshDiscretization) = d.time
+    struct BoundaryMapReady <: Exception end
+    function PDEBase.check_boundarymap(bmap, v::PDEBase.VariableMap, d::MeshDiscretization)
+        d.captured[] = (bmap, v)
+        throw(BoundaryMapReady())
+    end
+end
+
+# The `MeshDomain` whose pieces are `names` (default: the grid's facet sets), for the `Ω` keyword of `analyse`.
+mesh_domain(setup; names = collect(keys(setup.grid.facetsets))) =
+    PDEBase.MeshDomain(FacetSetMesh(setup.dim, Symbol.(names)))
+
+# PDEBase's analysis of a system on the mesh domain `Ω`, with `bcs` raw equations on its pieces; boundary data is
+# re-keyed from each `BoundaryPiece` to its facet-set name.
+function mesh_analyse(eqs, bcs; Ω, depvars, t, sivs, params = [], ibp = Dict())
+    SF = PDEBase.StrongForm
+    domains = [Tuple(sivs) ∈ Ω, t ∈ DomainSets.ClosedInterval(0.0, 1.0)]
+    sys = ModelingToolkit.PDESystem(eqs, bcs, domains, [t; sivs], depvars, params; name = :sys)
+    disc = MeshDiscretization(t, Ref{Any}(nothing))
+    try
+        SciMLBase.symbolic_discretize(sys, disc)
+    catch err
+        err isa BoundaryMapReady || rethrow()
+    end
+    bmap, v = disc.captured[]
+    an = SF.analyse(sys, v, bmap; ibp)
+    name(piece) = string(piece.name)
+    return SF.StrongFormAnalysis{Any}(
+        an.slots, an.nfields, an.dim, an.strong, an.mass, an.flux, an.remainder, an.conormal,
+        SF.EssentialBC{Any}[SF.EssentialBC(name(b.piece), b.field, b.g) for b in an.essential],
+        SF.NaturalBC{Any}[SF.NaturalBC(name(b.piece), b.eq, b.Φ) for b in an.natural], SF.PeriodicBC{Any}[]
+    )
 end
 
 # Box faces of the Ferrite facet sets the tests name, as (spatial variable index, side).
@@ -62,11 +120,13 @@ function on_face(ex, depvars, sivs, d, endpoint)
     return Symbolics.unwrap(op(map(a -> on_face(a, depvars, sivs, d, endpoint), Symbolics.arguments(ex))...))
 end
 
-#     analyse(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict(), periodic = [], domain = nothing)
+#     analyse(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict(), periodic = [], domain = nothing, Ω = nothing)
 #
 # The seam's interface over either path. `bcs` holds seam `BC`s and, on the PDEBase path, raw trace `Equation`s
-# (periodic pairs). `domain` gives each spatial variable's interval, `[−1, 1]` by default as generate_grid's.
-function analyse(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict(), periodic = [], domain = nothing)
+# (periodic pairs). `domain` gives each spatial variable's interval, `[−1, 1]` by default as generate_grid's. With
+# a `MeshDomain` `Ω` (PDEBase mesh path only), `bcs` are raw equations on its pieces.
+function analyse(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict(), periodic = [], domain = nothing, Ω = nothing)
+    Ω === nothing || return mesh_analyse(eqs, bcs; Ω, depvars, t, sivs, params, ibp)
     PDEBASE_PATH || return StrongFormSeam.analyse(eqs, bcs; depvars, t, sivs, params, ibp, periodic)
     SF = PDEBase.StrongForm
     intervals = domain === nothing ? [(-1.0, 1.0) for _ in sivs] : domain

@@ -14,24 +14,31 @@ GROUP=Integration julia --project=. -e 'using Pkg; Pkg.test()'
 - **Seam path** (released PDEBase, and CI): PDEBase has no `StrongForm.analyse`, so the whole analysis comes from
   the test-only `test/shared/strongform_seam.jl`.
 - **PDEBase path**: when `PDEBase.StrongForm.analyse` exists, the volume terms and every box-face boundary
-  condition come from PDEBase. Conditions on mesh pieces still go through the seam's stage d against PDEBase's
-  fluxes, until PDEBase's piece and `NormalDerivative` slotting (strongform PR 5) lands.
+  condition come from PDEBase. With the whole PDEBase M0 stack (`MeshDomain`, `BoundaryPiece` and
+  `NormalDerivative` slotting, PDEBase#154), conditions written with `NormalDerivative` on the pieces of a
+  `MeshDomain` go through PDEBase as well; without it, interior-form conditions on non-box pieces fall back to the
+  seam's stage d against PDEBase's fluxes.
 
 Checks that only PDEBase passes use `@test_pdebase`, which is `@test` on the PDEBase path and `@test_broken` on the
-seam path.
+seam path; checks that need the mesh pieces use `@test_pdebase_mesh`, which is `@test` only with the M0 stack.
 
-To run the Integration group on the PDEBase path, develop the strongform branch
-(xtalax-droid/PDEBase.jl `forge/strongform` at 80715ae, SciML/PDEBase.jl#148 and #149, with box-face boundary
-conditions, fields in declared order and conditions in input order) into a throwaway environment. Never
-commit a Project or Manifest that points at it. From the repository root:
+To run the Integration group on the PDEBase path, add a PDEBase development revision to a throwaway environment.
+Never commit a Project or Manifest that points at one. Two revisions of xtalax-droid/PDEBase.jl are in use:
+
+- `80715ae` (`forge/strongform`, SciML/PDEBase.jl#148 and #149): box-face boundary conditions, fields in declared
+  order, conditions in input order. The mesh-piece rows stay `@test_broken`.
+- `f14989d` (`forge/m0-all`, the whole M0 stack including #154): also the mesh-piece rows.
+
+From the repository root, with `rev` one of those:
 
 ```sh
+rev=f14989d
 env=$(mktemp -d)
-julia --project="$env" -e 'using Pkg
-    Pkg.develop(path = ".")
-    Pkg.add(url = "https://github.com/xtalax-droid/PDEBase.jl", rev = "80715ae")
-    Pkg.add(["Test", "SafeTestsets", "SciMLTesting", "LinearAlgebra", "Random", "Ferrite", "Symbolics",
-        "DomainSets", "ModelingToolkit"])'
+julia --project="$env" -e "using Pkg
+    Pkg.develop(path = \".\")
+    Pkg.add(url = \"https://github.com/xtalax-droid/PDEBase.jl\", rev = \"$rev\")
+    Pkg.add([\"Test\", \"SafeTestsets\", \"SciMLTesting\", \"LinearAlgebra\", \"Random\", \"Ferrite\", \"Symbolics\",
+        \"DomainSets\", \"ModelingToolkit\", \"SciMLBase\"])"
 GROUP=Integration julia --project="$env" test/runtests.jl
 ```
 

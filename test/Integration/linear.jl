@@ -75,6 +75,29 @@ end
     )
 end
 
+@testset "(i) on mesh pieces: NormalDerivative with the symbolic normal" begin
+    # The same conditions as (i), written on the pieces of a MeshDomain over the grid's facet sets with
+    # NormalDerivative, so PDEBase matches them against k∇u·N with the symbolic normal N. Needs MeshDomain pieces and
+    # NormalDerivative slotting (PDEBase#154, the M0 stack); broken without them, and on the seam path.
+    if PDEBASE_MESH
+        Ω = mesh_domain(SETUP)
+        left, right, top = (PDEBase.boundarypiece(Ω, name) for name in (:left, :right, :top))
+        Dn(piece) = PDEBase.NormalDerivative(piece)
+        c = chain(
+            [Dt(U) ~ Dx(k * Dx(U)) + Dy(k * Dy(U)) + x * y + 1],
+            [u(t, left) ~ 0.1 * y, Dn(right)(u(t, right)) ~ h, k * Dn(top)(u(t, top)) + α * u(t, top) ~ β];
+            depvars = [U], t, sivs = [x, y], params = PARAMS, Ω
+        )
+        @test [b.piece for b in c.an.natural] == ["right", "top"]
+        check_linear(
+            SETUP, c; block = (e, b, X) -> (; zero_block(2)..., κ = iso(PV[1]), m = 1.0),
+            facets = [("right", 1, 1, X -> 0.0, X -> PV[1] * PV[4]), ROBIN_REF]
+        )
+    else
+        @test_broken PDEBASE_MESH
+    end
+end
+
 @testset "(ii) variable isotropic diffusion k = 1 + x²y" begin
     kxy = 1 + x^2 * y
     kf(X) = 1 + X[1]^2 * X[2]
