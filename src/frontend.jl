@@ -74,15 +74,6 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
                 "$(join(sort(string.(unknown)), ", ")); the dependent variables are $(join(sort(string.(dvs)), ", "))"
         )
     )
-    # StrongForm numbers the coordinates in the dependent variables' argument order, so a pairing
-    # in another order would bind the names to the wrong mesh components (spec §3.4).
-    # Tracking: drop once PDEBase orders `indvars` of a mesh domain by the pairing.
-    isequal(collect(v.x̄), collect(v.spatial_axes)) || throw(
-        ArgumentError(
-            "the domain pairing names the coordinates in the order ($(join(v.spatial_axes, ", "))) but the " *
-                "dependent variables take them in the order ($(join(v.x̄, ", "))); write both in the same order"
-        )
-    )
     t = v.time
     for u in dvs
         args = SymbolicUtils.arguments(unwrap(u))

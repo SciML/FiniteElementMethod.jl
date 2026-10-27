@@ -40,9 +40,7 @@ Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknow
     `DAEProblem`/`discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate` and `name`
     are set by the discretization and rejected.
 
-The coordinates in the domain pairing must currently be listed in the order the dependent
-variables take them: `(x, y) ∈ Ω` with `u(t, x, y)`; another order raises an error (PDEBase's
-mesh-axis-order work will lift this). Pieces come from `boundarypiece.(Ω, names)`; on an analytic DomainSets box write
+Pieces come from `boundarypiece.(Ω, names)`; on an analytic DomainSets box write
 `boundarypiece.(Ref(rect), names)`, since DomainSets types do not broadcast as scalars.
 
 Where pieces with Dirichlet conditions on the same field meet (a corner), the condition listed
