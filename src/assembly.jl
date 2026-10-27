@@ -237,19 +237,19 @@ end
 # vanish from the generated code and blocks that are structurally zero are never written.
 
 # Test-function basis (φ, ∂₁φ, …, ∂_dim φ) of base function `i`, matching the `w = [V; W]` order of `coeffs`.
-_test_basis(vals, q, i) = (Ferrite.shape_value(vals, q, i), _ntuple(Ferrite.shape_gradient(vals, q, i))...)
-_ntuple(v::Ferrite.Vec{D}) where {D} = ntuple(d -> v[d], Val(D))
+@inline _test_basis(vals, q, i) = (Ferrite.shape_value(vals, q, i), _ntuple(Ferrite.shape_gradient(vals, q, i))...)
+@inline _ntuple(v::Ferrite.Vec{D}) where {D} = ntuple(d -> v[d], Val(D))
 
-_sum(t::Tuple{Any}) = t[1]
-_sum(t::Tuple) = t[1] + _sum(Base.tail(t))
+@inline _sum(t::Tuple{Any}) = t[1]
+@inline _sum(t::Tuple) = t[1] + _sum(Base.tail(t))
 
 # Σ_w c[offset + w] ψ[w], and per trial slot s the trial coefficient Σ_w c[(s - 1) * NW + w] ψ[w].
-_test_contract(c, ψ::NTuple{NW}, offset = 0) where {NW} = _sum(ntuple(@inline(w -> c[offset + w] * ψ[w]), Val(NW)))
-function _trial_coeffs(c, ψ::NTuple{NW}, ::Val{NS}) where {NW, NS}
+@inline _test_contract(c, ψ::NTuple{NW}, offset = 0) where {NW} = _sum(ntuple(@inline(w -> c[offset + w] * ψ[w]), Val(NW)))
+@inline function _trial_coeffs(c, ψ::NTuple{NW}, ::Val{NS}) where {NW, NS}
     return ntuple(@inline(s -> _test_contract(c, ψ, (s - 1) * NW)), Val(NS))
 end
 
-_static_foreach(f, ::Val{N}) where {N} = (ntuple(@inline(b -> (f(b); nothing)), Val(N)); nothing)
+@inline _static_foreach(f, ::Val{N}) where {N} = (ntuple(@inline(b -> (f(b); nothing)), Val(N)); nothing)
 
 @inline _add!(Ae, row, col, value, dΩ) = (Ae[row, col] += value * dΩ; nothing)
 _add!(Ae, row, col, ::StructuralZero, dΩ) = nothing
