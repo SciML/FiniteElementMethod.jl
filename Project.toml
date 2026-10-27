@@ -35,6 +35,7 @@ ModelingToolkit = "11"
 NonlinearSolveFirstOrder = "2.10"
 OrdinaryDiffEqBDF = "2.4"
 PDEBase = "0.1.39"
+Random = "1"
 SciMLBase = "2, 3"
 SafeTestsets = "0.1"
 SciMLTesting = "2.4"
@@ -45,9 +46,10 @@ julia = "1.10"
 
 [extras]
 OrdinaryDiffEqBDF = "6ad6398a-0878-4a85-9266-38940aa047c8"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SafeTestsets = "1bc83da4-3b8d-516f-aca4-4fe02f6d838f"
 SciMLTesting = "09d9d899-5365-40a9-917a-5f67fddea283"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["OrdinaryDiffEqBDF", "SafeTestsets", "SciMLTesting", "Test"]
+test = ["OrdinaryDiffEqBDF", "Random", "SafeTestsets", "SciMLTesting", "Test"]

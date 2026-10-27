@@ -24,3 +24,7 @@ docs/site/
 Manifest.toml
 
 .vscode/
+
+# forge and Nelson session state
+.forge/
+.nelson/

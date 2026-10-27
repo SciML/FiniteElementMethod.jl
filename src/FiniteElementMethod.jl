@@ -24,6 +24,8 @@ using SparseArrays: SparseMatrixCSC, nonzeros, nzrange, rowvals
 using Symbolics: Symbolics, Num, @register_array_symbolic
 
 include("weakform.jl")
+include("kernels.jl")
+include("assembly.jl")
 include("numeric_dae.jl")
 
 end # module
