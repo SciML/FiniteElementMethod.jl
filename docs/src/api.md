@@ -64,4 +64,29 @@ FiniteElementMethod.AssemblyContext
 FiniteElementMethod.assemble_linear
 FiniteElementMethod.assemble_nonlinear
 FiniteElementMethod._split
+FiniteElementMethod.assemble_linear!
+FiniteElementMethod.SUPG
+FiniteElementMethod.emit_strong
+FiniteElementMethod.compile_coeffs
+FiniteElementMethod.CellCoeffs
+FiniteElementMethod.StructuralZero
+FiniteElementMethod.fused_terms
+FiniteElementMethod.LinearBlock
+```
+
+## Operators
+
+```@docs
+FiniteElementMethod.NonlinearOperator
+FiniteElementMethod.residual!
+FiniteElementMethod.jacobian!
+FiniteElementMethod.residual_jacobian!
+FiniteElementMethod.LinearCache
+FiniteElementMethod.update!
+```
+
+## Precompilation
+
+```@docs
+FiniteElementMethod.workload_chain
 ```

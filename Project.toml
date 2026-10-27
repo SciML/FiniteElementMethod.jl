@@ -13,6 +13,8 @@ LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 ModelingToolkit = "961ee093-0014-501f-94e3-6117800e7a78"
 NonlinearSolveFirstOrder = "5959db7a-ea39-4486-b5fe-2dd0bf03d60d"
 PDEBase = "a7812802-0625-4b9e-961c-d332478797e5"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+RuntimeGeneratedFunctions = "7e49a35a-f44a-4d26-94aa-eba1b4ca6b47"
 SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 SymbolicUtils = "d1185830-fcd6-423d-90d6-eec64667417b"
@@ -26,6 +28,7 @@ FiniteElementMethodFerriteGmshExt = "FerriteGmsh"
 
 [compat]
 ADTypes = "1.24"
+AllocCheck = "0.2"
 DiffEqBase = "7.21"
 DomainSets = "0.7, 0.8"
 Ferrite = "1.7"
@@ -37,9 +40,11 @@ ModelingToolkit = "11"
 NonlinearSolveFirstOrder = "2.10"
 OrdinaryDiffEqBDF = "2.4"
 PDEBase = "0.1.39"
+PrecompileTools = "1.2"
 Random = "1"
-SciMLBase = "3.58"
+RuntimeGeneratedFunctions = "0.5.12"
 SafeTestsets = "0.1"
+SciMLBase = "3.58"
 SciMLTesting = "2.4"
 SparseArrays = "1.10"
 SymbolicUtils = "4.53"
@@ -48,6 +53,7 @@ Test = "1"
 julia = "1.10"
 
 [extras]
+AllocCheck = "9b6a8646-10ed-4001-bbdc-1d2f46dfbb1a"
 FerriteGmsh = "4f95f4f8-b27c-4ae5-9a39-ea55e634e36b"
 Gmsh = "705231aa-382f-11e9-3f0c-b7cb4346fdeb"
 OrdinaryDiffEqBDF = "6ad6398a-0878-4a85-9266-38940aa047c8"
@@ -57,4 +63,4 @@ SciMLTesting = "09d9d899-5365-40a9-917a-5f67fddea283"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["FerriteGmsh", "Gmsh", "OrdinaryDiffEqBDF", "Random", "SafeTestsets", "SciMLTesting", "Test"]
+test = ["AllocCheck", "FerriteGmsh", "Gmsh", "OrdinaryDiffEqBDF", "Random", "SafeTestsets", "SciMLTesting", "Test"]
