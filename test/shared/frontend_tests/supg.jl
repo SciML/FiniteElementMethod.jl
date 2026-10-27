@@ -98,6 +98,13 @@ end
             Ω, t; test_space = :supg
         )
         advected(β) = Dt(u(t, x)) ~ EPS * Dx(Dx(u(t, x))) - β * Dx(u(t, x))
+        W1 = Symbolics.variable(:W, 1)
+        @test_throws ArgumentError(
+            "SUPG: equation 1 has τ = 0.05 and b·∇v = $(c * W1), which reference parameters of the PDESystem; τ and b " *
+                "must be numbers or expressions in the coordinates, time and hK, so write the parameter's value"
+        ) lower(advected(c), SUPG(0.05; b = [c]); ps = [c => 1.0])
+        # The same error with b inferred from the equation, so τ and b·∇v hold the analysis' parameter slot, whose
+        # printed form is the analysis' business: the fixed text around them is checked.
         msg = errmsg(() -> lower(advected(c), SUPG((hK, b) -> hK / (2abs(b[1]))); ps = [c => 1.0]))
         @test startswith(msg, "ArgumentError: SUPG: equation 1 has τ = ")
         @test endswith(
@@ -105,15 +112,16 @@ end
                 "coordinates, time and hK, so write the parameter's value"
         )
         @test_throws ArgumentError(
-            "SUPG: equation 1 has τ = k and b·∇v = W₁, which reference parameters of the PDESystem; τ and b must be " *
+            "SUPG: equation 1 has τ = k and b·∇v = $W1, which reference parameters of the PDESystem; τ and b must be " *
                 "numbers or expressions in the coordinates, time and hK, so write the parameter's value"
         ) lower(advected(1), SUPG(k); ps = [k => 0.05])
         # A parameter elsewhere in the equation is fine.
         sol = solve(lower(Dt(u(t, x)) ~ k * Dx(Dx(u(t, x))) - Dx(u(t, x)), SUPG(0.05); ps = [k => 0.01]), EXACT_ROWS)
         @test SciMLBase.successful_retcode(sol)
-        @test occursin(
-            "SUPG: the advection velocity ∂R/∂∇u of equation 1 is Num[U₁], which depends on the state; pass SUPG(τ; b = ...)",
-            errmsg(() -> lower(Dt(u(t, x)) ~ EPS * Dx(Dx(u(t, x))) - u(t, x) * Dx(u(t, x)), SUPG(0.05)))
-        )
+        # b = [U₁] in the analysis' state slot, printed as the error prints it (module-qualified under Pkg.test).
+        b = Num[Symbolics.variable(:U, 1)]
+        @test_throws ArgumentError(
+            "SUPG: the advection velocity ∂R/∂∇u of equation 1 is $b, which depends on the state; pass SUPG(τ; b = ...)"
+        ) lower(Dt(u(t, x)) ~ EPS * Dx(Dx(u(t, x))) - u(t, x) * Dx(u(t, x)), SUPG(0.05))
     end
 end

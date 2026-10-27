@@ -189,7 +189,7 @@ rates(errs) = [log2(errs[i] / errs[i + 1]) for i in 1:(length(errs) - 1)]
             "the region of w must be a Region of the FEMDiscretization's MeshDomain, as Region(Ω, name); got :left_half"
         ) FEMDiscretization(Ω, t; regions = Dict(w => :left_half))
         @test_throws ArgumentError(
-            "the interpolation Lagrange{RefQuadrilateral, 2}() is not on the reference shape RefTriangle of the mesh cells"
+            "the interpolation $(Lagrange{RefQuadrilateral, 2}()) is not on the reference shape $(RefTriangle) of the mesh cells"
         ) lower([ubcs; ics]; spaces = Dict(w => Lagrange{RefQuadrilateral, 2}()))
     end
 end
