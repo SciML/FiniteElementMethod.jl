@@ -19,11 +19,11 @@ function l2_error(sol, field::Symbol, exact; k = lastindex(sol.t), qorder = 4)
     err2 = 0.0
     for cell in Ferrite.CellIterator(dh)
         Ferrite.reinit!(cv, cell)
-        ue = u[Ferrite.celldofs(cell)[dofs]]
+        u_elem = u[Ferrite.celldofs(cell)[dofs]]
         coords = Ferrite.getcoordinates(cell)
         for q in 1:Ferrite.getnquadpoints(cv)
             xq = Ferrite.spatial_coordinate(cv, q, coords)
-            err2 += (Ferrite.function_value(cv, q, ue) - exact(t, xq...))^2 * Ferrite.getdetJdV(cv, q)
+            err2 += (Ferrite.function_value(cv, q, u_elem) - exact(t, xq...))^2 * Ferrite.getdetJdV(cv, q)
         end
     end
     return sqrt(err2)
