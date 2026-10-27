@@ -1,0 +1,28 @@
+[deps]
+ADTypes = "47edcb42-4c32-4615-8424-f2b9edc5f35b"
+BlockArrays = "8e7c35d0-a365-5155-bbbb-fb81a777f24e"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+DiffEqBase = "2b5f629d-d688-5b77-993f-72d75c75574e"
+DomainSets = "5b8099bc-c8ec-5219-889f-1d9e522a28bf"
+Ferrite = "c061ca5d-56c9-439f-9c0e-210fe06d3992"
+FerriteGmsh = "4f95f4f8-b27c-4ae5-9a39-ea55e634e36b"
+FiniteElementMethod = "e08948db-0ae8-498a-9b98-73fc7f237ce3"
+Gmsh = "705231aa-382f-11e9-3f0c-b7cb4346fdeb"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+LinearSolve = "7ed4a6bd-45f5-4d41-b270-4a48e9bafcae"
+ModelingToolkit = "961ee093-0014-501f-94e3-6117800e7a78"
+OrdinaryDiffEqBDF = "6ad6398a-0878-4a85-9266-38940aa047c8"
+OrdinaryDiffEqRosenbrock = "43230ef6-c299-4910-a778-202eb28ce4ce"
+PDEBase = "a7812802-0625-4b9e-961c-d332478797e5"
+Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+
+[sources]
+FiniteElementMethod = {path = "../.."}
+PDEBase = {rev = "forge/mesh-axis-order", url = "https://github.com/xtalax-droid/PDEBase.jl"}
+
+[compat]
+julia = "1.11"
