@@ -6,6 +6,7 @@
 
 ```@docs
 FEMDiscretization
+FiniteElementMethod.SciMLBase.discretize(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
 FiniteElementMethod.SciMLBase.DAEProblem(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
 FiniteElementMethod.SciMLBase.NonlinearProblem(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
 FiniteElementMethod.SciMLBase.symbolic_discretize(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)

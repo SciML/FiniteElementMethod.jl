@@ -24,5 +24,6 @@ docs/site/
 Manifest.toml
 
 .vscode/
-# Copied from docs/discretization.md by docs/make.jl when the front end is available.
+# Copied from docs/ by docs/make.jl when the front end is available.
 docs/src/discretization.md
+docs/src/extension_contract.md

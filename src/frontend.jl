@@ -497,6 +497,26 @@ function SciMLBase.NonlinearProblem(pdesys::ModelingToolkit.PDESystem, disc::FEM
     return _steady_problem(_lower(pdesys, disc); disc.kwargs..., kwargs...)
 end
 
+"""
+    discretize(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
+
+Discretize `pdesys` with `disc` and return a problem ready for `solve`: the
+[`DAEProblem`](@ref SciMLBase.DAEProblem(::ModelingToolkit.PDESystem, ::FEMDiscretization)) when
+`disc` has a time variable, else the steady
+[`NonlinearProblem`](@ref SciMLBase.NonlinearProblem(::ModelingToolkit.PDESystem, ::FEMDiscretization)).
+Its `problem_type` is the [`FEMMetadata`](@ref), so `SciMLBase.wrap_sol` turns the solver's
+solution into a `PDETimeSeriesSolution` or `PDENoTimeSolution` in the variables of `pdesys`.
+
+Keywords are passed to that problem after `disc.kwargs`, so a keyword given here wins; any
+SciML problem or solver keyword (`saveat`, `tstops`, `abstol`, `callback`, ...) is forwarded.
+The keywords the discretization sets (`iv`, `unknowns`, `du0`, `coordinate`, `name`,
+`parameters`) and those it computes from `pdesys` (`tspan`, `u0`, `p`, `differential_vars`)
+raise an `ArgumentError` naming the way to set them. So do further positional arguments, a
+first argument that is not a `PDESystem`, and an equation, domain or boundary condition the
+discretization does not support, which is rejected before the operators are assembled.
+[`symbolic_discretize`](@ref SciMLBase.symbolic_discretize(::ModelingToolkit.PDESystem, ::FEMDiscretization))
+returns the symbolic system of the same discretization.
+"""
 SciMLBase.discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...) =
     disc.time === nothing ? NonlinearProblem(pdesys, disc; kwargs...) : DAEProblem(pdesys, disc; kwargs...)
 
