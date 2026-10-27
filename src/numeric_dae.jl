@@ -50,6 +50,10 @@ function load!(out, F::FEMLoad, t)
     return out
 end
 
+# ForwardDiff residuals, as from the default initializer's NewtonRaphson: the load does not depend on the state
+# and is assembled in `Float64`.
+load!(out::AbstractVector{<:ForwardDiff.Dual}, F::FEMLoad, t) = (out .= load!(zeros(length(out)), F, t))
+
 function dirichlet_values!(out, F::FEMLoad, t)
     g = F.values
     if g isa Union{Number, AbstractVector}
@@ -85,9 +89,135 @@ fem_load(op::FEMLoad, rows::UnitRange{Int}, t) = load!(zeros(op.n), op, t)[rows]
 end
 
 """
-    FEMOperators(M, K, load, fields; prescribed = Int[], dirichlet_values = 0.0)
+    FEMNonlinear(op, p)
 
-Assembled operators of the semi-discrete system `M du + K u = F(p, t)`, with Dirichlet
+Opaque wrapper for the nonlinear part `N(u, t)` of `M du + K u + N(u, t) = F(t)`, used as a
+non-tunable `System` parameter like [`FEMOp`](@ref): `op` is a [`NonlinearOperator`](@ref)
+and `p` the parameter values its kernels are evaluated with. [`FEMOperators`](@ref) marks the
+prescribed dofs, whose rows of `N` and of its Jacobian are then zero. `op` is untyped so that
+the parameter has one concrete type; each call dispatches on it once. `op` itself is never
+evaluated: each evaluation borrows a copy with its own buffers and values objects from a pool,
+so problems sharing this wrapper (remakes, ensembles) can be solved concurrently.
+After [`eliminate_dirichlet`](@ref) the wrapper evaluates `N` at the full state rebuilt from
+the free dofs with `u_d = g_d`, and keeps its free rows and its `[free, free]` Jacobian block.
+
+The element pipeline is `Float64`: `N` is evaluated at `Float64` states and at first-order
+`ForwardDiff.Dual`s of `Float64` (as the default initializer passes), whose partials go through
+the analytic tangent. Any other state, such as `Float32`, `BigFloat`, `Dual`s of those or nested
+`Dual`s, throws `ArgumentError("the nonlinear operator evaluates Float64 states and first-order
+ForwardDiff Duals of Float64; got T")` with `T` the state's element type; its Jacobian is
+evaluated at `Float64` states only and otherwise throws `ArgumentError("the nonlinear
+operator's Jacobian evaluates Float64 states; got T")`.
+"""
+struct FEMNonlinear
+    op::Any
+    p::Vector{Float64}
+    prescribed::BitVector
+    pool::Vector{Any}
+    lock::ReentrantLock
+    elimination::Any   # `nothing`, or `(e::DirichletElimination, nzmap)` with `nzmap` the positions of `J_N[free, free]` in `J_N`
+end
+FEMNonlinear(op, p, prescribed = falses(0)) = FEMNonlinear(op, collect(Float64, p), prescribed, Any[], ReentrantLock(), nothing)
+Base.show(io::IO, ::FEMNonlinear) = print(io, "FEMNonlinear")
+
+# `f(op)` with an operator no other running call holds; the pool grows to the number of concurrent calls.
+function with_operator(f, N::FEMNonlinear)
+    op = @lock N.lock isempty(N.pool) ? nothing : pop!(N.pool)
+    op === nothing && (op = independent_copy(N.op))
+    try
+        return f(op)
+    finally
+        @lock N.lock push!(N.pool, op)
+    end
+end
+
+check_state(::AbstractVector{Float64}) = nothing
+check_state(::AbstractVector{<:ForwardDiff.Dual{<:Any, Float64}}) = nothing
+check_state(u) = throw(ArgumentError("the nonlinear operator evaluates Float64 states and first-order ForwardDiff Duals of Float64; got $(eltype(u))"))
+
+# `r .+= N(u, t)` outside the prescribed rows. After elimination `u` and `r` hold the free dofs only.
+function add_nonlinear!(r, N::FEMNonlinear, u, t)
+    check_state(u)
+    N.elimination === nothing && return add_full_nonlinear!(r, N, u, t)
+    e = first(N.elimination)
+    r .+= view(add_full_nonlinear!(zeros(eltype(r), e.n), N, full_state(e, u), t), e.free)
+    return r
+end
+
+function add_full_nonlinear!(r, N::FEMNonlinear, u, t)
+    return with_operator(N) do op
+        residual!(op.r, op, u, N.p, t)
+        for i in eachindex(r)
+            N.prescribed[i] || (r[i] += op.r[i])
+        end
+        r
+    end
+end
+
+# ForwardDiff states, as from the default initializer's NewtonRaphson: the partials are pushed through the
+# analytic tangent, `∂N(u) = J_N(value(u)) ∂u`, since the element buffers hold `Float64`.
+function add_full_nonlinear!(r, N::FEMNonlinear, u::AbstractVector{ForwardDiff.Dual{T, Float64, P}}, t) where {T, P}
+    du = [ForwardDiff.partials(x, k) for x in u, k in 1:P]
+    return with_operator(N) do op
+        J = jacobian!(op.J, op, ForwardDiff.value.(u), N.p, t)
+        dr = J * du
+        for i in eachindex(r)
+            N.prescribed[i] || (r[i] += ForwardDiff.Dual{T}(op.r[i], ForwardDiff.Partials(ntuple(k -> dr[i, k], Val(P)))))
+        end
+        r
+    end
+end
+
+nonlinear_residual!(r, N::FEMNonlinear, u, t) = add_nonlinear!(fill!(r, 0), N, u, t)
+
+# `nonzeros(J) .+= nonzeros(∂N/∂u)` outside the prescribed rows; `J` must have the pattern of `N`'s Jacobian.
+function add_nonlinear_jacobian!(J, N::FEMNonlinear, u, t)
+    u isa AbstractVector{Float64} ||
+        throw(ArgumentError("the nonlinear operator's Jacobian evaluates Float64 states; got $(eltype(u))"))
+    elimination = N.elimination
+    return with_operator(N) do op
+        if elimination === nothing
+            JN = jacobian!(op.J, op, u, N.p, t)
+            check_pattern(J, JN, "Nop")
+            rows, vals, out = rowvals(JN), nonzeros(JN), nonzeros(J)
+            for k in eachindex(rows)
+                N.prescribed[rows[k]] || (out[k] += vals[k])
+            end
+        else
+            e, nzmap = elimination
+            vals, out = nonzeros(jacobian!(op.J, op, full_state(e, u), N.p, t)), nonzeros(J)
+            for k in eachindex(nzmap)
+                out[k] += vals[nzmap[k]]
+            end
+        end
+        J
+    end
+end
+
+# `fem_nonlinear(op, rows, t, x)` is rows `rows` of `N(x, t)`, with `x` the whole state built from the
+# field arrays by `fem_cat`. A registered function gets a method for every symbolic/numeric combination
+# of its arguments, so it takes the state as one array rather than one argument per field (which made
+# about 150·5ⁿ⁻¹ methods for n fields); `fem_cat` keeps the fields whole arrays instead of the scalars
+# that `vcat` of symbolic arrays gives.
+fem_cat(a::AbstractVector, b::AbstractVector) = vcat(a, b)
+@register_array_symbolic fem_cat(a::AbstractVector, b::AbstractVector) begin
+    size = (length(a) + length(b),)
+    eltype = promote_type(eltype(a), eltype(b))
+    ndims = 1
+end
+
+fem_nonlinear(op::FEMNonlinear, rows::UnitRange{Int}, t, x::AbstractVector) =
+    nonlinear_residual!(zeros(promote_type(Float64, eltype(x)), length(x)), op, x, t)[rows]
+@register_array_symbolic fem_nonlinear(op::FEMNonlinear, rows::UnitRange{Int}, t, x::AbstractVector) begin
+    size = (length(rows),)
+    eltype = Float64
+    ndims = 1
+end
+
+"""
+    FEMOperators(M, K, load, fields; prescribed = Int[], dirichlet_values = 0.0, nonlinear = nothing)
+
+Assembled operators of the semi-discrete system `M du + K u + N(u, t) = F(p, t)`, with Dirichlet
 conditions applied by algebraic row replacement: for each prescribed dof `d`, row `d` of `M`
 is zeroed, row `d` of `K` becomes `e_d` and `F[d] = g_d(t)`. `M` and `K` are copied, not
 mutated, and must share one sparsity pattern (for example from `Ferrite.allocate_matrix(dh, ch)`)
@@ -97,6 +227,9 @@ that contains the diagonal entry of every prescribed dof.
     not see the parameters; parameter-dependent operators are reassembled instead (spec §8.3).
   - `fields`: `name => range` pairs in state order; the ranges must tile `1:size(M, 1)`.
   - `dirichlet_values`: a number, a vector over `prescribed`, or `(out, t) -> out`.
+  - `nonlinear`: `nothing`, or a [`FEMNonlinear`](@ref) whose Jacobian has the sparsity
+    pattern of `M` and `K`. Its rows at prescribed dofs are dropped, so the Dirichlet rows
+    stay `u_d = g_d(t)`.
 
 The fields `M`, `K`, `load`, `fields`, `prescribed`, `differential_vars` and `jac_prototype`
 are read by [`numeric_dae_problem`](@ref). `differential_vars` is `false` on prescribed dofs
@@ -110,11 +243,12 @@ struct FEMOperators
     prescribed::Vector{Int}
     differential_vars::BitVector
     jac_prototype::SparseMatrixCSC{Float64, Int}
+    nonlinear::Union{Nothing, FEMNonlinear}
 end
 
 function FEMOperators(
         M::SparseMatrixCSC, K::SparseMatrixCSC, load, fields;
-        prescribed = Int[], dirichlet_values = 0.0
+        prescribed = Int[], dirichlet_values = 0.0, nonlinear = nothing
     )
     n = size(K, 1)
     size(M) == size(K) == (n, n) || throw(DimensionMismatch("M and K must be square of the same size; got $(size(M)) and $(size(K))"))
@@ -135,13 +269,24 @@ function FEMOperators(
         iszero(nonzeros(M)[k]) || (differential_vars[i] = true)
     end
     F = FEMLoad(load, prescribed, dirichlet_values, n)
-    return FEMOperators(M, K, F, fields, prescribed, differential_vars, copy(K))
+    if nonlinear !== nothing
+        J = nonlinear.op.J
+        J.colptr == K.colptr && J.rowval == K.rowval ||
+            throw(ArgumentError("the nonlinear operator's Jacobian must have the sparsity pattern of M and K, e.g. NonlinearOperator(ctx, kernels; ch) with the ConstraintHandler of allocate_matrix(dh, ch)"))
+        nonlinear = FEMNonlinear(nonlinear.op, nonlinear.p, isprescribed_mask(n, prescribed))
+    end
+    return FEMOperators(M, K, F, fields, prescribed, differential_vars, copy(K), nonlinear)
+end
+
+function isprescribed_mask(n, prescribed)
+    mask = falses(n)
+    mask[prescribed] .= true
+    return mask
 end
 
 # One pass over the stored entries; the Jacobian then needs no row zeroing.
 function replace_dirichlet_rows!(M, K, prescribed)
-    isprescribed = falses(size(K, 1))
-    isprescribed[prescribed] .= true
+    isprescribed = isprescribed_mask(size(K, 1), prescribed)
     rows = rowvals(K)
     for j in axes(K, 2), k in nzrange(K, j)
         i = rows[k]
@@ -153,6 +298,67 @@ function replace_dirichlet_rows!(M, K, prescribed)
         isone(K[d, d]) || throw(ArgumentError("the sparsity pattern has no diagonal entry for prescribed dof $d"))
     end
     return M, K
+end
+
+# What the post-step needs to rebuild the full dof vector from the free dofs.
+struct DirichletElimination
+    n::Int
+    free::Vector{Int}
+    prescribed::Vector{Int}
+    values::Vector{Float64}
+end
+
+function full_state(e::DirichletElimination, u_free)
+    u = zeros(eltype(u_free), e.n)
+    u[e.free] = u_free
+    u[e.prescribed] = e.values
+    return u
+end
+
+"""
+    eliminate_dirichlet(ops::FEMOperators) -> (reduced::FEMOperators, elimination)
+
+Restrict `ops` to its free dofs `fr` (spec §7.3): `M[fr, fr]`, `K[fr, fr]` and the load
+`F[fr] - K[fr, cd] g` for the prescribed dofs `cd`. The Dirichlet data `g` must be constant in
+time, so `g' = 0` and the term `M[fr, cd] g'` vanishes; time-dependent data, and operators
+with every dof prescribed, throw an `ArgumentError`.
+The field ranges of `reduced` count free dofs only, and a field whose dofs are all prescribed
+is left out of them; `full_state(elimination, u_free)` rebuilds
+the full dof vector with `u[cd] = g`. A nonlinear part `N` is kept: it is evaluated at that
+full vector, with its rows `fr` and its Jacobian block `[fr, fr]`.
+"""
+function eliminate_dirichlet(ops::FEMOperators)
+    F = ops.load
+    F.values isa Union{Number, AbstractVector} ||
+        throw(ArgumentError("eliminate_dirichlet needs Dirichlet data that are constant in time"))
+    n = size(ops.K, 1)
+    isfree = trues(n)
+    isfree[ops.prescribed] .= false
+    free = findall(isfree)
+    isempty(free) && throw(
+        ArgumentError("dirichlet = :eliminate leaves no unknowns because every dof is prescribed; use the default dirichlet = :algebraic")
+    )
+    g = dirichlet_values!(zeros(length(ops.prescribed)), F, 0.0)
+    Kg = ops.K[free, ops.prescribed] * g
+    load = F.load isa AbstractVector ? F.load[free] - Kg :
+        (out, t) -> (out .= view(F.load(zeros(n), t), free) .- Kg; out)
+    stop = 0
+    fields = Pair{Symbol, UnitRange{Int}}[]
+    for (name, r) in ops.fields
+        nfree = count(view(isfree, r))
+        # A field with every dof prescribed has no unknowns; MTK rejects an empty array unknown.
+        nfree == 0 || push!(fields, name => (stop + 1):(stop + nfree))
+        stop += nfree
+    end
+    reduced = FEMOperators(ops.M[free, free], ops.K[free, free], load, fields)
+    elimination = DirichletElimination(n, free, ops.prescribed, g)
+    N = ops.nonlinear
+    N === nothing && return reduced, elimination
+    # The positions of the stored entries of K[free, free], which has the pattern of N's Jacobian block.
+    positions = SparseMatrixCSC(n, n, ops.K.colptr, ops.K.rowval, collect(eachindex(nonzeros(ops.K))))
+    Nfree = FEMNonlinear(N.op, N.p, N.prescribed, Any[], ReentrantLock(), (elimination, nonzeros(positions[free, free])))
+    (; M, K, load, fields, prescribed, differential_vars, jac_prototype) = reduced
+    return FEMOperators(M, K, load, fields, prescribed, differential_vars, jac_prototype, Nfree), elimination
 end
 
 """
@@ -176,29 +382,36 @@ end
     fem_system(ops::FEMOperators, iv; unknowns = nothing, metadata = nothing, name = :fem)
 
 The completed array-residual `System`: one array unknown per field, the operators as opaque
-non-tunable parameters `Mop`, `Kop`, `Fop`, and one block equation per field,
-`F_i(p, t) ~ Σ_j M_ij D(u_j) + K_ij u_j`. `unknowns` defaults to `name(iv)[1:n]` per field.
+non-tunable parameters `Mop`, `Kop`, `Fop` (and `Nop` for `ops.nonlinear`), and one block
+equation per field, `F_i(p, t) ~ Σ_j M_ij D(u_j) + K_ij u_j (+ N_i(u, t))`. `parameters` are `symbol => value` pairs
+added as parameters with those values, which the operators were assembled with. `unknowns` defaults to `name(iv)[1:n]` per field.
 Returns `(sys, unknowns, parameter_map)`.
 """
-function fem_system(ops::FEMOperators, iv; unknowns = nothing, metadata = nothing, name = :fem)
+function fem_system(ops::FEMOperators, iv; unknowns = nothing, metadata = nothing, name = :fem, parameters = ())
     D = Differential(iv)
     us = unknowns === nothing ?
         [only(@variables $field(iv)[1:length(r)]) for (field, r) in ops.fields] : collect(unknowns)
     @parameters Mop::FEMOp [tunable = false] Kop::FEMOp [tunable = false] Fop::FEMLoad [tunable = false]
     ranges = last.(ops.fields)
-    eqs = [
-        fem_load(Fop, ri, iv) ~ sum(
-            fem_apply(Mop, ri, rj, D(uj)) + fem_apply(Kop, ri, rj, uj)
-                for (rj, uj) in zip(ranges, us)
-        )
-            for ri in ranges
-    ]
+    linear(ri) = sum(fem_apply(Mop, ri, rj, D(uj)) + fem_apply(Kop, ri, rj, uj) for (rj, uj) in zip(ranges, us))
+    ps = Any[Mop, Kop, Fop]
+    append!(ps, first.(parameters))
+    if ops.nonlinear === nothing
+        eqs = [fem_load(Fop, ri, iv) ~ linear(ri) for ri in ranges]
+    else
+        @parameters Nop::FEMNonlinear [tunable = false]
+        push!(ps, Nop)
+        state = foldl(fem_cat, us)
+        eqs = [fem_load(Fop, ri, iv) ~ linear(ri) + fem_nonlinear(Nop, ri, iv, state) for ri in ranges]
+    end
     md = metadata === nothing ? [] : [ProblemTypeCtx => metadata]
-    sys = complete(System(eqs, iv, us, [Mop, Kop, Fop]; name, metadata = md))
+    sys = complete(System(eqs, iv, us, ps; name, metadata = md))
     for (u, r) in zip(us, ranges)
         variable_index(sys, u) == r || error("System reordered the unknowns: $u is at $(variable_index(sys, u)), expected $r")
     end
     pmap = Dict{Any, Any}(Mop => FEMOp(ops.M), Kop => FEMOp(ops.K), Fop => ops.load)
+    ops.nonlinear === nothing || (pmap[last(ps)] = ops.nonlinear)
+    foreach(((q, v),) -> pmap[q] = v, parameters)
     return sys, us, pmap
 end
 
@@ -206,7 +419,7 @@ end
     consistent_du0(ops::FEMOperators, u0, t0)
 
 `du0` with `du_d = g'(t0)` on prescribed dofs, zero on the other algebraic rows, and
-`M_ff du_f = (F(t0) - K u0 - M_fd g'(t0))_f` on the differential rows. Throws an
+`M_ff du_f = (F(t0) - K u0 - N(u0, t0) - M_fd g'(t0))_f` on the differential rows. Throws an
 `ArgumentError` when a non-prescribed algebraic variable has a nonzero column in `M`: its
 `du` is then not zero, cannot be found without index reduction, and must be passed as `du0`.
 """
@@ -222,6 +435,7 @@ function consistent_du0(ops::FEMOperators, u0, t0)
     du0[ops.prescribed] = dirichlet_rates(ops.load, t0)
     any(dd) || return du0
     rhs = load!(zeros(length(u0)), ops.load, t0) - ops.K * u0 - ops.M * du0
+    ops.nonlinear === nothing || (rhs .-= nonlinear_residual!(zeros(length(u0)), ops.nonlinear, u0, t0))
     du0[dd] = ops.M[dd, dd] \ rhs[dd]
     return du0
 end
@@ -232,6 +446,26 @@ function check_pattern(J, A, name)
     return nothing
 end
 
+# The operators hold the parameter values they were assembled with; a `remake` with other values would
+# otherwise be solved silently with the old ones.
+function assembled_parameter_check(sys, parameters)
+    isempty(parameters) && return Returns(nothing)
+    syms = [q for (q, _) in parameters]
+    assembled = [v for (_, v) in parameters]
+    get = getp(sys, syms)
+    return function (p)
+        current = get(p)
+        for (q, a, c) in zip(syms, assembled, current)
+            isequal(a, c) || throw(
+                ArgumentError(
+                    "parameter $q was $a when the operators were assembled but is $c in this problem; operators are not reassembled for new parameter values, so build a new problem with DAEProblem(pdesys, disc)"
+                )
+            )
+        end
+        return nothing
+    end
+end
+
 default_initializealg() = BrownFullBasicInit(nlsolve = NewtonRaphson(autodiff = AutoForwardDiff()))
 
 """
@@ -240,11 +474,13 @@ default_initializealg() = BrownFullBasicInit(nlsolve = NewtonRaphson(autodiff = 
         initializealg = BrownFullBasicInit(nlsolve = NewtonRaphson(autodiff = AutoForwardDiff())),
         coordinate = nothing, name = :fem, kwargs...)
 
-Build the `DAEProblem` for `M du + K u - F(p, t) = 0` with a numeric residual, an analytic
-sparse Jacobian `K + γ M` and the completed `System` of [`fem_system`](@ref) attached for
+Build the `DAEProblem` for `M du + K u + N(u, t) - F(p, t) = 0` with a numeric residual, an
+analytic sparse Jacobian `K + γ M + ∂N/∂u` and the completed `System` of [`fem_system`](@ref) attached for
 symbolic indexing. No initialization problem is built and nothing calls `mtkcompile`.
 
-`metadata` becomes the problem's `problem_type`; a `SciMLBase.AbstractDiscretizationMetadata`
+`parameters` (`symbol => value` pairs) become parameters of the `System` at the values the
+operators were assembled with; the residual and Jacobian throw an `ArgumentError` naming the
+parameter if a `remake` has changed one. `metadata` becomes the problem's `problem_type`; a `SciMLBase.AbstractDiscretizationMetadata`
 first gets the `System` through `PDEBase.add_metadata!`. `du0` defaults to the consistent one of
 [`consistent_du0`](@ref). `coordinate(dof)` is used in the error for a non-finite `u0`.
 Remaining keywords are passed to `DAEProblem`.
@@ -252,26 +488,36 @@ Remaining keywords are passed to `DAEProblem`.
 function numeric_dae_problem(
         ops::FEMOperators, u0, tspan, metadata = nothing;
         iv = ModelingToolkit.t_nounits, unknowns = nothing, du0 = nothing,
-        initializealg = default_initializealg(), coordinate = nothing, name = :fem, kwargs...
+        initializealg = default_initializealg(), coordinate = nothing, name = :fem, parameters = (), kwargs...
     )
     length(u0) == size(ops.K, 1) || throw(DimensionMismatch("u0 has length $(length(u0)), the operators have $(size(ops.K, 1)) rows"))
     check_finite_initial_condition(u0, ops.fields; coordinate)
-    sys, _, pmap = fem_system(ops, iv; unknowns, metadata, name)
+    sys, _, pmap = fem_system(ops, iv; unknowns, metadata, name, parameters)
     p = MTKParameters(sys, pmap)
+    check_assembled = assembled_parameter_check(sys, parameters)
     getM, getK, getF = getp(sys, sys.Mop), getp(sys, sys.Kop), getp(sys, sys.Fop)
+    getN = ops.nonlinear === nothing ? Returns(nothing) : getp(sys, sys.Nop)
     function residual!(res, du, u, p, t)
+        check_assembled(p)
+        ops.nonlinear === nothing || check_state(u)
         load!(res, getF(p), t)
         res .= .-res
         mul!(res, getM(p).A, du, true, true)
         mul!(res, getK(p).A, u, true, true)
+        N = getN(p)
+        N === nothing || add_nonlinear!(res, N, u, t)
         return nothing
     end
-    # The Dirichlet rows of K + γM are already e_d, so the stored values are copied as they are.
+    # The Dirichlet rows of K + γM are already e_d and N's Jacobian skips them, so the
+    # stored values are added as they are.
     function jac!(J, du, u, p, γ, t)
+        check_assembled(p)
         Kp, Mp = getK(p).A, getM(p).A
         check_pattern(J, Kp, "Kop")
         check_pattern(J, Mp, "Mop")
         nonzeros(J) .= nonzeros(Kp) .+ γ .* nonzeros(Mp)
+        N = getN(p)
+        N === nothing || add_nonlinear_jacobian!(J, N, u, t)
         return nothing
     end
     u0 = collect(u0)

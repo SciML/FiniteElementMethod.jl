@@ -45,10 +45,25 @@ gives a `PDENoTimeSolution`.
     rejects a number. This keyword is not in the spec (§7.1, §7.6): without it, `DFBDF`
     drives the step size of an index-2 system below `eps` near the initial time, since the
     local error of the index-2 unknowns does not shrink with the step.
-  - `codegen = :mtk` and `dirichlet = :eliminate` are reserved for later milestones and
-    raise; remaining keywords are passed to the `DAEProblem` (or `NonlinearProblem`), where a
-    keyword given at the `DAEProblem`/`NonlinearProblem`/`discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate` and `name`
-    are set by the discretization and rejected.
+  - `dirichlet`: how Dirichlet conditions enter the DAE (spec §7.3). The default `:algebraic`
+    keeps every dof as an unknown and makes each prescribed row the algebraic equation
+    `u_d = g_d(t)`. `:eliminate` removes the prescribed dofs: the unknowns are the free dofs
+    `fr`, the operators are `M[fr, fr]` and `K[fr, fr]` and the load is `F[fr] - K[fr, cd] g`;
+    nonlinear terms are evaluated at the full state with `u_cd = g` and keep their rows `fr`.
+    It needs Dirichlet data that are constant in time (they may vary in space); data that
+    depend on time raise `ArgumentError("dirichlet = :eliminate needs Dirichlet data that are
+    constant in time, but the condition on boundary piece <name> depends on time; use the default
+    dirichlet = :algebraic")` from `DAEProblem`. A field whose dofs are all prescribed has no
+    array unknown (its `FieldInfo.unknown` is `nothing`); if every dof of the problem is
+    prescribed, `DAEProblem` raises `ArgumentError("dirichlet = :eliminate leaves no unknowns
+    because every dof is prescribed; use the default dirichlet = :algebraic")`. The solution
+    still returns full fields, with `g` at the prescribed nodes, through `sol[u]`,
+    `sol(t, x, y)`, traces and `write_vtk`; only `sol.original_sol` and the array unknowns
+    hold the free dofs alone. `:algebraic` is recommended.
+  - `codegen = :mtk` is reserved for a later milestone and raises; remaining keywords are
+    passed to the `DAEProblem` (or `NonlinearProblem`), where a keyword given at the
+    `DAEProblem`/`NonlinearProblem`/`discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate`,
+    `name` and `parameters` are set by the discretization and rejected.
 
 Pieces come from `boundarypiece.(Ω, names)`; on an analytic DomainSets box write
 `boundarypiece.(Ref(rect), names)`, since DomainSets types do not broadcast as scalars.
@@ -62,7 +77,9 @@ Fields are numbered in one order throughout (`DofHandler` blocks, array unknowns
 through `PDEBase.StrongForm.pair_equations`.
 
 Parameters are substituted by the values given in the `PDESystem` when the operators are
-assembled, so `remake` with new parameter values does not reassemble them.
+assembled, and are parameters of the problem at those values. The operators are not
+reassembled for new values: after `remake(prob; p = [k => 3.0])` the solve throws an
+`ArgumentError` naming `k`; build a new problem with `DAEProblem(pdesys, disc)` instead.
 """
 struct FEMDiscretization{T} <: PDEBase.AbstractMeshDiscretization
     domain::PDEBase.MeshDomain
@@ -80,7 +97,7 @@ struct FEMDiscretization{T} <: PDEBase.AbstractMeshDiscretization
 end
 
 # Keywords of `numeric_dae_problem` that the front end sets itself.
-const _RESERVED_KWARGS = (:iv, :unknowns, :du0, :coordinate, :name)
+const _RESERVED_KWARGS = (:iv, :unknowns, :du0, :coordinate, :name, :parameters)
 
 function _check_reserved(kwargs)
     for k in keys(kwargs)
@@ -103,9 +120,8 @@ function FEMDiscretization(
         throw(ArgumentError("FEMDiscretization needs a MeshDomain of a Ferrite.Grid, got a mesh of type $(typeof(domain.mesh))"))
     codegen === :mtk && throw(ArgumentError("codegen = :mtk lands in M3; use the default codegen = :numeric"))
     codegen === :numeric || throw(ArgumentError("codegen must be :numeric, got $(repr(codegen))"))
-    dirichlet === :eliminate &&
-        throw(ArgumentError("dirichlet = :eliminate lands in M4; use the default dirichlet = :algebraic"))
-    dirichlet === :algebraic || throw(ArgumentError("dirichlet must be :algebraic, got $(repr(dirichlet))"))
+    dirichlet in (:algebraic, :eliminate) ||
+        throw(ArgumentError("dirichlet must be :algebraic or :eliminate, got $(repr(dirichlet))"))
     test_space isa Union{Galerkin, SUPG} ||
         throw(ArgumentError("test_space must be Galerkin() or SUPG(τ; b = nothing), got $(repr(test_space))"))
     for (dv, region) in regions

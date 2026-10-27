@@ -101,8 +101,9 @@ Galerkin.
 ## Steady problems
 
 A `PDESystem` with no time variable, discretized by a `FEMDiscretization` built without one,
-lowers to a `NonlinearProblem` `K u - F = 0`, which Newton solves in one step. Dirichlet rows
-are the algebraic equations `u_d - g_d = 0`, the Jacobian `K` is sparse, and `solve` returns a
+lowers to a `NonlinearProblem` `K u + N(u) - F = 0`, where `N` holds the terms whose
+coefficients depend on the state; without them Newton solves it in one step. Dirichlet rows
+are the algebraic equations `u_d - g_d = 0`, the Jacobian `K + ∂N/∂u` is sparse, and `solve` returns a
 `PDENoTimeSolution` with the same interface as a transient solution, without the time argument:
 `sol[u(x, y)]`, `sol(x, y; dv)`, traces `sol[u(Γ)]`, derivatives such as `sol[Dx(u(x, y))]`,
 `normal_flux` and `write_vtk` (one `.vtu` file). Traces are written `u(Γ)`, since the dependent
@@ -121,9 +122,27 @@ sol = solve(prob, NewtonRaphson())
 sol(0.5, 0.5; dv = u(x, y))
 ```
 
-Nonlinear terms are rejected on the steady path, as on the time-dependent one. Newton starts
-from zero, with the Dirichlet data on any Dirichlet dofs the unknown vector holds; another
-initial guess is a vector laid out like `prob.u0`, passed as `remake(prob; u0)`. With the
+Newton starts from zero, with the Dirichlet data on any Dirichlet dofs the unknown vector
+holds; another initial guess is a vector laid out like `prob.u0`, passed as `remake(prob; u0)`. With the
 default `dirichlet = :algebraic` that vector holds every dof and field `name` occupies
 `FiniteElementMethod.field_range(prob.problem_type.space, name)`. Equations with no entry in
 `pairing` are tested with the remaining dependent variables in declared order.
+`algebraic_abstol` belongs to the time-dependent (DAE) path: a steady discretization accepts
+`:auto` and `nothing` and does nothing with them, and raises for a number.
+
+## Dirichlet conditions
+
+`dirichlet = :algebraic` (the default) keeps every dof as an unknown and makes each prescribed
+row the algebraic equation `u_d = g_d(t)`, so it accepts Dirichlet data of any time dependence.
+`dirichlet = :eliminate` removes the prescribed dofs instead: the `DAEProblem` has only the free
+dofs as unknowns, with `M[fr, fr]`, `K[fr, fr]` and the load `F[fr] - K[fr, cd] g`; nonlinear
+terms are evaluated at the full state with `u_cd = g` and keep their rows `fr`. It needs
+Dirichlet data that are constant in time, though they may vary in space; time-dependent data
+raise an `ArgumentError` naming the boundary piece. The solution is the same either way:
+`sol[u]`, `sol(t, x, y)`, traces `sol[u(t, Γ)]`, `normal_flux` and `write_vtk` all return the
+full field with `g` at the prescribed nodes. Only `sol.original_sol` and the array unknowns
+hold the free dofs alone.
+
+```julia
+disc = FEMDiscretization(Ω, t; dirichlet = :eliminate)
+```

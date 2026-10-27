@@ -86,8 +86,8 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         @test_throws ArgumentError("codegen = :mtk lands in M3; use the default codegen = :numeric") FEMDiscretization(
             Ω, t; codegen = :mtk
         )
-        @test_throws ArgumentError("dirichlet = :eliminate lands in M4; use the default dirichlet = :algebraic") FEMDiscretization(
-            Ω, t; dirichlet = :eliminate
+        @test_throws ArgumentError("dirichlet must be :algebraic or :eliminate, got :condense") FEMDiscretization(
+            Ω, t; dirichlet = :condense
         )
         for (value, shown) in ((0, "0"), (-1.0e8, "-1.0e8"), (NaN, "NaN"), ("1e8", "\"1e8\""), (:on, ":on"), ([1.0e8], "[1.0e8]"))
             @test_throws ArgumentError("algebraic_abstol must be :auto, nothing or a positive number, got $shown") FEMDiscretization(
@@ -119,7 +119,7 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
                 "for a time-dependent problem write FEMDiscretization(Ω, t)"
         ) discretize(transient, FEMDiscretization(Ω))
         @test_throws ArgumentError(
-            "keyword `name` is set by the FEM discretization and cannot be passed; the reserved keywords are iv, unknowns, du0, coordinate, name"
+            "keyword `name` is set by the FEM discretization and cannot be passed; the reserved keywords are iv, unknowns, du0, coordinate, name, parameters"
         ) discretize(steady, FEMDiscretization(Ω); name = :other)
         @test_throws ArgumentError(
             "algebraic_abstol applies to time-dependent problems (the DAE path); a steady FEMDiscretization has no time stepper"
@@ -130,24 +130,13 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         end
     end
 
-    @testset "nonlinear and time-dependent operators" begin
+    @testset "time-dependent operators" begin
         Ω = box()
-        nl = Dt(u(t, x, y)) ~ Dx((1 + u(t, x, y)^2) * Dx(u(t, x, y))) + Dy(Dy(u(t, x, y)))
-        @test_throws ArgumentError("nonlinear terms land in M3: equation 1 has the nonlinear term G₁*(U₁^2)*W₁") lower(
-            [nl], [dirichlet(Ω); ic], Ω
-        )
         td = Dt(u(t, x, y)) ~ Dx((1 + t) * Dx(u(t, x, y))) + Dy((1 + t) * Dy(u(t, x, y)))
         @test_throws ArgumentError(
             "time-dependent coefficients in the mass or stiffness operator land in M3: equation 1 has " *
                 "G₁*W₁ + G₂*W₂ + G₁*T*W₁ + G₂*T*W₂"
         ) lower([td], [dirichlet(Ω); ic], Ω)
-        @named steady_nl = PDESystem(
-            [Dx((1 + u(x, y)^2) * Dx(u(x, y))) + Dy(Dy(u(x, y))) ~ 0], [u(Γ) ~ 0 for Γ in sides(Ω)],
-            [(x, y) ∈ Ω], [x, y], [u(x, y)], []
-        )
-        @test_throws ArgumentError("nonlinear terms land in M3: equation 1 has the nonlinear term -G₁*(U₁^2)*W₁") discretize(
-            steady_nl, FEMDiscretization(Ω)
-        )
     end
 
     @testset "non-finite initial condition names the node" begin

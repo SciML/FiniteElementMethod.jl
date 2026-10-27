@@ -163,6 +163,11 @@ heat_operators(fe; kw...) = FEMOperators(fe.M, fe.K, fe.F, [:u => 1:length(fe.F)
         Kp = SparseMatrixCSC(2, 2, [1, 3, 5], [1, 2, 1, 2], [0.0, 0.0, 0.0, 1.0])
         opsp = FEMOperators(pat, Kp, (out, t) -> (out .= (0.0, t); out), [:u => 1:2])
         @test_throws "pass du0 explicitly" numeric_dae_problem(opsp, zeros(2), (0.0, 1.0))
+        # The nonlinear part must share the pattern of M and K; checking it needs no working operator.
+        FN = FiniteElementMethod.FEMNonlinear
+        @test_throws ArgumentError(
+            "the nonlinear operator's Jacobian must have the sparsity pattern of M and K, e.g. NonlinearOperator(ctx, kernels; ch) with the ConstraintHandler of allocate_matrix(dh, ch)"
+        ) FEMOperators(Md, copy(Md), zeros(3), [:u => 1:3]; nonlinear = FN((; J = Kt), Float64[]))
         probp = numeric_dae_problem(opsp, zeros(2), (0.0, 1.0); du0 = [-1.0, 1.0])
         solp = solve(probp, DFBDF(); tol...)
         @test solp.u[end] ≈ [-1.0, 1.0] atol = 1.0e-8
@@ -230,6 +235,16 @@ heat_operators(fe; kw...) = FEMOperators(fe.M, fe.K, fe.F, [:u => 1:length(fe.F)
         @test SciMLBase.successful_retcode(sol)
         @test sol(0.05) ≈ [-0.05, 0.05] atol = 1.0e-12
         @test sol.u[end] ≈ [-1.0, 1.0] atol = 1.0e-12
+        @test_throws ArgumentError("eliminate_dirichlet needs Dirichlet data that are constant in time") FiniteElementMethod.eliminate_dirichlet(ops2)
+        # Eliminating every dof of the first field leaves only the second as an unknown.
+        A4 = spdiagm(-1 => fill(-1.0, 3), 0 => fill(2.0, 4), 1 => fill(-1.0, 3))
+        ops4 = FEMOperators(A4, copy(A4), zeros(4), [:u => 1:2, :v => 3:4]; prescribed = [1, 2], dirichlet_values = 1.0)
+        reduced, elimination = FiniteElementMethod.eliminate_dirichlet(ops4)
+        @test reduced.fields == [:v => 1:2]
+        @test reduced.load.load == [1.0, 0.0]
+        prob4 = numeric_dae_problem(reduced, zeros(2), (0.0, 1.0))
+        @test length(prob4.u0) == 2
+        @test FiniteElementMethod.full_state(elimination, [3.0, 4.0]) == [1.0, 1.0, 3.0, 4.0]
         # Constant Dirichlet data gives du_d = 0.
         @test FiniteElementMethod.dirichlet_rates(ops.load, 0.0) == zeros(length(fe.prescribed))
     end
