@@ -443,7 +443,7 @@ end
 function write_vtk(A::FEMSteadySolution, base::AbstractString)
     dh = _dh(A.disc_data)
     Ferrite.VTKGridFile(base, dh) do vtk
-        Ferrite.write_solution(vtk, dh, A.original_sol.u)
+        Ferrite.write_solution(vtk, dh, only(_states(A)))
     end
     return base * ".vtu"
 end
