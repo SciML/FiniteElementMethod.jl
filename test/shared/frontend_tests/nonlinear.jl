@@ -10,6 +10,7 @@ using FiniteElementMethod: FiniteElementMethod, rectangle_grid
 using Ferrite: Triangle
 using LinearAlgebra: I, norm
 using SciMLBase: remake
+using NonlinearSolveFirstOrder: NewtonRaphson
 
 include(joinpath(@__DIR__, "..", "frontend.jl"))
 
@@ -168,6 +169,20 @@ end
         rd = zeros(Dual{Nothing, Float64, 1}, n)
         prob.f(rd, zeros(n), Dual{Nothing}.(prob.u0, 1.0), prob.p, 0.0)
         @test FiniteElementMethod.ForwardDiff.value.(rd) ≈ r
+    end
+
+    @testset "steady nonlinear diffusion, dirichlet = $dirichlet" for dirichlet in (:algebraic,)
+        # ∇·((1 + u*²)∇u*) = 2u*|∇u*|² = 10u* for u* = 1 + x + 2y, which lies in the P1 space.
+        Ω = square()
+        us = 1 + x + 2y
+        eq = Dx((1 + u(x, y)^2) * Dx(u(x, y))) + Dy((1 + u(x, y)^2) * Dy(u(x, y))) ~ 10 * us
+        @named steady = PDESystem([eq], [u(Γ) ~ us for Γ in sides(Ω)], [(x, y) ∈ Ω], [x, y], [u(x, y)], [])
+        prob = discretize(steady, FEMDiscretization(Ω; dirichlet))
+        sol = solve(prob, NewtonRaphson(); abstol = 1.0e-12)
+        @test SciMLBase.successful_retcode(sol)
+        @test sol.stats.nsteps > 1
+        pts = range(0.05, 0.95; length = 7)
+        @test maximum(abs(sol(px, py; dv = u(x, y)) - (1 + px + 2py)) for px in pts, py in pts) <= tol
     end
 
     @testset "a parameter changed by remake is rejected, not ignored" begin

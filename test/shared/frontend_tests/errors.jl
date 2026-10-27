@@ -114,7 +114,7 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
                 "for a time-dependent problem write FEMDiscretization(Ω, t)"
         ) discretize(transient, FEMDiscretization(Ω))
         @test_throws ArgumentError(
-            "keyword `name` is set by the FEM discretization and cannot be passed; the reserved keywords are iv, unknowns, du0, coordinate, name"
+            "keyword `name` is set by the FEM discretization and cannot be passed; the reserved keywords are iv, unknowns, du0, coordinate, name, parameters"
         ) discretize(steady, FEMDiscretization(Ω); name = :other)
     end
 
@@ -125,13 +125,6 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
             "time-dependent coefficients in the mass or stiffness operator land in M3: equation 1 has " *
                 "G₁*W₁ + G₂*W₂ + G₁*T*W₁ + G₂*T*W₂"
         ) lower([td], [dirichlet(Ω); ic], Ω)
-        @named steady_nl = PDESystem(
-            [Dx((1 + u(x, y)^2) * Dx(u(x, y))) + Dy(Dy(u(x, y))) ~ 0], [u(Γ) ~ 0 for Γ in sides(Ω)],
-            [(x, y) ∈ Ω], [x, y], [u(x, y)], []
-        )
-        @test_throws ArgumentError("nonlinear terms land in M3: equation 1 has the nonlinear term -G₁*(U₁^2)*W₁") discretize(
-            steady_nl, FEMDiscretization(Ω)
-        )
     end
 
     @testset "non-finite initial condition names the node" begin

@@ -332,19 +332,22 @@ function _lower(pdesys, disc::FEMDiscretization)
     return (; ops, u0 = unknown_u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys), parameters)
 end
 
-# `K u - F` with the Dirichlet rows `u_d - g_d`: `K` holds `e_d` and `F` holds `g_d` there.
-# Nonlinear terms `N(u)` would be added to the residual in `f!` and `∂N/∂u` to `jac!`.
+# `K u + N(u, t0) - F` with the Dirichlet rows `u_d - g_d`: `K` holds `e_d`, `F` holds `g_d` and `N` is zero there.
 function _steady_problem(parts; kwargs...)
     (; ops) = parts
-    F = load!(zeros(length(parts.u0)), ops.load, 0.0)
+    t0 = first(parts.tspan)
+    F = load!(zeros(length(parts.u0)), ops.load, t0)
+    N = ops.nonlinear
     function f!(res, u, p)
         mul!(res, ops.K, u)
         res .-= F
+        N === nothing || add_nonlinear!(res, N, u, t0)
         return nothing
     end
     function jac!(J, u, p)
         check_pattern(J, ops.K, "the Jacobian")
         copyto!(nonzeros(J), nonzeros(ops.K))
+        N === nothing || add_nonlinear_jacobian!(J, N, u, t0)
         return nothing
     end
     f = SciMLBase.NonlinearFunction{true}(f!; jac = jac!, jac_prototype = copy(ops.K))
@@ -390,10 +393,11 @@ end
     NonlinearProblem(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
 
 Discretize the steady `pdesys` with a `disc` that has no time variable and return the
-`NonlinearProblem` `K u - F = 0` of the Galerkin operators, with Dirichlet rows `u_d - g_d`
-as algebraic equations, the sparse Jacobian `K` and the `FEMMetadata` as its `problem_type`,
-so `solve` returns a `PDENoTimeSolution`; Newton solves it in one step. Nonlinear terms are
-rejected, as on the time-dependent path.
+`NonlinearProblem` `K u + N(u) - F = 0` of the Galerkin operators, with Dirichlet rows
+`u_d - g_d` as algebraic equations, the sparse analytic Jacobian `K + ∂N/∂u` and the
+`FEMMetadata` as its `problem_type`, so `solve` returns a `PDENoTimeSolution`. `N` holds the
+terms whose coefficients depend on the state, as on the time-dependent path; without them
+Newton solves the problem in one step.
 
 The initial guess `u0` is zero, with the Dirichlet data `g_d` wherever the problem's unknown
 vector holds Dirichlet dofs; a steady `PDESystem` has no initial conditions. To start Newton
@@ -401,7 +405,7 @@ elsewhere, `remake(prob; u0)` with a vector laid out like `prob.u0`, the problem
 vector (with the default `dirichlet = :algebraic` it holds every dof, and field `name`
 occupies `FiniteElementMethod.field_range(prob.problem_type.space, name)`).
 Keywords are passed to the `NonlinearProblem` after `disc.kwargs`; the keywords
-`iv`, `unknowns`, `du0`, `coordinate` and `name` are rejected, as for the `DAEProblem`.
+`iv`, `unknowns`, `du0`, `coordinate`, `name` and `parameters` are rejected, as for the `DAEProblem`.
 """
 function SciMLBase.NonlinearProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
     _check_reserved(kwargs)

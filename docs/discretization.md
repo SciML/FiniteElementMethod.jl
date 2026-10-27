@@ -16,8 +16,9 @@ FiniteElementMethod.assemble_sources!
 ## Steady problems
 
 A `PDESystem` with no time variable, discretized by a `FEMDiscretization` built without one,
-lowers to a `NonlinearProblem` `K u - F = 0`, which Newton solves in one step. Dirichlet rows
-are the algebraic equations `u_d - g_d = 0`, the Jacobian `K` is sparse, and `solve` returns a
+lowers to a `NonlinearProblem` `K u + N(u) - F = 0`, where `N` holds the terms whose
+coefficients depend on the state; without them Newton solves it in one step. Dirichlet rows
+are the algebraic equations `u_d - g_d = 0`, the Jacobian `K + ∂N/∂u` is sparse, and `solve` returns a
 `PDENoTimeSolution` with the same interface as a transient solution, without the time argument:
 `sol[u(x, y)]`, `sol(x, y; dv)`, traces `sol[u(Γ)]`, derivatives such as `sol[Dx(u(x, y))]`,
 `normal_flux` and `write_vtk` (one `.vtu` file). Traces are written `u(Γ)`, since the dependent
@@ -36,9 +37,8 @@ sol = solve(prob, NewtonRaphson())
 sol(0.5, 0.5; dv = u(x, y))
 ```
 
-Nonlinear terms are rejected on the steady path, as on the time-dependent one. Newton starts
-from zero, with the Dirichlet data on any Dirichlet dofs the unknown vector holds; another
-initial guess is a vector laid out like `prob.u0`, passed as `remake(prob; u0)`. With the
+Newton starts from zero, with the Dirichlet data on any Dirichlet dofs the unknown vector
+holds; another initial guess is a vector laid out like `prob.u0`, passed as `remake(prob; u0)`. With the
 default `dirichlet = :algebraic` that vector holds every dof and field `name` occupies
 `FiniteElementMethod.field_range(prob.problem_type.space, name)`. Equations with no entry in
 `pairing` are tested with the remaining dependent variables in declared order.
