@@ -12,6 +12,11 @@ if FiniteElementMethod.MESH_PDEBASE
         @test SciMLBase.successful_retcode(r.sol)
         stopped = solve(r.prob, DFG_ALG; abstol = differential_abstol(r.prob, 1.0e-7), reltol = 1.0e-7, maxiters = 3)
         @test_throws "the DFG solve stopped at t = " check_solved(stopped)
+        # Terminated is a success code, so the final time is checked too.
+        halt = SciMLBase.DiscreteCallback((u, t, integrator) -> t > 1.0, SciMLBase.terminate!)
+        terminated = solve(r.prob, DFG_ALG; abstol = differential_abstol(r.prob, 1.0e-7), reltol = 1.0e-7, callback = halt)
+        @test terminated.retcode == SciMLBase.ReturnCode.Terminated
+        @test_throws "the DFG solve stopped at t = " check_solved(terminated)
         c = r.coefficients
         for k in (:cD, :cL, :Δp)
             lo, hi = DFG_2D1_BANDS[k]
@@ -19,7 +24,9 @@ if FiniteElementMethod.MESH_PDEBASE
         end
 
         # The hand-written steady solution on the same mesh: same dof numbering after FieldWise renumbering.
-        dh_ref, x_ref, _ = dfg_reference_steady(dfg_channel_grid(; h, hc); pressure = :strong)
+        grid = dfg_channel_grid(; h, hc)
+        @test_throws "Newton's method did not converge in 1 iterations" dfg_reference_steady(grid; maxiter = 1)
+        dh_ref, x_ref, _ = dfg_reference_steady(grid; pressure = :strong)
         ref = dfg_coefficients(dh_ref, x_ref; ν = 1.0e-3, Umean = 0.2)
         for k in (:cD, :cL, :Δp)
             @test c[k] ≈ ref[k] rtol = 1.0e-5

@@ -84,11 +84,13 @@ differential_abstol(prob, abstol) = [d ? abstol : 1.0e8 for d in prob.differenti
 # for this index-2 system took tens of GB: a singular matrix now fails the step, and `check_solved` raises.
 const DFG_ALG = DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0), linsolve = UMFPACKFactorization())
 
-"Raise unless `sol` reached its final time; a DAE solve that stopped early must not report coefficients."
+"Raise unless `sol` succeeded and reached its final time (a callback can stop it early with `Terminated`, a success code); a DAE solve that stopped early must not report coefficients."
 function check_solved(sol)
-    SciMLBase.successful_retcode(sol) ||
-        error("the DFG solve stopped at t = $(sol.t[end]) with retcode $(sol.retcode); with the pressure in the error control or a singular Newton matrix DFBDF cuts its step to nothing")
-    return sol
+    tend = last(sol.original_sol.prob.tspan)
+    SciMLBase.successful_retcode(sol) && sol.t[end] == tend && return sol
+    return error(
+        "the DFG solve stopped at t = $(sol.t[end]) of $tend with retcode $(sol.retcode); with the pressure in the error control or a singular Newton matrix DFBDF cuts its step to nothing"
+    )
 end
 
 """

@@ -4,14 +4,18 @@
 #     julia --project=benchmarks/navier_stokes -e 'using Pkg; Pkg.instantiate()'
 #     julia --project=benchmarks/navier_stokes benchmarks/navier_stokes/ns_cylinder.jl
 #
-# Part 1, wall-clock: the tutorial's problem (ν = 1e-3, peak inflow min(1.5t, 1.5), so Re = 100 once ramped, to
+# Part 1, wall-clock: one discrete problem on both sides, the tutorial's (ν = 1e-3, peak inflow min(1.5t, 1.5), so Re = 100 once ramped, to
 # T = 6, abstol = 1e-4, reltol = 1e-5, output every 0.1) on `dfg_channel_grid(h = 0.05, length = 1.1)`, the
-# tutorial's shortened channel. Ferrite: the tutorial's Rodas5P on the mass-matrix ODE. FiniteElementMethod: the
+# tutorial's shortened channel, with the outlet treatment of the PDESystem example on both sides (∇p strong,
+# p = 0 on the outlet; Ferrite's side is `ferrite_ns_vs_diffeq(...; outlet = :pressure)`). The tutorial as
+# published (do-nothing outlet) is timed as well, for reference only. Ferrite: the tutorial's Rodas5P on the
+# mass-matrix ODE. FiniteElementMethod: the
 # PDESystem of `examples/dfg_cylinder` with the same ramp, discretized to a DAEProblem and solved with DFBDF, the
 # pressure and Dirichlet rows out of error control (the tutorial's norm leaves out the Dirichlet dofs). Both
 # are timed after a warm-up solve to t = 0.05 in the same process, so neither includes compilation; the
 # discretization time of the PDESystem is reported separately.
-# The two solutions are compared at t = 1 (end of the ramp) and t = T at 20 points behind the cylinder.
+# The two solutions are compared at t = 1 (end of the ramp) and t = T at 20 points behind the cylinder, and the
+# timing ratio is recorded only if they agree to AGREEMENT_TOL relative to the largest velocity there.
 # Part 2, accuracy: 2D-1 (Re = 20) on the full channel at the meshes `BENCHMARK_NS_MESHES`, `h:hc` pairs of
 # `dfg_channel_grid` sizes (default 0.04:0.0025,0.02:0.00333,0.01:0.00167).
 include(joinpath(@__DIR__, "..", "common.jl"))
@@ -29,26 +33,31 @@ function fem_tutorial(grid; T)
     return (; sol, build_s, solve_s, ndofs = length(prob.u0), steps = sol.original_sol.stats.naccept + sol.original_sol.stats.nreject)
 end
 
-function run()
-    grid = dfg_channel_grid(; h = 0.05, length = 1.1)
-    ferrite_ns_vs_diffeq(grid; T = 0.05)
-    ferrite = ferrite_ns_vs_diffeq(grid; T = T_END)
-    fem_tutorial(grid; T = 0.05)
-    fem = fem_tutorial(grid; T = T_END)
-    # Horizontal velocity of both solutions at points behind the cylinder.
+# Largest difference of the horizontal velocity at 20 points behind the cylinder, relative to its largest value.
+function velocity_difference(grid, ferrite, fem, τ)
     points = [Ferrite.Vec(x_, y_) for x_ in range(0.4, 1.0; length = 5) for y_ in range(0.05, 0.36; length = 4)]
     ph = Ferrite.PointEvalHandler(grid, points)
-    agreement = Dict{String, Any}()
-    for τ in (1.0, T_END)
-        u_ferrite = first.(Ferrite.evaluate_at_points(ph, ferrite.dh, ferrite.sol(τ), :v))
-        u_fem = Ferrite.evaluate_at_points(ph, fem.sol.disc_data.space.dh, fem.sol.original_sol(τ), :u)
-        agreement["max_abs_u_difference_t$(τ)"] = maximum(abs, u_ferrite - u_fem)
-        agreement["max_abs_u_t$(τ)"] = maximum(abs, u_ferrite)
-    end
-    println("velocity agreement: ", agreement)
+    u_ferrite = first.(Ferrite.evaluate_at_points(ph, ferrite.dh, ferrite.sol(τ), :v))
+    u_fem = Ferrite.evaluate_at_points(ph, fem.sol.disc_data.space.dh, fem.sol.original_sol(τ), :u)
+    return maximum(abs, u_ferrite - u_fem) / maximum(abs, u_ferrite)
+end
+
+# The timing ratio is published only when both sides solved the same problem to comparable accuracy.
+const AGREEMENT_TOL = 1.0e-2
+
+function run()
+    grid = dfg_channel_grid(; h = 0.05, length = 1.1)
+    ferrite_ns_vs_diffeq(grid; T = 0.05, outlet = :pressure)
+    ferrite = ferrite_ns_vs_diffeq(grid; T = T_END, outlet = :pressure)
+    published = ferrite_ns_vs_diffeq(grid; T = T_END)
+    fem_tutorial(grid; T = 0.05)
+    fem = fem_tutorial(grid; T = T_END)
+    agreement = Dict{String, Any}("t$τ" => velocity_difference(grid, ferrite, fem, τ) for τ in (1.0, T_END))
+    comparable = all(<=(AGREEMENT_TOL), values(agreement))
+    println("relative velocity difference: ", agreement, comparable ? "" : " (above $AGREEMENT_TOL: no ratio published)")
     @printf(
-        "tutorial problem to T = %g: Ferrite %.1f s (%d dofs, %d steps, %s); FiniteElementMethod %.1f s (%d dofs, %d steps, %s), discretization %.1f s\n",
-        T_END, ferrite.solve_s, ferrite.ndofs, ferrite.steps, ferrite.sol.retcode, fem.solve_s, fem.ndofs, fem.steps, fem.sol.retcode, fem.build_s
+        "tutorial problem to T = %g, same outlet treatment: Ferrite %.1f s (%d dofs, %d steps, %s); FiniteElementMethod %.1f s (%d dofs, %d steps, %s), discretization %.1f s; tutorial as published %.1f s\n",
+        T_END, ferrite.solve_s, ferrite.ndofs, ferrite.steps, ferrite.sol.retcode, fem.solve_s, fem.ndofs, fem.steps, fem.sol.retcode, fem.build_s, published.solve_s
     )
 
     rows = Dict{String, Any}[]
@@ -77,8 +86,11 @@ function run()
                 "ferrite_s" => ferrite.solve_s, "ferrite_ndofs" => ferrite.ndofs, "ferrite_steps" => ferrite.steps,
                 "fem_solver" => "DFBDF on the DAEProblem of the PDESystem",
                 "fem_s" => fem.solve_s, "fem_ndofs" => fem.ndofs, "fem_steps" => fem.steps, "fem_discretize_s" => fem.build_s,
-                "ratio" => fem.solve_s / ferrite.solve_s,
-                "agreement" => agreement,
+                "ferrite_published_s" => published.solve_s,
+                "outlet" => "both sides: ∇p tested strongly, p = 0 on the outlet (ferrite_ns_vs_diffeq outlet = :pressure); ferrite_published_s is the tutorial's do-nothing outlet",
+                "relative_velocity_difference" => agreement,
+                "agreement_tol" => AGREEMENT_TOL,
+                "ratio" => comparable ? fem.solve_s / ferrite.solve_s : "not published: velocity difference above agreement_tol",
             ),
             "dfg_2d1" => Dict(
                 "reference" => Dict("cD" => DFG_2D1.cD, "cL" => DFG_2D1.cL, "dp" => DFG_2D1.Δp),

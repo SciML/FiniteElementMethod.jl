@@ -8,7 +8,8 @@ using SparseArrays: SparseMatrixCSC
 Hand-written Ferrite solution of the steady DFG 2D-1 problem on `grid` (from [`dfg_channel_grid`](@ref)): scalar
 velocity components `u`, `v` on `Lagrange{RefQuadrilateral, 2}` and pressure `p` on `Lagrange{RefQuadrilateral, 1}`,
 parabolic inflow of peak `Umax`, no slip on the walls and the cylinder, and the do-nothing condition
-`ν ∂ₙu − p n = 0` at the outlet, solved by Newton's method from zero. Returns `(dh, x, iterations)`.
+`ν ∂ₙu − p n = 0` at the outlet, solved by Newton's method from zero. Returns `(dh, x, iterations)`, and
+raises if the residual norm is not below `tol` after `maxiter` iterations.
 
 This is the oracle the PDESystem path is compared with on the same mesh; it uses no FiniteElementMethod code.
 """
@@ -97,8 +98,8 @@ function dfg_reference_steady(grid; ν = 1.0e-3, Umax = 0.3, tol = 1.0e-10, maxi
         Ferrite.apply_zero!(J, r, ch)
         resnorm = norm(r)
         iterations = it
-        resnorm < tol && break
+        resnorm < tol && return dh, x, iterations
         x .-= J \ r
     end
-    return dh, x, iterations
+    return error("Newton's method did not converge in $maxiter iterations: residual norm $(norm(r)) at the last assembly, tolerance $tol")
 end

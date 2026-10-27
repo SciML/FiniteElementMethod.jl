@@ -8,7 +8,8 @@
 # (Q2Q1 Taylor–Hood with a vector velocity, ν = 1e-3, the inflow ramp `min(1.5t, 1.5)`, Rodas5P with the Ferrite
 # Dirichlet limiter, `abstol = 1e-4`, `reltol = 1e-5`, `dt = 1e-3`, the free-dof error norm) is the tutorial's.
 #
-# Prints and returns `(; seconds, ndofs, steps, ...)`; `ns_cylinder.jl` calls it and writes the results file.
+# `outlet = :pressure` switches to the outlet treatment of the PDESystem example, so that the timed comparison in
+# `ns_cylinder.jl` solves one discrete problem on both sides. Prints and returns `(; seconds, ndofs, steps, ...)`; `ns_cylinder.jl` calls it and writes the results file.
 using Ferrite, SparseArrays, BlockArrays, LinearAlgebra
 using DiffEqBase
 using OrdinaryDiffEqRosenbrock: Rodas5P
@@ -70,7 +71,7 @@ function assemble_mass_matrix(cv::MultiFieldCellValues, M::SparseMatrixCSC, dh::
     return M
 end
 
-function assemble_stokes_matrix(cv::MultiFieldCellValues, ν, K::SparseMatrixCSC, dh::DofHandler)
+function assemble_stokes_matrix(cv::MultiFieldCellValues, ν, K::SparseMatrixCSC, dh::DofHandler; outlet = :do_nothing)
     n_basefuncs_v = getnbasefunctions(cv.v)
     n_basefuncs_p = getnbasefunctions(cv.p)
     n_basefuncs = n_basefuncs_v + n_basefuncs_p
@@ -93,7 +94,9 @@ function assemble_stokes_matrix(cv::MultiFieldCellValues, ν, K::SparseMatrixCSC
                 ψ = shape_value(cv.p, q_point, j)
                 for i in 1:n_basefuncs_v
                     divφ = shape_divergence(cv.v, q_point, i)
-                    Kₑ[BlockIndex((v▄, p▄), (i, j))] += (divφ * ψ) * dΩ
+                    # `outlet = :pressure` keeps ∇p strong, as the PDESystem example does (see ferrite_ns_vs_diffeq).
+                    Kₑ[BlockIndex((v▄, p▄), (i, j))] += outlet === :pressure ?
+                        -(shape_gradient(cv.p, q_point, j) ⋅ shape_value(cv.v, q_point, i)) * dΩ : (divφ * ψ) * dΩ
                     Kₑ[BlockIndex((p▄, v▄), (j, i))] += (ψ * divφ) * dΩ
                 end
             end
@@ -198,12 +201,19 @@ end
 (fe_norm::FreeDofErrorNorm)(u::AbstractArray, t) = DiffEqBase.ODE_DEFAULT_NORM(u[fe_norm.ch.free_dofs], t)
 
 """
-    ferrite_ns_vs_diffeq(grid; T = 6.0, ν = 1e-3, vmax = 1.5, Δt_save = 0.1)
+    ferrite_ns_vs_diffeq(grid; T = 6.0, ν = 1e-3, vmax = 1.5, Δt_save = 0.1, outlet = :do_nothing)
 
 Ferrite's tutorial problem on `grid` (facet sets `"inlet"`, `"outlet"`, `"walls"`, `"cylinder"`): build the
 operators and integrate to `T`. Returns the solution, the `DofHandler` and the setup and solve times.
+
+`outlet = :do_nothing` is the tutorial as published: the pressure gradient integrated by parts, so the outlet
+carries the traction-free condition `ν∂ₙu − p n = 0`. `outlet = :pressure` is the discrete problem of the
+PDESystem example instead: `∇p` tested strongly (`ν∂ₙu = 0` at the outlet) and `p = 0` imposed on the outlet
+through the constraint handler, which drops the continuity equations of the outlet pressure nodes as the
+example's Dirichlet rows do.
 """
-function ferrite_ns_vs_diffeq(grid; T = 6.0, ν = 1.0e-3, vmax = 1.5, Δt_save = 0.1)
+function ferrite_ns_vs_diffeq(grid; T = 6.0, ν = 1.0e-3, vmax = 1.5, Δt_save = 0.1, outlet = :do_nothing)
+    outlet in (:do_nothing, :pressure) || throw(ArgumentError("outlet must be :do_nothing or :pressure, got $(repr(outlet))"))
     setup = @elapsed begin
         dim = 2
         ip_v = Lagrange{RefQuadrilateral, 2}()^dim
@@ -221,10 +231,11 @@ function ferrite_ns_vs_diffeq(grid; T = 6.0, ν = 1.0e-3, vmax = 1.5, Δt_save =
         vᵢₙ(t) = min(t * vmax, vmax)
         parabolic_inflow_profile(x, t) = Vec((4 * vᵢₙ(t) * x[2] * (0.41 - x[2]) / 0.41^2, 0.0))
         add!(ch, Dirichlet(:v, getfacetset(grid, "inlet"), parabolic_inflow_profile, [1, 2]))
+        outlet === :pressure && add!(ch, Dirichlet(:p, getfacetset(grid, "outlet"), (x, t) -> 0.0))
         close!(ch)
         update!(ch, 0.0)
         M = assemble_mass_matrix(cellvalues, allocate_matrix(dh), dh)
-        K = assemble_stokes_matrix(cellvalues, ν, allocate_matrix(dh), dh)
+        K = assemble_stokes_matrix(cellvalues, ν, allocate_matrix(dh), dh; outlet)
         u₀ = zeros(ndofs(dh))
         apply!(u₀, ch)
         jac_sparsity = sparse(K)
