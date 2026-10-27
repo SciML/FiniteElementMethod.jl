@@ -184,6 +184,27 @@ function _piece_arg(s)
     return i === nothing ? nothing : args[i]
 end
 
+# `_fieldinfo` matches the function name only; these check the arguments. A trace keeps the
+# dependent variable's non-spatial arguments and replaces its coordinates by one piece.
+_is_canonical(f::FieldInfo, s) = isequal(s, Symbolics.unwrap(f.dv))
+function _is_trace(md, f::FieldInfo, s)
+    keep = [a for a in SymbolicUtils.arguments(Symbolics.unwrap(f.dv)) if !any(x -> isequal(a, Symbolics.unwrap(x)), md.x̄)]
+    args = map(SymbolicUtils.unwrap_const, SymbolicUtils.arguments(s))
+    return length(args) == length(keep) + 1 && last(args) isa DomainSets.Domain && isequal(collect(args[1:(end - 1)]), keep)
+end
+
+_fixed_args_message(ex, f::FieldInfo) = "$ex fixes arguments of $(f.dv); write the dependent variable as $(f.dv)"
+
+# A dependent variable, or the field differentiated in `s`, at fixed arguments such as
+# `u(t, 0, y)` is rejected rather than evaluated as the whole field.
+function _reject_fixed(md, s)
+    SymbolicUtils.iscall(s) && SymbolicUtils.operation(s) isa Symbolics.Differential &&
+        (s = Symbolics.unwrap(only(SymbolicUtils.arguments(s))))
+    f = _fieldinfo(md, s)
+    (f === nothing || _piece_arg(s) !== nothing || _is_canonical(f, s)) && return nothing
+    throw(ArgumentError(_fixed_args_message(s, f)))
+end
+
 function _facetset(md, Γ)
     haskey(md.pieces, Γ) ||
         throw(ArgumentError("$Γ is not a boundary piece of this mesh; the pieces are $(collect(keys(md.pieces)))"))
@@ -241,8 +262,10 @@ piece `Γ`, `nt × nfacets` (a vector for a steady solution). Facets are ordered
 """
 function normal_flux(A::FEMSolution, dv, Γ)
     md = A.disc_data
-    f = _fieldinfo(md, Symbolics.unwrap(dv))
-    f === nothing && throw(ArgumentError("$dv is not a dependent variable of this solution; they are $(A.dvs)"))
+    s = Symbolics.unwrap(dv)
+    _reject_fixed(md, s)
+    f = _fieldinfo(md, s)
+    (f === nothing || !_is_canonical(f, s)) && throw(ArgumentError("$dv is not a dependent variable of this solution; they are $(A.dvs)"))
     return _stack(A, [_facet_normal_flux(md, f, Γ, U) for U in _states(A)])
 end
 
@@ -287,7 +310,7 @@ function _gradkey(md, s)
     D.order == 1 || return nothing
     inner = only(SymbolicUtils.arguments(s))
     f = _fieldinfo(md, inner)
-    (f === nothing || !isequal(inner, Symbolics.unwrap(f.dv))) && return nothing
+    (f === nothing || !_is_canonical(f, inner)) && return nothing
     d = findfirst(x -> isequal(Symbolics.unwrap(x), Symbolics.unwrap(D.x)), md.x̄)
     return d === nothing ? nothing : (f, d)
 end
@@ -310,6 +333,7 @@ function Base.getindex(A::FEMSolution, sym::Num)
     i = findfirst(iv -> isequal(Symbolics.unwrap(iv), s), A.ivs)
     i === nothing || return A.ivdomain[i]
     haskey(A.u, sym) && return A.u[sym]
+    _reject_fixed(md, s)
     g = _gradkey(md, s)
     if g !== nothing
         projector = _gradient_projector(md, g[1])
@@ -319,7 +343,7 @@ function Base.getindex(A::FEMSolution, sym::Num)
         trace = Symbolics.unwrap(only(SymbolicUtils.arguments(s)))
         f = _fieldinfo(md, trace)
         Γ = _piece_arg(trace)
-        (f === nothing || !isequal(Γ, SymbolicUtils.operation(s).piece)) && _key_error(A, sym)
+        (f === nothing || !_is_trace(md, f, trace) || !isequal(Γ, SymbolicUtils.operation(s).piece)) && _key_error(A, sym)
         return normal_flux(A, f.dv, Γ)
     end
     f = _fieldinfo(md, s)
@@ -333,8 +357,8 @@ function Base.getindex(A::FEMSolution, sym::Num)
         shape = timed ? (length(A.t), nv) : (nv,)
         return _broadcast_observed(fn, shape, map(value, terms, kinds))
     end
+    _is_trace(md, f, s) || throw(ArgumentError(_fixed_args_message(s, f)))
     Γ = _piece_arg(s)
-    Γ === nothing && _key_error(A, sym)
     return _columns(A.u[Num(f.dv)], piece_nodes(md, Γ))
 end
 
@@ -392,12 +416,15 @@ function _evaluate(A::FEMSolution, ts, states, tshape, xs, dv, outside)
     md = A.disc_data
     dv === nothing && return map(d -> _evaluate(A, ts, states, tshape, xs, d, outside), A.dvs)
     s = Symbolics.unwrap(dv)
+    _reject_fixed(md, s)
     g = _gradkey(md, s)
     f = g === nothing ? _fieldinfo(md, s) : g[1]
     if f === nothing
         _is_expression(s) && return _evaluate_observed(A, ts, states, tshape, xs, dv, outside)
         throw(ArgumentError("dv = $dv is not a dependent variable or a first spatial derivative of one; the dependent variables are $(A.dvs)"))
     end
+    g === nothing && !_is_canonical(f, s) &&
+        throw(ArgumentError("dv = $dv is a trace; evaluate a trace as sol(t, Γ; dv = $(f.dv))"))
     if length(xs) == 1 && only(xs) isa DomainSets.Domain
         g === nothing || throw(ArgumentError("dv = $dv: traces of derivatives are not supported; use normal_flux(sol, dv, Γ)"))
         nodes = piece_nodes(md, only(xs))
@@ -439,11 +466,7 @@ function _observed_error(dv, why)
     throw(ArgumentError("cannot evaluate the expression $dv on this solution: $why"))
 end
 
-function _check_field_call(dv, ex, f::FieldInfo)
-    isequal(ex, Symbolics.unwrap(f.dv)) ||
-        _observed_error(dv, "$ex fixes arguments of $(f.dv); write the dependent variable as $(f.dv)")
-    return nothing
-end
+_check_field_call(dv, ex, f::FieldInfo) = _is_canonical(f, ex) || _observed_error(dv, _fixed_args_message(ex, f))
 
 # Adds the leaves of `ex` to `terms` as `term => kind`, with kind `:field`, `:time` or `:coord`,
 # and the value of each parameter to `params`.

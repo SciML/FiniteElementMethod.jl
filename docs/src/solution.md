@@ -53,5 +53,10 @@ points or on a boundary piece, with the shapes of a field, and `NaN` outside the
     of the system, a trace `u(t, Γ)` (index the trace on its own, or pass `Γ` to the call
     instead), a derivative that is not a first spatial derivative, or a dependent variable at
     fixed arguments such as `u(t, 0, y)`.
+  - A dependent variable at fixed arguments, such as `u(t, 0, y)` or `u(0, x, y)`, is rejected
+    wherever a dependent variable is accepted (`sol[…]`, `dv`, derivatives, [`normal_flux`](@ref))
+    with the `ArgumentError` "u(t, 0, y) fixes arguments of u(t, x, y); write the dependent
+    variable as u(t, x, y)"; a mesh has no coordinate lines to restrict to. A trace keeps time
+    and replaces the coordinates by one piece, `u(t, Γ)`.
 
 The docstrings are on the [API](@ref "API") page.

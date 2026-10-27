@@ -2,7 +2,7 @@
 # O9): PDESystem -> DAEProblem -> solve, then each expression is checked against the same
 # expression computed from the field arrays and against the exact solution.
 using Test
-using FiniteElementMethod: FiniteElementMethod, rectangle_grid, piece_nodes
+using FiniteElementMethod: FiniteElementMethod, rectangle_grid, piece_nodes, normal_flux
 using Ferrite: Triangle, Vec
 
 include(joinpath(@__DIR__, "..", "frontend.jl"))
@@ -94,9 +94,27 @@ observed_error(ex, why) = ArgumentError("cannot evaluate the expression $ex on t
         end
         # A derivative key that is not an expression keeps the key error.
         @test occursin("first", errmsg(() -> sol[Dx(Dx(U))]))
-        # A derivative of a dependent variable at fixed arguments is not a gradient key either.
-        @test occursin("is not a key of this solution", errmsg(() -> sol[Dy(u(t, 0, y))]))
-        @test occursin("is not a dependent variable or a first spatial derivative", errmsg(() -> sol(0.5, 0.3, 0.2; dv = Dy(u(t, 0, y)))))
+    end
+
+    @testset "a dependent variable at fixed arguments is rejected on every path" begin
+        Γ = first(pieces(Ω))
+        fixed(ex) = ArgumentError("$ex fixes arguments of u(t, x, y); write the dependent variable as u(t, x, y)")
+        for ex in (u(t, 0, y), u(t, x, 0.5), u(0, x, y))
+            @test_throws fixed(ex) sol[ex]
+            @test_throws fixed(ex) sol(0.5, 0.3, 0.2; dv = ex)
+            @test_throws fixed(ex) sol(0.5, Γ; dv = ex)
+            @test_throws fixed(ex) sol[Dx(ex)]
+            @test_throws fixed(ex) sol(0.5, 0.3, 0.2; dv = Dx(ex))
+            @test_throws fixed(ex) normal_flux(sol, ex, Γ)
+        end
+        # A trace must keep time and replace the coordinates by one piece.
+        @test_throws fixed(u(0, Γ)) sol[u(0, Γ)]
+        @test sol[u(t, Γ)] == sol[U][:, piece_nodes(sol, Γ)]
+        @test occursin("is not a key of this solution", errmsg(() -> sol[NormalDerivative(Γ)(u(0, Γ))]))
+        trace = ArgumentError("dv = $(u(t, Γ)) is a trace; evaluate a trace as sol(t, Γ; dv = u(t, x, y))")
+        @test_throws trace sol(0.5, 0.3, 0.2; dv = u(t, Γ))
+        @test_throws trace sol(0.5, Γ; dv = u(t, Γ))
+        @test occursin("is not a dependent variable of this solution", errmsg(() -> normal_flux(sol, u(t, Γ), Γ)))
     end
 
     @testset "two fields" begin

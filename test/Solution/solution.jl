@@ -193,8 +193,12 @@ end
     msg = ArgumentError("cannot evaluate the expression $fixed on this solution: $(u(0, y)) fixes arguments of u(x, y); write the dependent variable as u(x, y)")
     @test_throws msg sol[fixed]
     @test_throws msg sol(0.3, 0.6; dv = fixed)
-    @test_throws ArgumentError sol[Differential(y)(u(0, y))]
-    @test_throws ArgumentError sol(0.3, 0.6; dv = Differential(y)(u(0, y)))
+    bare = ArgumentError("$(u(0, y)) fixes arguments of u(x, y); write the dependent variable as u(x, y)")
+    for ex in (u(0, y), Differential(y)(u(0, y)))
+        @test_throws bare sol[ex]
+        @test_throws bare sol(0.3, 0.6; dv = ex)
+    end
+    @test_throws bare normal_flux(sol, u(0, y), Γ)
 end
 
 @testset "Points missed by Ferrite's nearest-node search" begin
