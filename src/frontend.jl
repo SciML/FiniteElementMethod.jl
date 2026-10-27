@@ -301,20 +301,35 @@ function _lower(pdesys, disc::FEMDiscretization)
     dirichlet = emit_dirichlet(an)
     t0, t1 = steady ? (0.0, 0.0) : v.intervals[v.time]
     space, names, ips = _space(disc, ctx, an, dirichlet, pvals, t0)
-    timedep_dirichlet = any(bc -> _depends(bc.g, [an.slots.T]), an.essential)
-    ops, coords = _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
+    timedep = findfirst(bc -> _depends(bc.g, [an.slots.T]), an.essential)
+    disc.dirichlet === :eliminate && timedep !== nothing && throw(
+        ArgumentError(
+            "dirichlet = :eliminate needs Dirichlet data that are constant in time, but the condition on boundary piece " *
+                "$(an.essential[timedep].piece.name) depends on time; use the default dirichlet = :algebraic"
+        )
+    )
+    ops, coords = _operators(space, wf, names, dirichlet, pvals, t0, timedep !== nothing)
     u0 = _initial_values(Equation[b.eq for b in ics], ctx, space, coords, an, names, pvals)
     dirichlet_values!(view(u0, ops.prescribed), ops.load, t0)
-    iv = disc.time
-    unknowns = map(names) do name
-        n = length(field_range(space, name))
-        steady ? only(@variables $name[1:n]) : only(@variables $name(iv)[1:n])
+    elimination = nothing
+    unknown_u0 = u0
+    if disc.dirichlet === :eliminate
+        ops, elimination = eliminate_dirichlet(ops)
+        unknown_u0 = u0[elimination.free]
     end
-    fields = [FieldInfo(dv, name, u, ip) for (dv, name, u, ip) in zip(StrongForm.declared_fields(sys, v), names, unknowns, ips)]
+    iv = disc.time
+    unknowns = map(ops.fields) do (name, r)
+        steady ? only(@variables $name[1:length(r)]) : only(@variables $name(iv)[1:length(r)])
+    end
+    unknown_of = Dict(zip(first.(ops.fields), unknowns))
+    fields = [
+        FieldInfo(dv, name, get(unknown_of, name, nothing), ip)
+            for (dv, name, ip) in zip(StrongForm.declared_fields(sys, v), names, ips)
+    ]
     pieces = Dict{Any, String}(Γ => String(Γ.name) for Γ in PDEBase.boundarypieces(disc.domain))
-    md = FEMMetadata(space, iv, v.x̄, fields, pieces, pdesys; u0)
+    md = FEMMetadata(space, iv, v.x̄, fields, pieces, pdesys; u0, elimination)
     parameters = [q => v for (q, v) in zip(ctx.params, pvals)]
-    return (; ops, u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys), parameters)
+    return (; ops, u0 = unknown_u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys), parameters)
 end
 
 # `K u - F` with the Dirichlet rows `u_d - g_d`: `K` holds `e_d` and `F` holds `g_d` there.
@@ -340,7 +355,8 @@ end
     DAEProblem(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
 
 Discretize `pdesys` with `disc` and return the `DAEProblem` `M du + K u + N(u, t) = F(t)` of
-the Galerkin operators, with Dirichlet rows `u_d = g_d(t)` as algebraic equations, a sparse
+the Galerkin operators, with Dirichlet rows `u_d = g_d(t)` as algebraic equations (or, with
+`dirichlet = :eliminate`, restricted to the free dofs), a sparse
 analytic Jacobian (the nonlinear part `N` from the terms whose coefficients depend on the
 state, with its symbolic tangent) and the `FEMMetadata` as its `problem_type`, so `solve` returns a
 `PDETimeSeriesSolution`. Nothing calls `mtkcompile`; anything this milestone cannot
