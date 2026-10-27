@@ -27,3 +27,6 @@ versions = ["lts", "1", "pre"]
 
 [Integration]
 versions = ["lts", "1", "pre"]
+
+[Convergence]
+versions = ["lts", "1", "pre"]
