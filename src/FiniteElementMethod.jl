@@ -18,11 +18,16 @@ using ModelingToolkit: ModelingToolkit, @parameters, @variables, Differential, M
     ProblemTypeCtx, System, complete, getmetadata
 using NonlinearSolveFirstOrder: NewtonRaphson
 using PDEBase: PDEBase
+using PrecompileTools: PrecompileTools
+using RuntimeGeneratedFunctions: RuntimeGeneratedFunctions
 using SciMLBase: SciMLBase, DAEFunction, DAEProblem
 using SciMLBase.SymbolicIndexingInterface: getp, variable_index
 using SparseArrays: SparseMatrixCSC, nonzeros, nzrange, rowvals
 using SymbolicUtils: SymbolicUtils
 using Symbolics: Symbolics, Equation, Num, @register_array_symbolic, substitute, unwrap
+
+# Generated kernels are RuntimeGeneratedFunctions owned by this module, so they can be built in a precompile workload.
+RuntimeGeneratedFunctions.init(@__MODULE__)
 
 include("numeric_dae.jl")
 
@@ -32,6 +37,7 @@ include("solution.jl")
 include("weakform.jl")
 include("kernels.jl")
 include("assembly.jl")
+include("operators.jl")
 export FieldInfo, FEMMetadata, piece_nodes, normal_flux, write_vtk
 # Re-exported so that the user API of a FEM model needs no `using PDEBase, Ferrite`.
 export Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexahedron
@@ -75,5 +81,7 @@ const MESH_PDEBASE = isdefined(PDEBase, :AbstractMeshDiscretization) &&
 else
     _is_normal_derivative(op) = false
 end
+
+include("precompile.jl")
 
 end # module
