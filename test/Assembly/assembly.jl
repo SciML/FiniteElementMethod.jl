@@ -415,6 +415,25 @@ end
     @test_throws ArgumentError("no cell values given for field p; the cell values have keys (:u,)") AssemblyContext(dh, [:u, :p], (u = cvu,), (u = fvu, p = fvp))
     @test_throws ArgumentError("1 facet values given for the 2 fields [:u, :p]") AssemblyContext(dh, [:u, :p], (cvu, cvp), (fvu,))
     @test_throws ArgumentError("field q is not a field of the DofHandler, whose fields are [:u, :p]") AssemblyContext(dh, [:u, :q], (cvu, cvp), (fvu, fvp))
+    same = "all fields must share one rule: the same points, in the same order, with the same weights"
     cvp_coarse = CellValues(QuadratureRule{RefTriangle}(2), ip1)
-    @test_throws ArgumentError("the CellValues of all fields must share one quadrature rule, but they have 6, 3 quadrature points") AssemblyContext(dh, [:u, :p], (cvu, cvp_coarse), (fvu, fvp))
+    @test_throws ArgumentError("the CellValues of fields u and p use different quadrature rules; $same") AssemblyContext(dh, [:u, :p], (cvu, cvp_coarse), (fvu, fvp))
+    fvp_coarse = FacetValues(FacetQuadratureRule{RefTriangle}(2), ip1)
+    @test_throws ArgumentError("the FacetValues of fields u and p use different quadrature rules on local facet 1; $same") AssemblyContext(dh, [:u, :p], (cvu, cvp), (fvu, fvp_coarse))
+    @test_throws ArgumentError("field u has 6 dofs per cell, but its FacetValues have 3 base functions") AssemblyContext(dh, [:u, :p], (cvu, cvp), (fvp, fvp))
+end
+
+@testset "fields on one rule with reversed point order are rejected" begin
+    # The same points and weights in opposite order would pair test and trial functions at different points.
+    grid = generate_grid(Triangle, (3, 3))
+    ip = Lagrange{RefTriangle, 1}()
+    dh = DofHandler(grid)
+    add!(dh, :u, ip)
+    add!(dh, :w, ip)
+    close!(dh)
+    qr = QuadratureRule{RefTriangle}(2)
+    reversed = QuadratureRule{RefTriangle}(reverse(qr.weights), reverse(qr.points))
+    fv = FacetValues(FacetQuadratureRule{RefTriangle}(2), ip)
+    @test_throws ArgumentError("the CellValues of fields u and w use different quadrature rules; all fields must share one rule: the same points, in the same order, with the same weights") AssemblyContext(dh, [:u, :w], (CellValues(qr, ip), CellValues(reversed, ip)), fv)
+    @test AssemblyContext(dh, [:u, :w], (CellValues(qr, ip), CellValues(QuadratureRule{RefTriangle}(2), ip)), fv) isa AssemblyContext
 end

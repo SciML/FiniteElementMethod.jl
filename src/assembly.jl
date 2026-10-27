@@ -13,7 +13,8 @@ What the driver needs to assemble kernels: the `DofHandler`, its field names in 
 facet-set name of the grid or as a set of `FacetIndex`.
 
 `cellvalues` and `facetvalues` are each a `NamedTuple` keyed by field name, a tuple in field order, or a single
-values object shared by all fields. The values of all fields must use one quadrature rule. A field may be missing
+values object shared by all fields. The values of all fields must use one quadrature rule (the same points in the
+same order, and weights), since test and trial functions of different fields are paired by quadrature point. A field may be missing
 from some `SubDofHandler`s of `dh` (a field on a region): there it has no dofs, its equation is not assembled and
 its state slots are zero.
 
@@ -39,14 +40,14 @@ function AssemblyContext(dh::Ferrite.DofHandler, fields, cv, fv, pieces = Dict()
     end
     for sdh in dh.subdofhandlers, f in sdh.field_names
         f in names || continue
-        n, nb = length(Ferrite.dof_range(sdh, f)), Ferrite.getnbasefunctions(cellvalues[f])
-        n == nb || throw(ArgumentError("field $f has $n dofs per cell, but its CellValues have $nb base functions"))
+        n = length(Ferrite.dof_range(sdh, f))
+        for (what, vs) in (("CellValues", cellvalues), ("FacetValues", facetvalues))
+            nb = Ferrite.getnbasefunctions(vs[f])
+            n == nb || throw(ArgumentError("field $f has $n dofs per cell, but its $what have $nb base functions"))
+        end
     end
-    for (what, vs) in (("CellValues", cellvalues), ("FacetValues", facetvalues))
-        nq = unique(Ferrite.getnquadpoints(v) for v in vs)
-        length(nq) == 1 ||
-            throw(ArgumentError("the $what of all fields must share one quadrature rule, but they have $(join(nq, ", ")) quadrature points"))
-    end
+    _check_rules("CellValues", names, map(cv -> (cv.qr,), cellvalues))
+    _check_rules("FacetValues", names, map(fv -> Tuple(fv.fqr.facet_rules), facetvalues))
     facetsets = Dict{Any, Any}()
     for (piece, set) in pieces
         facetsets[piece] = Set{Ferrite.FacetIndex}(set isa AbstractString ? _named_facetset(dh.grid, piece, set) : set)
@@ -55,6 +56,23 @@ function AssemblyContext(dh::Ferrite.DofHandler, fields, cv, fv, pieces = Dict()
     facetcells = BitSet(fi[1] for set in values(facetsets) for fi in set if 1 ≤ fi[1] ≤ ncells)
     NF = length(fields)
     return AssemblyContext{NF, typeof(dh), typeof(cellvalues), typeof(facetvalues)}(dh, fields, cellvalues, facetvalues, facetsets, facetcells)
+end
+
+# Test and trial functions of different fields are paired by quadrature point, so every field's values must use the
+# same rule: the same reference points in the same order, and the same weights (per local facet for facet rules).
+# The rules are read from the values' `qr`/`fqr` fields, which Ferrite has no public accessor for.
+function _check_rules(what, names, rules)
+    first_rules = first(rules)
+    for (f, field_rules) in zip(names, rules)
+        for (k, (a, b)) in enumerate(zip(first_rules, field_rules))
+            a.points == b.points && a.weights == b.weights && continue
+            on = what == "FacetValues" ? " on local facet $k" : ""
+            throw(ArgumentError("the $what of fields $(first(names)) and $f use different quadrature rules$on; all fields must share one rule: the same points, in the same order, with the same weights"))
+        end
+        length(first_rules) == length(field_rules) ||
+            throw(ArgumentError("the $what of fields $(first(names)) and $f have rules for $(length(first_rules)) and $(length(field_rules)) facets"))
+    end
+    return nothing
 end
 
 # Values keyed by field: a NamedTuple in field order from a NamedTuple, a tuple, or one shared object.
