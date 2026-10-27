@@ -27,7 +27,7 @@ Restrictions of this release:
 
   - Geometries are `Ferrite.Grid` meshes (1D, 2D and 3D cell shapes) wrapped as `MeshDomain(grid)`, with boundary pieces named by the grid's facet sets. Only 1D and 2D are evidenced; meshes with mixed cell types are rejected until M4.
   - Coordinates are Cartesian and named by the `(x, y) ∈ Ω` pairing. Time must be the first argument of every dependent variable.
-  - Dirichlet data may depend on space, time and parameters but not on another field. Neumann and Robin conditions are written with `NormalDerivative(Γ)`, with any conormal coefficient written explicitly.
+  - Dirichlet data may depend on space, time and parameters but not on another field. Neumann and Robin conditions are written with `NormalDerivative(Γ)`, with any conormal coefficient written explicitly. Neumann and Robin data may depend on time; the Robin coefficient multiplying `u(t, Γ)` may depend only on space and parameters until M3.
   - Periodic conditions `u(t, Γa) ~ u(t, Γb)` are rejected until M4. Interface conditions between regions have no syntax; every field lives on the whole mesh.
   - Boundary pieces must be disjoint. A piece with no condition gets the natural zero-flux condition, with a warning when the operator has a flux.
   - Where two Dirichlet pieces of one field meet, the condition listed last in the `PDESystem` wins.
@@ -100,7 +100,10 @@ have a flux, the discretization warns about each such piece.
 ## Robin conditions
 
 `k * Dn(u(t, Γ)) + α * u(t, Γ) ~ β`, with the conormal coefficient written explicitly as for
-Neumann conditions. The data `α` and `β` may depend on the coordinates, time and parameters.
+Neumann conditions. The data `β` may depend on the coordinates, time and parameters. The
+coefficient `α` may depend on the coordinates and parameters but not on time in this release:
+a time-dependent `α` makes the boundary part of the stiffness operator time-dependent, which is
+rejected with `time-dependent coefficients in the mass or stiffness operator land in M3`.
 Like a Neumann condition, it enters the weak form as a facet integral.
 
 ## Periodic conditions
@@ -128,6 +131,7 @@ is an error that names the problem; nothing falls back to `mtkcompile`.
 | A steady problem (no time variable) | error; lands in M4 |
 | A nonlinear operator, such as `Dx((1 + u^2) * Dx(u))` | error; lands in M3 |
 | A time-dependent coefficient in the mass or stiffness operator, such as `Dx((1 + t) * Dx(u))` | error; lands in M3 |
+| A time-dependent Robin coefficient, such as `Dn(u(t, Γ)) + (1 + t) * u(t, Γ) ~ 0` | error; lands in M3 |
 | `FEMDiscretization(…; codegen = :mtk)` | error; lands in M3 |
 | `FEMDiscretization(…; dirichlet = :eliminate)` | error; lands in M4 |
 | A test space other than `Galerkin()` | error; lands in M4 |
@@ -135,6 +139,6 @@ is an error that names the problem; nothing falls back to `mtkcompile`.
 | Fields with different interpolations, such as P2 velocity and P1 pressure | error; lands in M4 |
 | A periodic condition `u(t, Γa) ~ u(t, Γb)` | error; lands in M4 |
 | A dependent variable whose first argument is not time, such as `u(x, y, t)` | error |
-| A pairing whose coordinate order differs from the dependent variables' argument order | error |
+| A pairing whose coordinate order differs from the dependent variables' argument order | error on PDEBase before PDEBase#158; accepted after it, with the pairing deciding the order |
 | Two Dirichlet pieces of one field sharing nodes | the condition listed last wins |
 | A boundary piece with no condition | natural zero-flux condition, with a warning when the equations have a flux |

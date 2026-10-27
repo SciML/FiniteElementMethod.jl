@@ -48,4 +48,19 @@ using ModelingToolkit: t_nounits as t
             "the domain pairing names the coordinates in the order (y, x) but the dependent variables take them in the order (x, y); write both in the same order"
         ) discretize(swapped, FEMDiscretization(Ω, t))
     end
+
+    @testset "a time-dependent Robin coefficient is rejected" begin
+        @variables x y u(..)
+        Ω = MeshDomain(rectangle_grid(Triangle, (2, 2)))
+        Γl, Γr, Γb, Γt = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+        eq = Differential(t)(u(t, x, y)) ~ Differential(x)(Differential(x)(u(t, x, y))) + Differential(y)(Differential(y)(u(t, x, y)))
+        bcs = [
+            u(t, Γl) ~ 0, u(t, Γb) ~ 0, u(t, Γt) ~ 0,
+            NormalDerivative(Γr)(u(t, Γr)) + (1 + t) * u(t, Γr) ~ 0, u(0, x, y) ~ 0,
+        ]
+        @named sys = PDESystem([eq], bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
+        @test_throws ArgumentError(
+            "time-dependent coefficients in the mass or stiffness operator land in M3: equation 1 has U₁*V + T*U₁*V"
+        ) discretize(sys, FEMDiscretization(Ω, t))
+    end
 end
