@@ -1,7 +1,8 @@
 using SciMLTesting, FiniteElementMethod
 
 # `Ferrite.DofOrder.FieldWise` is Ferrite's documented renumbering API but is not declared `public`;
-# ForwardDiff documents `derivative` as its API but does not declare it `public`;
+# ForwardDiff documents `derivative`, and `Dual`, `Partials`, `value` and `partials` for custom rules, as its API
+# but declares none of them `public`;
 # `Ferrite.dirichlet_facetdof_indices` (a facet's local nodes) has no public spelling in Ferrite 1.
 # The front end uses these PDEBase names, public on the M0 stack but not on PDEBase 0.1.39 (and
 # `Base.ispublic` does not exist on Julia 1.10), so each is ignored only where it is not public.
@@ -24,7 +25,10 @@ run_qa(
     aqua_kwargs = (; piracies = (; treat_as_own = [FiniteElementMethod.Ferrite.Grid])),
     ei_kwargs = (;
         all_qualified_accesses_are_public = (;
-            ignore = (:FieldWise, :derivative, :dirichlet_facetdof_indices, NONPUBLIC_PDEBASE...),
+            ignore = (
+                :FieldWise, :derivative, :Dual, :Partials, :value, :partials, :dirichlet_facetdof_indices,
+                NONPUBLIC_PDEBASE...,
+            ),
         ),
         all_explicit_imports_via_owners = (; ignore = LTS_MTK_OWNER),
         all_qualified_accesses_via_owners = (; ignore = LTS_MTK_OWNER),

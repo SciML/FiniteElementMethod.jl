@@ -60,6 +60,19 @@ end
 
 (op::NonlinearOperator)(r, u, p, t) = residual!(r, op, u, p, t)
 
+# `reinit!` mutates CellValues and FacetValues, so each load evaluation gets its own copies and
+# concurrent solves of one problem's remakes share no mutable state.
+function _fresh_values(ctx::AssemblyContext{NF, DH, CV, FV}) where {NF, DH, CV, FV}
+    return AssemblyContext{NF, DH, CV, FV}(
+        ctx.dh, ctx.fields, map(copy, ctx.cellvalues), map(copy, ctx.facetvalues), ctx.facetsets, ctx.facetcells
+    )
+end
+
+# A copy of `op` that shares no mutable state with it: new buffers, Jacobian and values objects.
+function independent_copy(op::NonlinearOperator)
+    return NonlinearOperator(_fresh_values(op.ctx), op.volume, op.groups, zero(op.r), copy(op.J), zero(op.Je), zero(op.re), zero(op.u_elem))
+end
+
 const LINEAR_TARGET = (mass = :M, bilinear = :K, source = :F)
 
 """
