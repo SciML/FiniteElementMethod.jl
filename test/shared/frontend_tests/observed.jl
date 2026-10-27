@@ -71,7 +71,7 @@ observed_error(ex, why) = ArgumentError("cannot evaluate the expression $ex on t
         @test sol(0.5, Γ; dv = U + y) ≈ sol(0.5, Γ; dv = U) .+ sol[y][nodes] atol = 1.0e-14
         @test sol(T, Γ; dv = t * U) ≈ T .* sol[u(t, Γ)] atol = 1.0e-12
         err = errmsg(() -> sol(0.5, Γ; dv = Dx(U) + 1))
-        @test occursin("traces of derivatives are not supported", err)
+        @test occursin("traces of derivatives of u(t, x, y) are not supported", err)
     end
 
     @testset "error paths" begin
@@ -132,6 +132,65 @@ observed_error(ex, why) = ArgumentError("cannot evaluate the expression $ex on t
         @test sol2(0.5, 0.3, 0.2; dv = U / V) ≈ sol2(0.5, 0.3, 0.2; dv = U) / sol2(0.5, 0.3, 0.2; dv = V) atol = 1.0e-12
         dvs2 = "u(t, x, y), v(t, x, y)"
         @test_throws observed_error(U * z(t, x, y), "z(t, x, y) is not a dependent variable, an independent variable or a parameter; the dependent variables are $dvs2 and the independent variables t, x, y") sol2[U * z(t, x, y)]
+    end
+
+    @testset "time-last fields" begin
+        UL = u(x, y, t)
+        eq = Dt(UL) ~ Dx(Dx(UL)) + Dy(Dy(UL)) + (1 + x + 2y)
+        bcs = [[u(Γ, t) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]; u(x, y, 0) ~ 1 + x + 2y]
+        soll, _ = fem_solve([eq], bcs, Ω, (x, y), t, [UL]; ps = [k => 2.0])
+        Tl, Xc, Yc = permutedims(soll.t), soll[x], soll[y]
+        exact = uexact.(Tl, Xc, Yc)
+        # Arrays keep the orientation of sol[u(x, y, t)], nvertices × nt.
+        @test size(soll[UL^2 + k * x]) == (nv, length(soll.t))
+        @test soll[UL^2 + k * x] ≈ soll[UL] .^ 2 .+ 2 .* Xc atol = 1.0e-12
+        @test maximum(abs, soll[UL^2 + k * x] .- (exact .^ 2 .+ 2 .* Xc)) <= 1.0e-6
+        @test soll[t * UL] ≈ Tl .* soll[UL] atol = 1.0e-12
+        @test soll[x + y] == repeat(Xc .+ Yc, 1, length(soll.t))
+        @test soll[Dx(UL) + UL] ≈ soll[Dx(UL)] .+ soll[UL] atol = 1.0e-12
+        # Calls take the time last.
+        @test soll(0.3, 0.2, 0.5; dv = UL^2) ≈ uexact(0.5, 0.3, 0.2)^2 atol = 1.0e-6
+        xs, ys, ts = range(0, 1, length = 5), range(0, 1, length = 4), [0.2, 0.5, 0.9]
+        vals = soll(xs, ys, ts; dv = t * UL)
+        @test size(vals) == (5, 4, 3)
+        @test vals ≈ [ts[n] * soll(xs[i], ys[j], ts[n]; dv = UL) for i in 1:5, j in 1:4, n in 1:3] atol = 1.0e-12
+        @test maximum(abs, vals .- [ts[n] * uexact(ts[n], xs[i], ys[j]) for i in 1:5, j in 1:4, n in 1:3]) <= 1.0e-6
+        Γ = first(pieces(Ω))
+        nodes = piece_nodes(soll, Γ)
+        @test size(soll(Γ, ts; dv = UL + y)) == (length(nodes), 3)
+        @test soll(Γ, ts; dv = UL + y) ≈ soll(Γ, ts; dv = UL) .+ Yc[nodes] atol = 1.0e-12
+        @test soll[u(Γ, t)] == soll[UL][nodes, :]
+        # Fixed arguments and malformed traces in time-last form.
+        fixed(ex) = ArgumentError("$ex fixes arguments of u(x, y, t); write the dependent variable as u(x, y, t)")
+        for ex in (u(0, y, t), u(x, y, 0))
+            @test_throws fixed(ex) soll[ex]
+            @test_throws fixed(ex) soll(0.3, 0.2, 0.5; dv = ex)
+            @test_throws fixed(ex) soll[Dx(ex)]
+            @test_throws fixed(ex) normal_flux(soll, ex, Γ)
+            @test_throws observed_error(ex + 1, "$ex fixes arguments of u(x, y, t); write the dependent variable as u(x, y, t)") soll[ex + 1]
+        end
+        @test_throws fixed(u(Γ, 0)) soll[u(Γ, 0)]
+        @test_throws fixed(u(t, Γ)) soll[u(t, Γ)]
+        @test_throws ArgumentError("dv = $(u(Γ, t)) is a trace; evaluate a trace as sol(Γ, t; dv = u(x, y, t))") soll(0.3, 0.2, 0.5; dv = u(Γ, t))
+    end
+
+    @testset "fields with different time positions" begin
+        parabolic = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + v(x, y, t)
+        algebraic = 0 ~ Dx(Dx(v(x, y, t))) + Dy(Dy(v(x, y, t)))
+        bcs = [heat_bcs(Ω); [v(Γ, t) ~ 1 + x + 2y for Γ in pieces(Ω)]]
+        solm, _ = fem_solve(
+            [parabolic, algebraic], bcs, Ω, (x, y), t, [u(t, x, y), v(x, y, t)]; pairing = Dict(algebraic => v)
+        )
+        VL = v(x, y, t)
+        # One field per expression: its own orientation.
+        @test solm[2U] == 2 .* solm[U]
+        @test solm[VL * x] ≈ solm[VL] .* solm[x] atol = 1.0e-12
+        @test solm(0.3, 0.2, 0.5; dv = 2VL) ≈ 2 * (1 + 0.3 + 0.4) atol = 1.0e-6
+        # Mixed time positions have no orientation, documented as an error.
+        mixed = "its dependent variables (all those of the system when it names none) put time in different argument positions; evaluate the time-first and the time-last parts separately"
+        @test_throws observed_error(U + VL, mixed) solm[U + VL]
+        @test_throws observed_error(U + VL, mixed) solm(0.5, 0.3, 0.2; dv = U + VL)
+        @test_throws observed_error(2x, mixed) solm[2x]
     end
 
     @testset "evaluation is batched at 10^4 vertices" begin

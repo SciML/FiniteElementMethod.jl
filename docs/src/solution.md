@@ -57,6 +57,12 @@ derivatives, the independent variables and the parameters of the `PDESystem`, fo
 names only coordinates. `sol(t, xs, ys; dv = expr)` and `sol(t, Γ; dv = expr)` evaluate it at
 points or on a boundary piece, with the shapes of a field, and `NaN` outside the mesh.
 
+The time axis follows the expression's dependent variables, as for a field: an expression in
+time-last variables, `sol[u(x, y, t)^2]`, is `nvertices × nt` and is called as
+`sol(xs, ys, t; dv = expr)`. An expression with no dependent variable follows the system's
+variables. An expression that mixes time-first and time-last variables, or names none in a
+system that mixes them, throws an `ArgumentError`: evaluate the parts separately.
+
   - The expression is compiled once with `build_function` and broadcast over the vertex values
     of its leaves; nothing is substituted per vertex. A first derivative such as
     `Differential(x)(u(t, x, y))` uses the same values as `sol[Differential(x)(u(t, x, y))]`.
@@ -71,6 +77,6 @@ points or on a boundary piece, with the shapes of a field, and `NaN` outside the
     wherever a dependent variable is accepted (`sol[…]`, `dv`, derivatives, [`normal_flux`](@ref))
     with the `ArgumentError` "u(t, 0, y) fixes arguments of u(t, x, y); write the dependent
     variable as u(t, x, y)"; a mesh has no coordinate lines to restrict to. A trace keeps time
-    and replaces the coordinates by one piece, `u(t, Γ)`.
+    and replaces the coordinates by one piece, `u(t, Γ)` or `u(Γ, t)`.
 
 The docstrings are on the [API](@ref "API") page.
