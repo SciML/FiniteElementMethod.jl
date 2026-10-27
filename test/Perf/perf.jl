@@ -274,23 +274,20 @@ end
 end
 
 # Time to first assembly in a fresh process, after `using FiniteElementMethod`, for kernels the precompile
-# workload did not generate (`workload_chain` with another `k` on another grid). `workload = false` sets
-# PrecompileTools' `precompile_workload` preference through a stacked load-path environment, which precompiles a
-# separate cache without the workload.
-function time_to_first_assembly(; workload)
+# workload did not generate (`workload_chain` with another `k` on another grid). Both modes set PrecompileTools'
+# `precompile_workload` preference explicitly in a temporary environment placed FIRST on the load path: preferences
+# from earlier environments take precedence, so a value in the active project's LocalPreferences.toml cannot
+# override either mode. The two values precompile separate caches.
+function time_to_first_assembly(; workload::Bool)
     script = """
     using FiniteElementMethod
     print(@elapsed FiniteElementMethod.workload_chain(3.7; nel = 4))
     """
     return mktempdir() do dir
-        load_path = "@:@stdlib"
-        if !workload
-            write(joinpath(dir, "Project.toml"), "[extras]\nFiniteElementMethod = \"e08948db-0ae8-498a-9b98-73fc7f237ce3\"\n")
-            write(joinpath(dir, "LocalPreferences.toml"), "[FiniteElementMethod]\nprecompile_workload = false\n")
-            load_path = "@:$dir:@stdlib"
-        end
+        write(joinpath(dir, "Project.toml"), "[extras]\nFiniteElementMethod = \"e08948db-0ae8-498a-9b98-73fc7f237ce3\"\n")
+        write(joinpath(dir, "LocalPreferences.toml"), "[FiniteElementMethod]\nprecompile_workload = $workload\n")
         cmd = `$(Base.julia_cmd()) --startup-file=no --project=$(Base.active_project()) -e $script`
-        return parse(Float64, readchomp(addenv(cmd, "JULIA_LOAD_PATH" => load_path)))
+        return parse(Float64, readchomp(addenv(cmd, "JULIA_LOAD_PATH" => "$dir:@:@stdlib")))
     end
 end
 
