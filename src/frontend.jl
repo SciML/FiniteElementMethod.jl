@@ -67,13 +67,15 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
     _check_domains(pdesys, disc)
     dvs = PDEBase.depvars(v)
     ops = [_field_op(u) for u in dvs]
-    unknown = [k for k in keys(disc.spaces) if !any(op -> isequal(op, k), ops)]
-    isempty(unknown) || throw(
-        ArgumentError(
-            "`spaces` has keys that are not dependent variables of the system: " *
-                "$(join(sort(string.(unknown)), ", ")); the dependent variables are $(join(sort(string.(dvs)), ", "))"
+    for (kw, dict) in (("spaces", disc.spaces), ("regions", disc.regions))
+        unknown = [k for k in keys(dict) if !any(op -> isequal(op, k), ops)]
+        isempty(unknown) || throw(
+            ArgumentError(
+                "`$kw` has keys that are not dependent variables of the system: " *
+                    "$(join(sort(string.(unknown)), ", ")); the dependent variables are $(join(sort(string.(dvs)), ", "))"
+            )
         )
-    )
+    end
     t = v.time
     for u in dvs
         args = SymbolicUtils.arguments(unwrap(u))
@@ -130,6 +132,24 @@ function _paired(an, eqs, ctx, disc)
     )
 end
 
+# τ and b are compiled into the kernels as functions of the coordinates, time and hK only, so they cannot name a
+# parameter, whose value the kernels would not see.
+function _check_supg(test_space, an, ctx)
+    test = TestSlots(an.dim)
+    for e in eachindex(an.flux)
+        weight = test_weight(test_space, an, e, test)
+        weight === nothing && continue
+        τ, bW = weight
+        any(ex -> _depends(unwrap(Num(ex)), [ctx.params; an.slots.P]), (τ, bW)) && throw(
+            ArgumentError(
+                "SUPG: equation $e has τ = $τ and b·∇v = $bW, which reference parameters of the PDESystem; " *
+                    "τ and b must be numbers or expressions in the coordinates, time and hK, so write the parameter's value"
+            )
+        )
+    end
+    return nothing
+end
+
 function _check_linear(wf)
     for term in vcat(wf.volume, wf.facet)
         term.kind === :nonlinear &&
@@ -163,7 +183,30 @@ function _space(disc, ctx, analysis, dirichlet, pvals, t0)
         (names[bc.field], String(bc.piece.name), (x, t) -> g(x, t, pvals))
             for (bc, (_, _, g)) in zip(analysis.essential, dirichlet)
     ]
-    return FEMSpace(grid, names .=> ips; dirichlet = bcs, quadrature = disc.quadrature, t0), names, ips
+    regions = Dict(names[f] => String(disc.regions[op].name) for (f, op) in enumerate(ctx.ops) if haskey(disc.regions, op))
+    _check_region_pieces(grid, regions, names, analysis)
+    space = FEMSpace(
+        grid, names .=> ips; dirichlet = bcs, quadrature = disc.quadrature, t0, regions,
+        hessians = disc.test_space isa SUPG
+    )
+    return space, names, ips
+end
+
+# A condition on a field restricted to a region must lie on the region: Ferrite would otherwise drop the facets
+# outside it without a word.
+function _check_region_pieces(grid, regions, names, analysis)
+    conditions = [[(bc.field, bc.piece) for bc in analysis.essential]; [(bc.eq, bc.piece) for bc in analysis.natural]]
+    for (f, Γ) in conditions
+        haskey(regions, names[f]) || continue
+        cells = Ferrite.getcellset(grid, regions[names[f]])
+        all(fi -> fi[1] in cells, Ferrite.getfacetset(grid, String(Γ.name))) || throw(
+            ArgumentError(
+                "the condition on $(names[f]) on $Γ has facets outside the region :$(regions[names[f]]) of $(names[f]); " *
+                    "a field on a region takes conditions only on pieces whose facets belong to the region's cells"
+            )
+        )
+    end
+    return nothing
 end
 
 # Nodal coordinates of every dof; Lagrange interpolation of `x_d` gives them exactly.
@@ -287,7 +330,8 @@ function _lower(pdesys, disc::FEMDiscretization)
             Γ in covered || @warn "boundary piece $Γ has no condition, so it gets the natural zero-flux condition"
         end
     end
-    wf = weak_form(an)
+    disc.test_space isa SUPG && _check_supg(disc.test_space, an, ctx)
+    wf = weak_form(an; test_space = disc.test_space)
     _check_linear(wf)
     pvals = _parameter_values(sys, ctx)
     dirichlet = emit_dirichlet(an)
