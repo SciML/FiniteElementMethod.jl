@@ -27,10 +27,13 @@ Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknow
     It needs Dirichlet data that are constant in time (they may vary in space); data that
     depend on time raise `ArgumentError("dirichlet = :eliminate needs Dirichlet data that are
     constant in time, but the condition on boundary piece <name> depends on time; use the default
-    dirichlet = :algebraic")` from `DAEProblem`. The solution still returns full fields, with
-    `g` at the prescribed nodes, through `sol[u]`, `sol(t, x, y)`, traces and `write_vtk`;
-    only `sol.original_sol` and the array unknowns hold the free dofs alone. `:algebraic` is
-    recommended.
+    dirichlet = :algebraic")` from `DAEProblem`. A field whose dofs are all prescribed has no
+    array unknown (its `FieldInfo.unknown` is `nothing`); if every dof of the problem is
+    prescribed, `DAEProblem` raises `ArgumentError("dirichlet = :eliminate leaves no unknowns
+    because every dof is prescribed; use the default dirichlet = :algebraic")`. The solution
+    still returns full fields, with `g` at the prescribed nodes, through `sol[u]`,
+    `sol(t, x, y)`, traces and `write_vtk`; only `sol.original_sol` and the array unknowns
+    hold the free dofs alone. `:algebraic` is recommended.
   - `codegen = :mtk` is reserved for a later milestone and raises; remaining keywords are
     passed to the `DAEProblem`, where a keyword given at the `DAEProblem`/`discretize` call
     wins. `iv`, `unknowns`, `du0`, `coordinate` and `name` are set by the discretization and

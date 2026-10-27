@@ -3,7 +3,8 @@
 
 One dependent variable of a FEM discretization: the `PDESystem` dependent variable `dv`
 (for example `u(t, x, y)`), the name of its field in the `DofHandler`, the array unknown
-of the discretized system (for example `u(t)[1:n]`) and the field's interpolation.
+of the discretized system (for example `u(t)[1:n]`, or `nothing` for a field that
+`dirichlet = :eliminate` prescribes entirely) and the field's interpolation.
 """
 struct FieldInfo
     dv::Any

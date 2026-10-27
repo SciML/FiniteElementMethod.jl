@@ -310,7 +310,11 @@ function _lower(pdesys, disc::FEMDiscretization)
     end
     iv = disc.time
     unknowns = [only(@variables $name(iv)[1:length(r)]) for (name, r) in ops.fields]
-    fields = [FieldInfo(dv, name, u, ip) for (dv, name, u, ip) in zip(StrongForm.declared_fields(sys, v), names, unknowns, ips)]
+    unknown_of = Dict(zip(first.(ops.fields), unknowns))
+    fields = [
+        FieldInfo(dv, name, get(unknown_of, name, nothing), ip)
+            for (dv, name, ip) in zip(StrongForm.declared_fields(sys, v), names, ips)
+    ]
     pieces = Dict{Any, String}(Γ => String(Γ.name) for Γ in PDEBase.boundarypieces(disc.domain))
     md = FEMMetadata(space, iv, v.x̄, fields, pieces, pdesys; u0, elimination)
     return (; ops, u0 = unknown_u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys))

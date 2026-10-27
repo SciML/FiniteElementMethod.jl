@@ -134,6 +134,33 @@ bubble(a, b) = (t_, x_) -> a + b * x_ + x_ * (1 - x_) * (1 + t_)
         @test maximum(abs, sol2[u(t, x, y)] - alg2[u(t, x, y)]) <= 1.0e-7
     end
 
+    @testset "a field with every dof prescribed has no unknowns" begin
+        # Two triangles have no interior node, so v = 1 + x on the whole boundary prescribes all of v.
+        # u* = (1 + x) t solves u_t = Δu + v with the Neumann data ∂ₙu = ∓t on the left and right.
+        Ω1 = MeshDomain(rectangle_grid(Triangle, (1, 1)))
+        Γl1, Γr1, Γb1, Γt1 = pieces(Ω1)
+        Dn(Γ) = NormalDerivative(Γ)
+        parabolic = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + v(t, x, y)
+        algebraic = 0 ~ Dx(Dx(v(t, x, y))) + Dy(Dy(v(t, x, y)))
+        bcs1 = [
+            Dn(Γl1)(u(t, Γl1)) ~ -t; Dn(Γr1)(u(t, Γr1)) ~ t; Dn(Γb1)(u(t, Γb1)) ~ 0; Dn(Γt1)(u(t, Γt1)) ~ 0;
+            [v(t, Γ) ~ 1 + x for Γ in pieces(Ω1)]; u(0, x, y) ~ 0
+        ]
+        sol1, prob1 = eliminated(
+            [parabolic, algebraic], bcs1, Ω1, (x, y), t, [u(t, x, y), v(t, x, y)]; pairing = Dict(algebraic => v)
+        )
+        @test SciMLBase.successful_retcode(sol1)
+        @test length(prob1.u0) == 4
+        @test [f.unknown === nothing for f in sol1.disc_data.fields] == [false, true]
+        @test nodal_error(sol1, u(t, x, y), (t_, x_, y_) -> (1 + x_) * t_) <= tol
+        @test nodal_error(sol1, v(t, x, y), (t_, x_, y_) -> 1 + x_) <= 1.0e-14
+        @test size(sol1[v(t, x, y)]) == size(sol1[u(t, x, y)])
+        # With every dof prescribed there is nothing left to integrate.
+        @test_throws ArgumentError(
+            "dirichlet = :eliminate leaves no unknowns because every dof is prescribed; use the default dirichlet = :algebraic"
+        ) eliminated([eq], [[u(t, Γ) ~ 1 + x for Γ in pieces(Ω1)]; u(0, x, y) ~ 1 + x], Ω1, (x, y), t, [u(t, x, y)])
+    end
+
     @testset "time-dependent Dirichlet data are rejected" begin
         td = [u(t, Γl) ~ 1 + x; u(t, Γr) ~ (2 + x) * (1 + t); [u(t, Γ) ~ 1 + x for Γ in (Γb, Γt)]; u(0, x, y) ~ 1 + x]
         @named pdesys = PDESystem([eq], td, [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])

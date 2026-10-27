@@ -175,8 +175,10 @@ end
 
 Restrict `ops` to its free dofs `fr` (spec §7.3): `M[fr, fr]`, `K[fr, fr]` and the load
 `F[fr] - K[fr, cd] g` for the prescribed dofs `cd`. The Dirichlet data `g` must be constant in
-time, so `g' = 0` and the term `M[fr, cd] g'` vanishes; time-dependent data throw an `ArgumentError`.
-The field ranges of `reduced` count free dofs only; `full_state(elimination, u_free)` rebuilds
+time, so `g' = 0` and the term `M[fr, cd] g'` vanishes; time-dependent data, and operators
+with every dof prescribed, throw an `ArgumentError`.
+The field ranges of `reduced` count free dofs only, and a field whose dofs are all prescribed
+is left out of them; `full_state(elimination, u_free)` rebuilds
 the full dof vector with `u[cd] = g`.
 """
 function eliminate_dirichlet(ops::FEMOperators)
@@ -187,14 +189,20 @@ function eliminate_dirichlet(ops::FEMOperators)
     isfree = trues(n)
     isfree[ops.prescribed] .= false
     free = findall(isfree)
+    isempty(free) && throw(
+        ArgumentError("dirichlet = :eliminate leaves no unknowns because every dof is prescribed; use the default dirichlet = :algebraic")
+    )
     g = dirichlet_values!(zeros(length(ops.prescribed)), F, 0.0)
     Kg = ops.K[free, ops.prescribed] * g
     load = F.load isa AbstractVector ? F.load[free] - Kg :
         (out, t) -> (out .= view(F.load(zeros(n), t), free) .- Kg; out)
     stop = 0
-    fields = map(ops.fields) do (name, r)
-        start, stop = stop + 1, stop + count(view(isfree, r))
-        name => start:stop
+    fields = Pair{Symbol, UnitRange{Int}}[]
+    for (name, r) in ops.fields
+        nfree = count(view(isfree, r))
+        # A field with every dof prescribed has no unknowns; MTK rejects an empty array unknown.
+        nfree == 0 || push!(fields, name => (stop + 1):(stop + nfree))
+        stop += nfree
     end
     reduced = FEMOperators(ops.M[free, free], ops.K[free, free], load, fields)
     return reduced, DirichletElimination(n, free, ops.prescribed, g)
