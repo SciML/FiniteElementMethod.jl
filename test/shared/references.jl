@@ -62,17 +62,31 @@ if PDEBASE_MESH
     PDEBase.meshdim(m::FacetSetMesh) = m.dim
     PDEBase.facetset_names(m::FacetSetMesh) = Tuple(m.names)
 
-    # A mesh discretization that stops `symbolic_discretize` once the boundary map is parsed and keeps it.
     struct MeshDiscretization <: PDEBase.AbstractMeshDiscretization
         time::Any
         captured::Base.RefValue{Any}
     end
     PDEBase.get_time(d::MeshDiscretization) = d.time
-    struct BoundaryMapReady <: Exception end
-    function PDEBase.check_boundarymap(bmap, v::PDEBase.VariableMap, d::MeshDiscretization)
-        d.captured[] = (bmap, v)
-        throw(BoundaryMapReady())
+    # Without `parsed_boundary_map` (PDEBase#155), stop `symbolic_discretize` once the boundary map is parsed.
+    if !isdefined(PDEBase, :parsed_boundary_map)
+        struct BoundaryMapReady <: Exception end
+        function PDEBase.check_boundarymap(bmap, v::PDEBase.VariableMap, d::MeshDiscretization)
+            d.captured[] = (bmap, v)
+            throw(BoundaryMapReady())
+        end
     end
+end
+
+# The parsed boundary map and variable map of a mesh system, with the system analyse should read.
+function parsed_mesh_system(sys, disc)
+    isdefined(PDEBase, :parsed_boundary_map) && return PDEBase.parsed_boundary_map(sys, disc)
+    try
+        SciMLBase.symbolic_discretize(sys, disc)
+    catch err
+        err isa BoundaryMapReady || rethrow()
+    end
+    boundarymap, v = disc.captured[]
+    return (; boundarymap, v, pdesys = sys)
 end
 
 # The `MeshDomain` whose pieces are `names` (default: the grid's facet sets), for the `Ω` keyword of `analyse`.
@@ -85,14 +99,8 @@ function mesh_analyse(eqs, bcs; Ω, depvars, t, sivs, params = [], ibp = Dict())
     SF = PDEBase.StrongForm
     domains = [Tuple(sivs) ∈ Ω, t ∈ DomainSets.ClosedInterval(0.0, 1.0)]
     sys = ModelingToolkit.PDESystem(eqs, bcs, domains, [t; sivs], depvars, params; name = :sys)
-    disc = MeshDiscretization(t, Ref{Any}(nothing))
-    try
-        SciMLBase.symbolic_discretize(sys, disc)
-    catch err
-        err isa BoundaryMapReady || rethrow()
-    end
-    bmap, v = disc.captured[]
-    an = SF.analyse(sys, v, bmap; ibp)
+    parsed = parsed_mesh_system(sys, MeshDiscretization(t, Ref{Any}(nothing)))
+    an = SF.analyse(parsed.pdesys, parsed.v, parsed.boundarymap; ibp)
     name(piece) = string(piece.name)
     return SF.StrongFormAnalysis{Any}(
         an.slots, an.nfields, an.dim, an.strong, an.mass, an.flux, an.remainder, an.conormal,

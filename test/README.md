@@ -27,12 +27,15 @@ Never commit a Project or Manifest that points at one. Two revisions of xtalax-d
 
 - `80715ae` (`forge/strongform`, SciML/PDEBase.jl#148 and #149): box-face boundary conditions, fields in declared
   order, conditions in input order. The mesh-piece rows stay `@test_broken`.
-- `f14989d` (`forge/m0-all`, the whole M0 stack including #154): also the mesh-piece rows.
+- `f14989d` (`forge/m0-all`, the whole M0 stack including #154): also the mesh-piece rows. The tests stop
+  `symbolic_discretize` at the parsed boundary map to get it.
+- `093bbfc` (`forge/boundarymap-accessor`, PDEBase#155 on top of `f14989d`): the same rows, with the boundary map
+  from the public `PDEBase.parsed_boundary_map`.
 
 From the repository root, with `rev` one of those:
 
 ```sh
-rev=f14989d
+rev=093bbfc
 env=$(mktemp -d)
 julia --project="$env" -e "using Pkg
     Pkg.develop(path = \".\")
