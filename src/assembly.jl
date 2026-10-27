@@ -195,6 +195,7 @@ function _split(ctx::AssemblyContext{NF}, kernels, kinds) where {NF}
             throw(ArgumentError("$(k.kind) kernel of equation $(k.eq) has no f: pass f, or coeffs for a linear kind"))
     end
     selected = [k for k in kernels if k.kind in kinds]
+    any(_needs_hessians, selected) && _check_hessians(ctx, selected)
     volume = _fuse([k for k in selected if k.piece === nothing])
     pieces = unique(k.piece for k in selected if k.piece !== nothing)
     groups = map(pieces) do piece
@@ -202,6 +203,26 @@ function _split(ctx::AssemblyContext{NF}, kernels, kinds) where {NF}
         (ctx.facetsets[piece], _fuse([k for k in selected if isequal(k.piece, piece)]), piece)
     end
     return volume, Tuple(groups)
+end
+
+# Bilinear `CellCoeffs` contract the shape-function Hessians of the fields in `coeffs.fields`, which Ferrite has only
+# when those fields' values were built with `update_hessians = true` (otherwise `shape_hessian` has no method).
+_needs_hessians(k) = k.kind === :bilinear && k.coeffs isa CellCoeffs
+function _check_hessians(ctx, kernels)
+    for k in kernels
+        _needs_hessians(k) || continue
+        values, what = k.piece === nothing ? (ctx.cellvalues, "CellValues") : (ctx.facetvalues, "FacetValues")
+        for b in k.coeffs.fields
+            f = ctx.fields[b]
+            try
+                Ferrite.shape_hessian(values[f], 1, 1)
+            catch err
+                err isa MethodError || rethrow()
+                throw(ArgumentError("a stabilised (SUPG) kernel needs the shape-function Hessians of field $f: build its $what with update_hessians = true"))
+            end
+        end
+    end
+    return nothing
 end
 
 """
@@ -387,8 +408,53 @@ function _state_block!(Ae, row, cols, tU, tG::NTuple{DIM, Any}, vb, q, dΩ) wher
     return nothing
 end
 
-_coeffs(::Nothing, args...) = nothing
-_coeffs(c, args...) = c(args...)
+# The block's bilinear coefficient function selects the variant: `CellCoeffs` adds the Hessian trial slots, every
+# other one is the [U; G] row above.
+_state_row!(Ae, row, ranges, tt, vals, q, dΩ, c, ::Val) = _state_row!(Ae, row, ranges, tt, vals, q, dΩ)
+function _state_row!(Ae, row, ranges::NTuple{NF}, tt, vals, q, dΩ, ::CellCoeffs, dim::Val) where {NF}
+    return _fields!(_hessian_state_block!, Val(NF), Ae, row, ranges, tt, vals, q, dΩ, dim)
+end
+
+# Trial slots [U; G; H] of field B: adds Σ_{d,e} tt[H_Bde] ∂_d∂_e φ_j with field B's shape Hessians, H field-major in
+# the slot order of `H`; a field whose Hessian coefficients are all structural zeros never evaluates its Hessians.
+@inline function _hessian_state_block!(::Val{B}, Ae, row, ranges::NTuple{NF}, tt, vals, q, dΩ, ::Val{DIM}) where {B, NF, DIM}
+    tG = ntuple(@inline(d -> tt[NF + (B - 1) * DIM + d]), Val(DIM))
+    tH = ntuple(@inline(m -> tt[NF * (1 + DIM) + (B - 1) * DIM^2 + m]), Val(DIM^2))
+    return _hessian_block!(Ae, row, ranges[B], tt[B], tG, tH, vals[B], q, dΩ)
+end
+function _hessian_block!(Ae, row, cols, tU, tG::NTuple{DIM, Any}, ::Tuple{Vararg{StructuralZero}}, vb, q, dΩ) where {DIM}
+    return _state_block!(Ae, row, cols, tU, tG, vb, q, dΩ)
+end
+function _hessian_block!(Ae, row, cols, tU, tG::NTuple{DIM, Any}, tH, vb, q, dΩ) where {DIM}
+    for j in eachindex(cols)
+        χ = _test_basis(vb, q, j)
+        Hφ = Ferrite.shape_hessian(vb, q, j)
+        value = tU * χ[1] + _sum(ntuple(@inline(d -> tG[d] * χ[1 + d]), Val(DIM))) +
+            _sum(ntuple(@inline(m -> tH[m] * Hφ[cld(m, DIM), mod1(m, DIM)]), Val(DIM^2)))
+        _add!(Ae, row, cols[j], value, dΩ)
+    end
+    return nothing
+end
+
+_coeffs(::Nothing, X, t, N, p, hK) = nothing
+_coeffs(c, X, t, N, p, hK) = c(X, t, N, p)
+_coeffs(c::CellCoeffs, X, t, N, p, hK) = c.f(X, t, N, p, hK)
+
+# The element size `hK` (the cell diameter) when a coefficient function of the block needs it; otherwise a constant,
+# so the Galerkin blocks compute nothing.
+_needs_size(c) = c isa CellCoeffs
+_cell_size(blk, xs) = _needs_size(blk.mass) || _needs_size(blk.bilinear) || _needs_size(blk.source) ? _diameter(xs) : 0.0
+function _diameter(xs)
+    h = 0.0
+    for i in eachindex(xs), j in (i + 1):lastindex(xs)
+        h = max(h, sqrt(sum(abs2, xs[i] - xs[j])))
+    end
+    return h
+end
+
+# Trial slots of a bilinear block: `[U; G]`, or `[U; G; H]` for `CellCoeffs`, with `NW = 1 + dim` test slots.
+_state_count(c, ::Val{NF}, ::NTuple{NW}) where {NF, NW} = Val(NF * NW)
+_state_count(::CellCoeffs, ::Val{NF}, ::NTuple{NW}) where {NF, NW} = Val(NF * (NW + (NW - 1)^2))
 _trial_coeffs(::Nothing, ψ::NTuple{NW}, ::Val{NS}) where {NW, NS} = nothing
 _test_contract(::Nothing, ψ::NTuple{NW}) where {NW} = StructuralZero()
 
@@ -396,16 +462,18 @@ function _kernel!(op::LinearOp, blk::LinearBlock, ::Val{E}, vals, xs, ranges::NT
     rows = ranges[E]
     isempty(rows) && return nothing
     ve = vals[E]
+    hK = _cell_size(blk, xs)
     for q in 1:Ferrite.getnquadpoints(ve)
         dΩ = Ferrite.getdetJdV(ve, q)
         X = Ferrite.spatial_coordinate(ve, q, xs)
         N = _normal(ve, q, X)
-        cM, cK, cF = _coeffs(blk.mass, X, t, N, p), _coeffs(blk.bilinear, X, t, N, p), _coeffs(blk.source, X, t, N, p)
+        cM, cK, cF = _coeffs(blk.mass, X, t, N, p, hK), _coeffs(blk.bilinear, X, t, N, p, hK), _coeffs(blk.source, X, t, N, p, hK)
         for i in eachindex(rows)
             ψ = _test_basis(ve, q, i)
             op.Fe[rows[i]] -= _test_contract(cF, ψ) * dΩ
             _mass_row!(op.Me, rows[i], ranges, _trial_coeffs(cM, ψ, Val(NF)), vals, q, dΩ)
-            _state_row!(op.Ke, rows[i], ranges, _trial_coeffs(cK, ψ, Val(NF * length(ψ))), vals, q, dΩ)
+            tt = _trial_coeffs(cK, ψ, _state_count(blk.bilinear, Val(NF), ψ))
+            _state_row!(op.Ke, rows[i], ranges, tt, vals, q, dΩ, blk.bilinear, Val(length(ψ) - 1))
         end
     end
     return nothing

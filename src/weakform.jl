@@ -128,24 +128,89 @@ end
 flags(ex, slots) = (timedep = depends(ex, [slots.T]), paramdep = depends(ex, slots.P))
 
 """
-    weak_form(analysis; test = TestSlots(analysis.dim))
+    AbstractTestSpace
 
-Galerkin projection of a strong-form analysis: equation `e` contributes `mass[e]·V` (kind `:mass`),
-the integrated-by-parts volume integrand `−G·W + R·V`, and `Φ·V` on each natural condition's piece.
+How `weak_form` tests each equation (spec §1 goal 4, §5.2): [`Galerkin`](@ref) or [`SUPG`](@ref).
 """
-function weak_form(analysis; test = TestSlots(analysis.dim))
+abstract type AbstractTestSpace end
+
+"Galerkin testing: equation `e` is tested with the test function `v` of its paired field."
+struct Galerkin <: AbstractTestSpace end
+
+"""
+    SUPG(τ; b = nothing)
+
+Streamline-upwind Petrov–Galerkin testing: the Galerkin form plus `τ (b·∇v)` times the strong residual on every
+cell, with the mass term tested by `v + τ b·∇v` too. `b` is the advection velocity, by default read from the
+analysis as the coefficient of the equation's own gradient in its remainder, `b_d = ∂R/∂(∂_d u)`, which must be
+free of the state (otherwise pass `b`, a vector of numbers or expressions). `τ` is a number, an expression, or a
+function `τ(hK, b)` of the element size `hK` and `b`, e.g. `(hK, b) -> hK / (2 * sqrt(sum(abs2, b)))`.
+Boundary terms stay Galerkin. The stabilised terms need the Hessian slots `H` and `hK`, so the driver's
+`CellValues` must be built with `update_hessians = true`.
+"""
+struct SUPG{T, B} <: AbstractTestSpace
+    τ::T
+    b::B
+end
+SUPG(τ; b = nothing) = SUPG(τ, b)
+
+# The extra test weight of a test space for equation `e` as `(τ, b·W)`, so the weight is `τ (b·W)`; `nothing` for
+# Galerkin. `τ` is kept apart because it may hold a quotient that `expand` does not distribute (e.g. `hK / |b|`), so
+# terms are classified without it and scaled by it afterwards; it is free of the state and of the test slots.
+test_weight(::Galerkin, analysis, e, test) = nothing
+function test_weight(space::SUPG, analysis, e, test)
+    b = map(fold, space.b === nothing ? advection(analysis, e) : space.b)
+    τ = space.τ isa Function ? space.τ(test.hK, b) : space.τ
+    depends(Num(τ), [state_slots(analysis.slots); test.V; test.W]) &&
+        throw(ArgumentError("SUPG: τ = $τ depends on the state or the test function"))
+    return τ, sum(b[d] * test.W[d] for d in 1:(analysis.dim))
+end
+
+# A constant expression as a number, so `sqrt(sum(abs2, b))` of a constant `b` folds.
+function fold(x)
+    v = Symbolics.unwrap(x)
+    return SU.isconst(v) ? Float64(SU.unwrap_const(v)) : x
+end
+
+function advection(analysis, e)
+    slots, dim = analysis.slots, analysis.dim
+    b = [Symbolics.derivative(analysis.remainder[e], slots.G[(e - 1) * dim + d]) for d in 1:dim]
+    any(bd -> depends(bd, state_slots(slots)), b) && throw(
+        ArgumentError(
+            "SUPG: the advection velocity ∂R/∂∇u of equation $e is $b, which depends on the state; pass SUPG(τ; b = ...)"
+        )
+    )
+    return b
+end
+
+"""
+    weak_form(analysis; test = TestSlots(analysis.dim), test_space = Galerkin())
+
+Projection of a strong-form analysis: equation `e` contributes `mass[e]·V` (kind `:mass`), the integrated-by-parts
+volume integrand `−G·W + R·V`, and `Φ·V` on each natural condition's piece. With [`SUPG`](@ref), the volume
+integrand gains `τ (b·W)(strong[e] − mass[e])` and the mass term `mass[e]·τ (b·W)`.
+"""
+function weak_form(analysis; test = TestSlots(analysis.dim), test_space::AbstractTestSpace = Galerkin())
     slots, V, W = analysis.slots, test.V, test.W
     volume = VolumeTerm[]
     facet = FacetTerm[]
     for e in eachindex(analysis.flux)
         m = analysis.mass[e]
+        weight = test_weight(test_space, analysis, e, test)
         if !isequal(m, 0)
-            push!(volume, VolumeTerm(e, :mass, m * V, flags(m, slots)...))
+            mass = weight === nothing ? m * V : m * V + weight[1] * m * weight[2]
+            push!(volume, VolumeTerm(e, :mass, mass, flags(mass, slots)...))
         end
         G = analysis.flux[e]
         integrand = -sum(G[d] * W[d] for d in eachindex(G)) + analysis.remainder[e] * V
         for c in classify(integrand, slots, test)
             push!(volume, VolumeTerm(e, c.kind, c.integrand, c.timedep, c.paramdep))
+        end
+        weight === nothing && continue
+        τ, bW = weight
+        for c in classify(bW * (analysis.strong[e] - m), slots, test)
+            stabilised = τ * c.integrand
+            push!(volume, VolumeTerm(e, c.kind, stabilised, flags(stabilised, slots)...))
         end
     end
     for bc in analysis.natural

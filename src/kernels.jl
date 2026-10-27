@@ -60,6 +60,23 @@ Base.:*(::StructuralZero, ::Number) = StructuralZero()
 Base.:*(::Number, ::StructuralZero) = StructuralZero()
 Base.:*(::StructuralZero, ::StructuralZero) = StructuralZero()
 
+"""
+    CellCoeffs(f, fields)
+
+A `coeffs` function that needs the element: called as `f(X, T, N, P, hK)` with the element size `hK`, and for a
+`:bilinear` kernel its trial slots are `[U; G; H]`, with the Hessian slots `H` contracted with the shape-function
+Hessians of each field. `fields` lists the fields whose Hessian slots the coefficients use, whose values must
+therefore carry Hessians. Built for the stabilised terms of [`SUPG`](@ref); plain `coeffs` keep `(X, T, N, P)` and
+`[U; G]`.
+"""
+struct CellCoeffs{F, N}
+    f::F
+    fields::NTuple{N, Int}
+end
+
+# The Hessian slots of a slot set, empty when it has none.
+hessian_slots(s) = hasproperty(s, :H) && s.H !== nothing ? collect(Num, s.H) : Num[]
+
 # A tuple-valued function of `slots`, allocation-free with `Vec` and tuple arguments. Constant entries are
 # compiled as `Float64`, constant zeros as `zero`.
 function compile_tuple(exs, slots; zero = 0.0, expression = Val(false))
@@ -85,13 +102,16 @@ which case the kernel keeps the per-shape-function `f`. It is `nothing` when
   function (measured on case (iii), 1.43× against 1.20× of hand-written);
 - `ex` is not the sum of its coefficients times the trial and test slots, e.g. a term with a part free of the
   trial slots or of the test slots, or one nonlinear in them;
-- a coefficient depends on a trial or test slot, i.e. on `U`, `G`, `Ud`, `V` or `W`.
-Terms built by `weak_form` always have a coefficient form; the fallback serves hand-built integrands.
+- a coefficient depends on a trial or test slot, i.e. on `U`, `G`, `Ud`, `H`, `V` or `W`.
+Terms built by `weak_form` always have a coefficient form; the fallback serves hand-built integrands. A term with
+the Hessian slots `H` or the element size `hK` (the stabilised terms of `SUPG`) gets a [`CellCoeffs`](@ref).
 """
 function compile_coeffs(kind, ex, s, test; expression = Val(false))
     kind === :nonlinear && return nothing
     w = [test.V; test.W]
-    trial = kind === :mass ? s.Ud : [s.U; s.G]
+    H = hessian_slots(s)
+    cell = depends(ex, [H; test.hK])
+    trial = kind === :mass ? s.Ud : cell ? [s.U; s.G; H] : [s.U; s.G]
     first_order = [checked_derivative(ex, wi) for wi in w]
     if kind === :source
         exs = first_order
@@ -101,8 +121,11 @@ function compile_coeffs(kind, ex, s, test; expression = Val(false))
         linear = sum(exs .* [si * wi for si in trial for wi in w])
     end
     isequal(Symbolics.expand(ex - linear), 0) || return nothing
-    any(e -> depends(e, [s.U; s.G; s.Ud; w]), exs) && return nothing
-    return compile_tuple(exs, (s.X, s.T, s.N, s.P); zero = StructuralZero(), expression)
+    any(e -> depends(e, [s.U; s.G; s.Ud; H; w]), exs) && return nothing
+    cell || return compile_tuple(exs, (s.X, s.T, s.N, s.P); zero = StructuralZero(), expression)
+    dim2 = length(s.X)^2
+    fields = Tuple(b for b in eachindex(s.U) if depends(ex, H[((b - 1) * dim2 + 1):min(b * dim2, length(H))]))
+    return CellCoeffs(compile_tuple(exs, (s.X, s.T, s.N, s.P, test.hK); zero = StructuralZero(), expression), fields)
 end
 
 # `f` is compiled only when the driver will call it: without `coeffs`, or for `:nonlinear` terms.
@@ -111,6 +134,11 @@ function kernel(eq, kind, piece, integrand, wf::WeakForm; coeffs = true, express
     s = wf.analysis.slots
     assert_differentiated(integrand)
     c = coeffs ? compile_coeffs(kind, integrand, s, wf.test; expression) : nothing
+    c === nothing && depends(integrand, [hessian_slots(s); wf.test.hK]) && throw(
+        ArgumentError(
+            "the $kind term $integrand of equation $eq needs the Hessian slots or the element size, which only the coefficient form of a linear kind provides: SUPG supports linear terms only"
+        )
+    )
     tangent = kind === :nonlinear ? compile_tangent(integrand, s, slots; expression) : nothing
     f = c === nothing ? compile(integrand, slots; expression) : nothing
     return KernelSpec(eq, kind, piece, f, tangent, c)

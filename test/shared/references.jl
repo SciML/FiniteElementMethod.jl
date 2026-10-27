@@ -8,7 +8,7 @@
 # K = ∫ κ∇u·∇v + (β·∇u) v + c u v + ∮ a u v,  M = ∫ m u v,  F = ∫ f v + ∮ g v.
 
 using FiniteElementMethod: weak_form, emit_kernels, emit_dirichlet, AssemblyContext, assemble_linear,
-    assemble_nonlinear
+    assemble_nonlinear, Galerkin
 using Ferrite
 using LinearAlgebra
 using Random
@@ -52,22 +52,23 @@ const SHAPES = Dict(
 )
 const FACETSETS = Dict(1 => ("left", "right"), 2 => ("left", "right", "bottom", "top"))
 
-#     mesh_setup(celltype, order, nel; fields = [:u], corners = ())
+#     mesh_setup(celltype, order, nel; fields = [:u], corners = (), hessians = false)
 #
 # A Ferrite grid (`generate_grid`, so `[−1, 1]^dim` unless `corners` is given), a `DofHandler` with one Lagrange
 # field of `order` per name in `fields`, quadrature of order `2·order` (spec §5.6), and the `AssemblyContext` with
-# every facet set of the grid as a piece keyed by its own name.
-function mesh_setup(celltype, order, nel; fields = [:u], corners = ())
+# every facet set of the grid as a piece keyed by its own name. `hessians = true` builds the `CellValues` with shape
+# Hessians, which SUPG kernels need.
+function mesh_setup(celltype, order, nel; fields = [:u], corners = (), hessians = false)
     dim = celltype === Line ? 1 : 2
     grid = generate_grid(celltype, ntuple(_ -> nel, dim), corners...)
-    return grid_setup(grid, order, FACETSETS[dim]; fields)
+    return grid_setup(grid, order, FACETSETS[dim]; fields, hessians)
 end
 
-#     grid_setup(grid, order, sets; fields = [:u])
+#     grid_setup(grid, order, sets; fields = [:u], hessians = false)
 #
 # As `mesh_setup` for a given grid, with the facet sets `sets` as pieces. The values use the grid's own geometric
 # interpolation (spec §6.2), so a grid of quadratic cells is mapped isoparametrically.
-function grid_setup(grid, order, sets; fields = [:u])
+function grid_setup(grid, order, sets; fields = [:u], hessians = false)
     celltype = getcelltype(grid)
     dim = Ferrite.getspatialdim(grid)
     shape = SHAPES[celltype]
@@ -77,7 +78,7 @@ function grid_setup(grid, order, sets; fields = [:u])
         add!(dh, f, ip)
     end
     close!(dh)
-    cv = CellValues(QuadratureRule{shape}(2order), ip, ip_geo)
+    cv = CellValues(QuadratureRule{shape}(2order), ip, ip_geo; update_hessians = hessians)
     fv = FacetValues(FacetQuadratureRule{shape}(2order), ip, ip_geo)
     ctx = AssemblyContext(dh, fields, cv, fv, Dict(s => s for s in sets))
     return (; grid, dh, cv, fv, ctx, fields, dim, order)
@@ -111,12 +112,12 @@ function quarter_annulus(n; quadratic)
     return grid
 end
 
-#     chain(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict())
+#     chain(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict(), test_space = Galerkin())
 #
 # The whole M1 chain: `analyse` (the seam), `weak_form`, `emit_kernels` and `emit_dirichlet`.
-function chain(eqs, bcs; ibp = Dict(), kwargs...)
+function chain(eqs, bcs; ibp = Dict(), test_space = Galerkin(), kwargs...)
     an = analyse(eqs, bcs; ibp, kwargs...)
-    wf = weak_form(an)
+    wf = weak_form(an; test_space)
     return (; an, wf, kernels = emit_kernels(wf), dirichlet = emit_dirichlet(an))
 end
 
