@@ -196,35 +196,15 @@ function _dirichlet_values(space, dirichlet, coords, pvals, t0)
 end
 
 # Source-only assembly through m1's cell loop: the time-dependent load is re-evaluated at every
-# residual call, where assembling zero M and K blocks would dominate.
-struct SourceOp
-    F::Vector{Float64}
-    Fe::Vector{Float64}
-end
-
-_start_cell!(op::SourceOp, dofs) = (fill!(op.Fe, 0); nothing)
-_finish_cell!(op::SourceOp, dofs) = (Ferrite.assemble!(op.F, dofs, op.Fe); nothing)
-
-function _kernel!(op::SourceOp, k::KernelSpec, vals, xs, ranges::NTuple{NF}, p, t) where {NF}
-    rows = ranges[k.eq]
-    U0 = ntuple(_ -> 0.0, Val(NF))
-    for q in 1:Ferrite.getnquadpoints(vals)
-        dΩ = Ferrite.getdetJdV(vals, q)
-        X = Ferrite.spatial_coordinate(vals, q, xs)
-        G0 = _unit_gradient(Val(NF), 0, zero(X))
-        N = _normal(vals, q, X)
-        for i in 1:Ferrite.getnbasefunctions(vals)
-            V, W = Ferrite.shape_value(vals, q, i), Ferrite.shape_gradient(vals, q, i)
-            op.Fe[rows[i]] -= k.f(U0, G0, U0, V, W, X, t, N, p) * dΩ
-        end
-    end
-    return nothing
-end
+# residual call, where assembling zero M and K blocks would dominate. A `LinearOp` without M and K
+# assemblers only scatters `Fe`.
+_finish_cell!(op::LinearOp{Nothing, Nothing}, dofs) = (Ferrite.assemble!(op.F, dofs, op.Fe); nothing)
 
 "Write `F = −∫source` of the `:source` kernels at time `t` into `F`."
-function assemble_sources!(F, ctx::AssemblyContext{NF}, kernels, p, t) where {NF}
+function assemble_sources!(F, ctx::AssemblyContext, kernels, p, t)
     fill!(F, 0)
-    op = SourceOp(F, zeros(NF * Ferrite.getnbasefunctions(ctx.cv)))
+    ne = _max_ndofs(ctx.dh)
+    op = LinearOp(nothing, nothing, F, zeros(ne, ne), zeros(ne, ne), zeros(ne))
     _assemble!(op, ctx, _split(ctx, kernels, (:source,))..., p, t)
     return F
 end
@@ -232,7 +212,9 @@ end
 # `reinit!` mutates CellValues and FacetValues, so each load evaluation gets its own copies and
 # concurrent solves of one problem's remakes share no mutable state.
 function _fresh_values(ctx::AssemblyContext{NF, DH, CV, FV}) where {NF, DH, CV, FV}
-    return AssemblyContext{NF, DH, CV, FV}(ctx.dh, ctx.fields, copy(ctx.cv), copy(ctx.fv), ctx.facetsets)
+    return AssemblyContext{NF, DH, CV, FV}(
+        ctx.dh, ctx.fields, map(copy, ctx.cellvalues), map(copy, ctx.facetvalues), ctx.facetsets, ctx.facetcells
+    )
 end
 
 function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
@@ -241,7 +223,7 @@ function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
     static = Tuple(k for (k, td) in zip(kernels, timedep) if !td)
     dynamic = Tuple(k for (k, td) in zip(kernels, timedep) if td)
     pieces = Dict(bc.piece => space.pieces[bc.piece.name] for bc in wf.analysis.natural)
-    ctx = AssemblyContext(space.dh, space.fields, first(space.cellvalues), first(space.facetvalues), pieces)
+    ctx = AssemblyContext(space.dh, space.fields, space.cellvalues, space.facetvalues, pieces)
     n = Ferrite.ndofs(space.dh)
     M, K, F = copy(space.pattern), copy(space.pattern), zeros(n)
     assemble_linear!(M, K, F, ctx, static, pvals; t = t0)

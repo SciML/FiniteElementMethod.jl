@@ -5,21 +5,6 @@ PDEBase.cellset_names(grid::Ferrite.Grid) = _cellset_names(grid)
 PDEBase.contains_point(grid::Ferrite.Grid, x) = _contains_point(grid, x)
 
 """
-    AbstractTestSpace
-
-Supertype of the test-function choices of a [`FEMDiscretization`](@ref).
-"""
-abstract type AbstractTestSpace end
-
-"""
-    Galerkin()
-
-Bubnov–Galerkin testing: every equation is tested with the space of its paired field.
-The default, and the only test space before SUPG lands.
-"""
-struct Galerkin <: AbstractTestSpace end
-
-"""
     FEMDiscretization(Ω::MeshDomain, t = nothing; spaces = Dict(), quadrature = nothing,
         test_space = Galerkin(), ibp = Dict(), pairing = Dict(), codegen = :numeric,
         dirichlet = :algebraic, kwargs...)
