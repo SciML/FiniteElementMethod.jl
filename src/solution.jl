@@ -546,7 +546,7 @@ function _observed_leaves!(terms, params, A, dv, ex)
         terms[ex] = :field
     elseif SymbolicUtils.issym(ex) || SymbolicUtils.issym(SymbolicUtils.operation(ex))
         # The front end requires a numeric value for every parameter of the PDESystem.
-        ps = md.pdesys === nothing ? [] : md.pdesys.ps
+        ps = md.pdesys === nothing || md.pdesys.ps isa SciMLBase.NullParameters ? [] : md.pdesys.ps
         i = findfirst(p -> p isa Pair && isequal(Symbolics.unwrap(p.first), ex), ps)
         i === nothing && _observed_error(
             dv, "$ex is not a dependent variable, an independent variable or a parameter; the dependent variables are $(join(A.dvs, ", ")) and the independent variables $(join(A.ivs, ", "))"

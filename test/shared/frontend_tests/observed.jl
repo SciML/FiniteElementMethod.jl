@@ -134,6 +134,23 @@ observed_error(ex, why) = ArgumentError("cannot evaluate the expression $ex on t
         @test_throws observed_error(U * z(t, x, y), "z(t, x, y) is not a dependent variable, an independent variable or a parameter; the dependent variables are $dvs2 and the independent variables t, x, y") sol2[U * z(t, x, y)]
     end
 
+    @testset "a PDESystem without parameters" begin
+        # Through the front end with ps = []; a PDESystem built without ps carries NullParameters,
+        # checked on the same solution rewrapped with such a system.
+        sol0, _ = fem_solve([heat_eq], heat_bcs(Ω), Ω, (x, y), t, [u(t, x, y)])
+        @test sol0[U^2 + x] ≈ sol0[U] .^ 2 .+ X atol = 1.0e-12
+        unknown_k = observed_error(U + k, "k is not a dependent variable, an independent variable or a parameter; the dependent variables are u(t, x, y) and the independent variables t, x, y")
+        @test_throws unknown_k sol0[U + k]
+        @named bare = PDESystem([heat_eq], heat_bcs(Ω), [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [U])
+        @test bare.ps isa SciMLBase.NullParameters
+        md = sol0.disc_data
+        md0 = FiniteElementMethod.FEMMetadata(md.space, md.time, md.x̄, md.fields, md.pieces, bare; u0 = md.u0)
+        rewrapped = SciMLBase.PDETimeSeriesSolution(sol0.original_sol, md0)
+        @test rewrapped[U^2 + x] == sol0[U^2 + x]
+        @test_throws unknown_k rewrapped[U + k]
+        @test_throws unknown_k rewrapped(0.5, 0.3, 0.2; dv = U + k)
+    end
+
     @testset "time-last fields" begin
         UL = u(x, y, t)
         eq = Dt(UL) ~ Dx(Dx(UL)) + Dy(Dy(UL)) + (1 + x + 2y)
