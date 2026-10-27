@@ -144,18 +144,18 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
     end
 
     @testset "Gmsh mesh and generated grid give the same exact solution" begin
-        ue(t_, x_, y_) = (1 + x_) * (1 + t_)
+        u_exact(t_, x_, y_) = (1 + x_) * (1 + t_)
         eq = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + (1 + x)
         gmsh_Ω = MeshDomain(lshape_grid(; h = 0.5))
         Γi, Γw, Γo = boundarypiece.(gmsh_Ω, (:inlet, :wall, :outlet))
         bcs = [u(t, Γi) ~ 1 + t, u(t, Γw) ~ (1 + x) * (1 + t), NormalDerivative(Γo)(u(t, Γo)) ~ 1 + t, u(0, x, y) ~ 1 + x]
         sol, _ = fem_solve([eq], bcs, gmsh_Ω, (x, y), t, [u(t, x, y)])
-        @test nodal_error(sol, u(t, x, y), ue) <= tol
+        @test nodal_error(sol, u(t, x, y), u_exact) <= tol
         box = MeshDomain(rectangle_grid(Triangle, (4, 4); hi = (2.0, 2.0)))
         Γl, Γr, Γb, Γt = pieces(box)
         bcs = [u(t, Γl) ~ 1 + t, u(t, Γb) ~ (1 + x) * (1 + t), u(t, Γt) ~ (1 + x) * (1 + t), NormalDerivative(Γr)(u(t, Γr)) ~ 1 + t, u(0, x, y) ~ 1 + x]
         sol, _ = fem_solve([eq], bcs, box, (x, y), t, [u(t, x, y)])
-        @test nodal_error(sol, u(t, x, y), ue) <= tol
+        @test nodal_error(sol, u(t, x, y), u_exact) <= tol
     end
 
     @testset "time-dependent source" begin
