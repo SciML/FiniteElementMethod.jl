@@ -35,3 +35,7 @@ versions = ["lts", "1", "pre"]
 [MOLComparison]
 in_all = false
 versions = ["lts", "1"]
+
+[Library]
+in_all = false
+versions = ["lts", "1"]
