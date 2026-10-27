@@ -217,19 +217,20 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         u_eq = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + (1 + x + 2y)
         # The bottom data for u differ from u* only at the corner (0, 0) it shares with the left piece.
         bump = ifelse(x < 1.0e-9, 5.0, 0.0)
-        u_bcs(bottom_last) = bottom_last ?
-            [u(t, Γl) ~ (1 + 2y) * (1 + t), u(t, Γb) ~ (1 + x) * (1 + t) + bump] :
-            [u(t, Γb) ~ (1 + x) * (1 + t) + bump, u(t, Γl) ~ (1 + 2y) * (1 + t)]
-        for bottom_last in (true, false)
+        left = u(t, Γl) ~ (1 + 2y) * (1 + t)
+        bottom = u(t, Γb) ~ (1 + x) * (1 + t) + bump
+        # (u conditions in input order, corner bump expected); a repeated condition counts at its last position.
+        cases = [([left, bottom], 5), ([bottom, left], 0), ([left, bottom, left], 0)]
+        for (u_bcs, corner_bump) in cases
             bcs = [
-                u_bcs(bottom_last); u(t, Γr) ~ (2 + 2y) * (1 + t); u(t, Γt) ~ (3 + x) * (1 + t);
+                u_bcs; u(t, Γr) ~ (2 + 2y) * (1 + t); u(t, Γt) ~ (3 + x) * (1 + t);
                 [w(t, Γ) ~ (2 - x + y) * (1 + t) for Γ in pieces(Ω)];
                 ic; w(0, x, y) ~ 2 - x + y
             ]
             sol, _ = fem_solve([w_eq, u_eq], bcs, Ω, (x, y), t, [u(t, x, y), w(t, x, y)])
             @test nodal_error(sol, w(t, x, y), we) <= tol
             corner = findfirst(i -> sol[x][i] == 0 && sol[y][i] == 0, eachindex(sol[x]))
-            @test sol[u(t, x, y)][:, corner] ≈ (1 .+ sol.t) .+ (bottom_last ? 5 : 0) atol = tol
+            @test sol[u(t, x, y)][:, corner] ≈ (1 .+ sol.t) .+ corner_bump atol = tol
         end
     end
 

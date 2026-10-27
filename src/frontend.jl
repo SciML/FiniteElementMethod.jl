@@ -106,10 +106,11 @@ function _split_conditions(bcs, v, disc)
     orders = Dict(x => PDEBase.d_orders(x, bcs) for x in PDEBase.all_ivs(v))
     boundarymap = PDEBase.parse_bcs(bcs, v, orders, disc)
     ics, bcmap = PDEBase.split_ics_bcs(boundarymap, v, disc)
-    position(eq) = findfirst(b -> isequal(b, eq), bcs)
-    piecebcs = Pair{Any, Equation}[b.piece => b.eq for bykey in values(bcmap) for bs in values(bykey) for b in bs]
+    # A condition listed twice takes the position of its last occurrence.
+    position(eq) = findlast(b -> isequal(b, eq), bcs)
+    piecebcs = unique(Pair{Any, Equation}[b.piece => b.eq for bykey in values(bcmap) for bs in values(bykey) for b in bs])
     sort!(piecebcs; by = pb -> position(last(pb)))
-    return Equation[b.eq for b in ics], unique(piecebcs)
+    return Equation[b.eq for b in ics], piecebcs
 end
 
 _field_index(ctx, ex) = SymbolicUtils.iscall(ex) ?
