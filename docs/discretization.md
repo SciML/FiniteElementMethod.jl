@@ -40,19 +40,34 @@ small piece (a single facet set), or leave an outflow piece with the natural con
 The pressure is absent from its own rows, so the DAE has index 2. Two things make `DFBDF` step
 it: start from a velocity that is discretely divergence free (zero, with zero Dirichlet data
 at the initial time) and a pressure initial condition, and leave the algebraic rows out of the
-error control with a large `abstol` on them, since the pressure's local error does not shrink
-with the step:
+error control with a large absolute tolerance on them, since the pressure's local error does
+not shrink with the step. `FEMDiscretization` does the second by default: with
+`algebraic_abstol = :auto` it detects an algebraic field absent from its own equation and gives
+the problem the `abstol` vector `1e8` on every algebraic row (the algebraic fields and the
+Dirichlet rows of all fields) and `1e-6` elsewhere:
 
 ```julia
-prob = discretize(pdesys, disc)
-abstol = [d ? 1.0e-8 : 1.0e8 for d in prob.differential_vars]
-sol = solve(prob, DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0)); abstol, reltol = 1.0e-8)
+prob = discretize(pdesys, disc)        # prob.kwargs[:abstol] is the vector
+sol = solve(prob, DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0)); reltol = 1.0e-8)
 ```
 
-Without the `abstol`, the step size collapses near the initial time (`dt` below `eps` at
-`t ≈ 1e-10` on a 16 × 16 Taylor–Hood mesh). When the linear solver then reports the Newton
+A number `abstol` given to `FEMDiscretization` or `discretize` sets the differential rows'
+entries, as in `discretize(pdesys, disc; abstol = 1.0e-8)`; an array is used as it is.
+`algebraic_abstol = 1.0e4` sets another value on the algebraic rows, of any system, and
+`algebraic_abstol = nothing` sets none. An `abstol` passed to `solve` replaces the whole vector
+(SciMLBase merges the problem's keywords first and the `solve` keywords over them), so
+`solve(prob, alg; abstol = 1.0e-8)` puts the algebraic rows back under error control; write the
+vector by hand in that case, `abstol = [d ? 1.0e-8 : 1.0e8 for d in prob.differential_vars]`.
+Systems without an index-2 field, such as `0 ~ Δv + u` paired with `v`, get no `abstol`.
+
+Without the large tolerance, the step size collapses near the initial time (`dt` below `eps`
+at `t ≈ 1e-10` on a 16 × 16 Taylor–Hood mesh). When the linear solver then reports the Newton
 matrix as singular, LinearSolve falls back to a sparse QR factorization, which can take
 minutes and tens of gigabytes on a saddle-point system.
+
+`algebraic_abstol` is not in the spec (§7.1, §7.6 list the `FEMDiscretization` keywords
+without it): it was added after the Taylor–Hood Stokes and DFG cylinder benchmarks needed the
+tolerance in user code every time.
 
 A field can live on part of the mesh: `regions = Dict(w => Region(Ω, :name))` restricts `w`
 to the cell set `name`, through a Ferrite `SubDofHandler`. Outside its region the field has no

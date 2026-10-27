@@ -89,6 +89,11 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         @test_throws ArgumentError("dirichlet = :eliminate lands in M4; use the default dirichlet = :algebraic") FEMDiscretization(
             Ω, t; dirichlet = :eliminate
         )
+        for (value, shown) in ((0, "0"), (-1.0e8, "-1.0e8"), (NaN, "NaN"), ("1e8", "\"1e8\""), (:on, ":on"), ([1.0e8], "[1.0e8]"))
+            @test_throws ArgumentError("algebraic_abstol must be :auto, nothing or a positive number, got $shown") FEMDiscretization(
+                Ω, t; algebraic_abstol = value
+            )
+        end
         @named steady = PDESystem(
             [Dx(Dx(u(x, y))) + Dy(Dy(u(x, y))) ~ 0], [u(Γ) ~ 0 for Γ in sides(Ω)], [(x, y) ∈ Ω], [x, y], [u(x, y)], []
         )

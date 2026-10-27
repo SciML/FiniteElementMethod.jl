@@ -358,7 +358,8 @@ analytic Jacobian and the `FEMMetadata` as its `problem_type`, so `solve` return
 `PDETimeSeriesSolution`. Nothing calls `mtkcompile`; anything this milestone cannot
 discretize raises. Keywords are passed to the `DAEProblem` after `disc.kwargs`, so a keyword
 given here wins; the keywords the discretization sets (`iv`, `unknowns`, `du0`, `coordinate`,
-`name`) are rejected.
+`name`) are rejected. The problem carries an `abstol` vector when `disc.algebraic_abstol`
+applies (see [`FEMDiscretization`](@ref)).
 
 The Dirichlet rows are linear with identity Jacobian rows, so a Newton step with a current
 Jacobian satisfies them exactly. OrdinaryDiffEq's BDF methods reuse the Jacobian across
@@ -369,10 +370,31 @@ size change and holds `u(t, Γ) ~ g(t)` to round-off.
 function SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
     _check_reserved(kwargs)
     parts = _lower(pdesys, disc)
+    kwargs = merge(disc.kwargs, values(kwargs))
     return numeric_dae_problem(
         parts.ops, parts.u0, parts.tspan, parts.md;
-        iv = parts.iv, unknowns = parts.unknowns, name = parts.name, disc.kwargs..., kwargs...
+        iv = parts.iv, unknowns = parts.unknowns, name = parts.name, kwargs...,
+        _abstol(disc.algebraic_abstol, parts.ops, get(kwargs, :abstol, nothing))...
     )
+end
+
+# An algebraic field whose own unknowns are absent from its equation (the pressure in the continuity equation) is
+# fixed only through the other fields, which makes the DAE index 2.
+function _index2(ops::FEMOperators)
+    free = trues(size(ops.K, 1))
+    free[ops.prescribed] .= false
+    return any(ops.fields) do (_, r)
+        rows = filter(i -> free[i], r)
+        !isempty(rows) && !any(ops.differential_vars[rows]) && iszero(ops.K[rows, r])
+    end
+end
+
+# The `abstol` keyword of the `DAEProblem` (see `FEMDiscretization`'s `algebraic_abstol`); empty when none is set.
+function _abstol(algebraic, ops, abstol)
+    algebraic === :auto && (algebraic = _index2(ops) ? 1.0e8 : nothing)
+    (algebraic === nothing || !(abstol isa Union{Nothing, Real})) && return (;)
+    differential = something(abstol, 1.0e-6)
+    return (; abstol = [d ? differential : algebraic for d in ops.differential_vars])
 end
 
 SciMLBase.discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...) =

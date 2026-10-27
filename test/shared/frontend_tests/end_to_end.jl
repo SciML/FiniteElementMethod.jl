@@ -44,6 +44,16 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         @test nodal_error(sol, u(t, x, y), uexact) <= tol
         space = sol.disc_data.space
         @test !any(prob.differential_vars[space.ch.prescribed_dofs])
+        # Not index 2: the default algebraic_abstol = :auto sets no abstol.
+        @test !haskey(prob.kwargs, :abstol)
+        # An explicit algebraic_abstol applies to any system: here to the Dirichlet rows, which stay exact.
+        sol, prob = fem_solve(
+            [heat_eq], [dirichlet_all(Ω); ic], Ω, (x, y), t, [u(t, x, y)]; algebraic_abstol = 1.0e3,
+            solve_kwargs = (; reltol = 1.0e-10), abstol = 1.0e-10
+        )
+        @test prob.kwargs[:abstol] == [d ? 1.0e-10 : 1.0e3 for d in prob.differential_vars]
+        @test SciMLBase.successful_retcode(sol)
+        @test nodal_error(sol, u(t, x, y), uexact) <= tol
         # The symbolic Dirichlet data agree with the ConstraintHandler, including at corners
         # shared by two pieces, where the condition added last wins.
         load = SciMLBase.SymbolicIndexingInterface.getp(prob.f.sys, prob.f.sys.Fop)(prob.p)
@@ -204,6 +214,8 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         @test SciMLBase.successful_retcode(sol)
         space = sol.disc_data.space
         @test !any(prob.differential_vars[FiniteElementMethod.field_range(space, :v)])
+        # v is algebraic but appears in its own equation (index 1): no abstol is set.
+        @test !haskey(prob.kwargs, :abstol)
         @test nodal_error(sol, u(t, x, y), uexact) <= tol
         @test nodal_error(sol, v(t, x, y), (t_, x_, y_) -> 1 + x_ + 2y_) <= tol
     end
