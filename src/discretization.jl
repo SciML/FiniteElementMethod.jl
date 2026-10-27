@@ -117,3 +117,26 @@ function Base.show(io::IO, disc::FEMDiscretization)
         ", codegen = :", disc.codegen, ")"
     )
 end
+
+# The SciMLBase PDE-interface checklist of this discretization (PDEBase#147). docs/make.jl renders
+# it on the Discretization page and docs/src/boundary_conditions.md keeps a static copy for builds
+# without the front end; test/Frontend/supported_conditions.jl keeps the two equal.
+# Tracking: drop the `isdefined` guard once the PDEBase compat floor has `supported_conditions`.
+@static if isdefined(PDEBase, :supported_conditions)
+    PDEBase.supported_conditions(::FEMDiscretization) = PDEBase.SupportedConditions(;
+        geometries = (:mesh,), dirichlet = true, neumann = true, robin = true, periodic = false,
+        interface = false, time_dependent = true,
+        notes = """
+        Restrictions of this release:
+
+          - Geometries are `Ferrite.Grid` meshes (1D, 2D and 3D cell shapes) wrapped as `MeshDomain(grid)`, with boundary pieces named by the grid's facet sets. Only 1D and 2D are evidenced; meshes with mixed cell types are rejected until M4.
+          - Coordinates are Cartesian and named by the `(x, y) ∈ Ω` pairing. Time must be the first argument of every dependent variable.
+          - Dirichlet data may depend on space, time and parameters but not on another field. Neumann and Robin conditions are written with `NormalDerivative(Γ)`, with any conormal coefficient written explicitly.
+          - Periodic conditions `u(t, Γa) ~ u(t, Γb)` are rejected until M4. Interface conditions between regions have no syntax; every field lives on the whole mesh.
+          - Boundary pieces must be disjoint. A piece with no condition gets the natural zero-flux condition, with a warning when the operator has a flux.
+          - Where two Dirichlet pieces of one field meet, the condition listed last in the `PDESystem` wins.
+          - Every field with a time derivative needs an initial condition, linear in that one field and finite at every node.
+          - Steady problems, `dirichlet = :eliminate`, fields with different interpolations and test spaces other than `Galerkin()` are rejected until M4. Nonlinear operators, time-dependent mass or stiffness coefficients and `codegen = :mtk` are rejected until M3.
+        """
+    )
+end

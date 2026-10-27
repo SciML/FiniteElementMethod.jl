@@ -1,6 +1,6 @@
 # Claims of the user documentation that the code must keep true.
 using Test
-using FiniteElementMethod: FiniteElementMethod, rectangle_grid
+using FiniteElementMethod: FiniteElementMethod, PDEBase, rectangle_grid
 using Ferrite: Ferrite, Triangle
 
 include(joinpath(@__DIR__, "..", "frontend.jl"))
@@ -8,6 +8,17 @@ include(joinpath(@__DIR__, "..", "frontend.jl"))
 using ModelingToolkit: t_nounits as t
 
 @testset verbose = true "documentation" begin
+    @testset "supported_conditions matches docs/src/boundary_conditions.md" begin
+        if isdefined(PDEBase, :supported_conditions)
+            disc = FEMDiscretization(MeshDomain(rectangle_grid(Triangle, (1, 1))))
+            rendered = repr(MIME"text/markdown"(), PDEBase.supported_conditions(disc))
+            page = read(joinpath(pkgdir(FiniteElementMethod), "docs", "src", "boundary_conditions.md"), String)
+            @test occursin(rendered, page)
+        else
+            @test_skip "the installed PDEBase has no supported_conditions"
+        end
+    end
+
     @testset "the domain pairing names the mesh coordinates" begin
         @variables x y u(..)
         Dt = Differential(t)
