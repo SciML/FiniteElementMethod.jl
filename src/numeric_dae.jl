@@ -98,6 +98,14 @@ prescribed dofs, whose rows of `N` and of its Jacobian are then zero. `op` is un
 the parameter has one concrete type; each call dispatches on it once. `op` itself is never
 evaluated: each evaluation borrows a copy with its own buffers and values objects from a pool,
 so problems sharing this wrapper (remakes, ensembles) can be solved concurrently.
+
+The element pipeline is `Float64`: `N` is evaluated at `Float64` states and at first-order
+`ForwardDiff.Dual`s of `Float64` (as the default initializer passes), whose partials go through
+the analytic tangent. Any other state, such as `Float32`, `BigFloat`, `Dual`s of those or nested
+`Dual`s, throws `ArgumentError("the nonlinear operator evaluates Float64 states and first-order
+ForwardDiff Duals of Float64; got T")` with `T` the state's element type; its Jacobian is
+evaluated at `Float64` states only and otherwise throws `ArgumentError("the nonlinear
+operator's Jacobian evaluates Float64 states; got T")`.
 """
 struct FEMNonlinear
     op::Any
@@ -120,8 +128,13 @@ function with_operator(f, N::FEMNonlinear)
     end
 end
 
+check_state(::AbstractVector{Float64}) = nothing
+check_state(::AbstractVector{<:ForwardDiff.Dual{<:Any, Float64}}) = nothing
+check_state(u) = throw(ArgumentError("the nonlinear operator evaluates Float64 states and first-order ForwardDiff Duals of Float64; got $(eltype(u))"))
+
 # `r .+= N(u, t)` outside the prescribed rows.
 function add_nonlinear!(r, N::FEMNonlinear, u, t)
+    check_state(u)
     return with_operator(N) do op
         residual!(op.r, op, u, N.p, t)
         for i in eachindex(r)
@@ -149,6 +162,8 @@ nonlinear_residual!(r, N::FEMNonlinear, u, t) = add_nonlinear!(fill!(r, 0), N, u
 
 # `nonzeros(J) .+= nonzeros(∂N/∂u)` outside the prescribed rows; `J` must have the pattern of `N`'s Jacobian.
 function add_nonlinear_jacobian!(J, N::FEMNonlinear, u, t)
+    u isa AbstractVector{Float64} ||
+        throw(ArgumentError("the nonlinear operator's Jacobian evaluates Float64 states; got $(eltype(u))"))
     return with_operator(N) do op
         JN = jacobian!(op.J, op, u, N.p, t)
         check_pattern(J, JN, "Nop")
@@ -404,6 +419,7 @@ function numeric_dae_problem(
     getN = ops.nonlinear === nothing ? Returns(nothing) : getp(sys, sys.Nop)
     function residual!(res, du, u, p, t)
         check_assembled(p)
+        ops.nonlinear === nothing || check_state(u)
         load!(res, getF(p), t)
         res .= .-res
         mul!(res, getM(p).A, du, true, true)

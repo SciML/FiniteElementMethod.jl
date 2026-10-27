@@ -141,6 +141,35 @@ end
         Threads.nthreads() > 1 || @info "the remakes were solved on one thread, so this test cannot see a race; run with JULIA_NUM_THREADS > 1"
     end
 
+    @testset "states other than Float64 and Dual{Float64} are rejected" begin
+        Ω = square()
+        eq = Dt(U) ~ Dx((1 + U^2) * Dx(U)) + Dy(Dy(U)) + (1 + x + 2y) - 2 * ustar * (1 + t)^2
+        prob = DAEProblem(pdesystem([eq], [dirichlet(Ω); ic], Ω), FEMDiscretization(Ω, t))
+        n = length(prob.u0)
+        Dual = FiniteElementMethod.ForwardDiff.Dual
+        states = (
+            Float32.(prob.u0), big.(prob.u0), Dual{Nothing}.(Float32.(prob.u0), 1.0f0),
+            Dual{:outer}.(Dual{:inner}.(prob.u0, 1.0), Dual{:inner}(1.0, 0.0)),
+        )
+        for u in states
+            T = eltype(u)
+            msg = "the nonlinear operator evaluates Float64 states and first-order ForwardDiff Duals of Float64; got $T"
+            @test_throws ArgumentError(msg) prob.f(zeros(T, n), zeros(T, n), u, prob.p, 0.0)
+        end
+        @test_throws ArgumentError("the nonlinear operator evaluates Float64 states and first-order ForwardDiff Duals of Float64; got Float32") prob.f(
+            zeros(Float32, n), zeros(Float32, n), Float32.(prob.u0), prob.p, 0.0
+        )
+        @test_throws ArgumentError("the nonlinear operator's Jacobian evaluates Float64 states; got Float32") prob.f.jac(
+            copy(prob.f.jac_prototype), zeros(n), Float32.(prob.u0), prob.p, 1.0, 0.0
+        )
+        # The supported states still evaluate: Float64 and a first-order Dual of Float64.
+        r = zeros(n)
+        prob.f(r, zeros(n), prob.u0, prob.p, 0.0)
+        rd = zeros(Dual{Nothing, Float64, 1}, n)
+        prob.f(rd, zeros(n), Dual{Nothing}.(prob.u0, 1.0), prob.p, 0.0)
+        @test FiniteElementMethod.ForwardDiff.value.(rd) ≈ r
+    end
+
     @testset "a parameter changed by remake is rejected, not ignored" begin
         # The operators, the nonlinear one included, hold the values they were assembled with (spec §8.3).
         Ω = square()
