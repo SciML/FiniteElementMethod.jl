@@ -86,6 +86,7 @@ observed_error(ex, why) = ArgumentError("cannot evaluate the expression $ex on t
             Dx(Dx(U)) + 1 => derivative(Dx(Dx(U))),
             2Dt(U) => derivative(Dt(U)),
             u(t, 0, y) + 1 => "$(u(t, 0, y)) fixes arguments of u(t, x, y); write the dependent variable as u(t, x, y)",
+            Dy(u(t, 0, y)) + 1 => "$(u(t, 0, y)) fixes arguments of u(t, x, y); write the dependent variable as u(t, x, y)",
         ]
         for (ex, why) in cases
             @test_throws observed_error(ex, why) sol[ex]
@@ -93,6 +94,9 @@ observed_error(ex, why) = ArgumentError("cannot evaluate the expression $ex on t
         end
         # A derivative key that is not an expression keeps the key error.
         @test occursin("first", errmsg(() -> sol[Dx(Dx(U))]))
+        # A derivative of a dependent variable at fixed arguments is not a gradient key either.
+        @test occursin("is not a key of this solution", errmsg(() -> sol[Dy(u(t, 0, y))]))
+        @test occursin("is not a dependent variable or a first spatial derivative", errmsg(() -> sol(0.5, 0.3, 0.2; dv = Dy(u(t, 0, y)))))
     end
 
     @testset "two fields" begin

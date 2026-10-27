@@ -287,7 +287,7 @@ function _gradkey(md, s)
     D.order == 1 || return nothing
     inner = only(SymbolicUtils.arguments(s))
     f = _fieldinfo(md, inner)
-    (f === nothing || _piece_arg(inner) !== nothing) && return nothing
+    (f === nothing || !isequal(inner, Symbolics.unwrap(f.dv))) && return nothing
     d = findfirst(x -> isequal(Symbolics.unwrap(x), Symbolics.unwrap(D.x)), md.x̄)
     return d === nothing ? nothing : (f, d)
 end
@@ -439,6 +439,12 @@ function _observed_error(dv, why)
     throw(ArgumentError("cannot evaluate the expression $dv on this solution: $why"))
 end
 
+function _check_field_call(dv, ex, f::FieldInfo)
+    isequal(ex, Symbolics.unwrap(f.dv)) ||
+        _observed_error(dv, "$ex fixes arguments of $(f.dv); write the dependent variable as $(f.dv)")
+    return nothing
+end
+
 # Adds the leaves of `ex` to `terms` as `term => kind`, with kind `:field`, `:time` or `:coord`,
 # and the value of each parameter to `params`.
 function _observed_leaves!(terms, params, A, dv, ex)
@@ -452,12 +458,14 @@ function _observed_leaves!(terms, params, A, dv, ex)
     elseif _gradkey(md, ex) !== nothing
         terms[ex] = :field
     elseif SymbolicUtils.iscall(ex) && SymbolicUtils.operation(ex) isa Symbolics.Differential
+        inner = Symbolics.unwrap(only(SymbolicUtils.arguments(ex)))
+        f = _fieldinfo(md, inner)
+        f === nothing || _piece_arg(inner) !== nothing || _check_field_call(dv, inner, f)
         _observed_error(dv, "$ex is not a first spatial derivative of a dependent variable, the only derivatives an expression accepts")
     elseif (f = _fieldinfo(md, ex)) !== nothing
         _piece_arg(ex) === nothing ||
             _observed_error(dv, "it contains the trace $ex; an expression is evaluated at every vertex, so write $(f.dv) instead")
-        isequal(ex, Symbolics.unwrap(f.dv)) ||
-            _observed_error(dv, "$ex fixes arguments of $(f.dv); write the dependent variable as $(f.dv)")
+        _check_field_call(dv, ex, f)
         terms[ex] = :field
     elseif SymbolicUtils.issym(ex) || SymbolicUtils.issym(SymbolicUtils.operation(ex))
         # The front end requires a numeric value for every parameter of the PDESystem.
