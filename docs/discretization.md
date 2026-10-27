@@ -60,6 +60,8 @@ entries, as in `discretize(pdesys, disc; abstol = 1.0e-8)`; an array is used as 
 `solve(prob, alg; abstol = 1.0e-8)` puts the algebraic rows back under error control; write the
 vector by hand in that case, `abstol = [d ? 1.0e-8 : 1.0e8 for d in prob.differential_vars]`.
 Systems without an index-2 field, such as `0 ~ Δv + u` paired with `v`, get no `abstol`.
+The keyword applies to the time-dependent (DAE) path only: a steady `FEMDiscretization(Ω)`
+accepts `:auto` and `nothing` and does nothing with them, and raises for a number.
 
 Without the large tolerance, the step size collapses near the initial time (`dt` below `eps`
 at `t ≈ 1e-10` on a 16 × 16 Taylor–Hood mesh). When the linear solver then reports the Newton

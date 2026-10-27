@@ -40,7 +40,9 @@ gives a `PDENoTimeSolution`.
     value on the algebraic rows of any system; `nothing` sets nothing. The differential rows
     get the `abstol` passed to `FEMDiscretization` or `DAEProblem` if it is a number, else
     OrdinaryDiffEq's default `1e-6`; an array `abstol` passed there is used as it is. An
-    `abstol` passed to `solve` replaces the problem's whole vector. This keyword is not in the spec (§7.1, §7.6): without it, `DFBDF`
+    `abstol` passed to `solve` replaces the problem's whole vector. The keyword belongs to the
+    time-dependent (DAE) path: a steady discretization ignores `:auto` and `nothing` and
+    rejects a number. This keyword is not in the spec (§7.1, §7.6): without it, `DFBDF`
     drives the step size of an index-2 system below `eps` near the initial time, since the
     local error of the index-2 unknowns does not shrink with the step.
   - `codegen = :mtk` and `dirichlet = :eliminate` are reserved for later milestones and
@@ -112,6 +114,11 @@ function FEMDiscretization(
     end
     algebraic_abstol === :auto || algebraic_abstol === nothing || algebraic_abstol isa Real && algebraic_abstol > 0 ||
         throw(ArgumentError("algebraic_abstol must be :auto, nothing or a positive number, got $(repr(algebraic_abstol))"))
+    time === nothing && algebraic_abstol isa Real && throw(
+        ArgumentError(
+            "algebraic_abstol applies to time-dependent problems (the DAE path); a steady FEMDiscretization has no time stepper"
+        )
+    )
     _check_reserved(kwargs)
     return FEMDiscretization{typeof(time)}(
         domain, time, Dict{Any, Ferrite.Interpolation}(_field_op(k) => ip for (k, ip) in spaces),
