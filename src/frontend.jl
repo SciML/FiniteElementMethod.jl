@@ -8,7 +8,7 @@
 # Tracking: move to PDEBase's `symbolic_discretize` with hook methods once the numeric path builds
 # its system through `generate_system` (PDEBase M0 release as the compat floor).
 
-const _PERIODIC_M4 = "periodic conditions need milestone M4 (Ferrite PeriodicDirichlet)"
+const _PERIODIC_UNSUPPORTED = "periodic boundary conditions are not supported"
 
 _unwrap_arg(a) = SymbolicUtils.unwrap_const(unwrap(a))
 
@@ -89,7 +89,7 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
     for u in dvs
         args = SymbolicUtils.arguments(unwrap(u))
         t !== nothing && any(a -> isequal(a, t), args) && !isequal(first(args), t) &&
-            throw(ArgumentError("time must be the first argument of $u; time-last ordering lands later"))
+            throw(ArgumentError("time must be the first argument of $u; time-last ordering is not supported"))
     end
     grid = disc.domain.mesh
     if !isconcretetype(Ferrite.getcelltype(grid))
@@ -100,7 +100,7 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
                     "`spaces`; $(join(unset, ", ")) has none"
             )
         )
-        throw(ArgumentError("meshes with mixed cell types land in M4"))
+        throw(ArgumentError("meshes with mixed cell types are not supported; use a mesh with a single cell type"))
     end
     check_facetsets(grid, [Γ.name for Γ in _condition_pieces(pdesys.bcs)])
     return nothing
@@ -108,7 +108,7 @@ end
 
 function _boundary_map(bcs, v, disc)
     for eq in bcs
-        length(_trace_pieces(eq.lhs - eq.rhs)) > 1 && throw(ArgumentError("$(_PERIODIC_M4): $eq"))
+        length(_trace_pieces(eq.lhs - eq.rhs)) > 1 && throw(ArgumentError("$(_PERIODIC_UNSUPPORTED): $eq"))
     end
     orders = Dict(x => PDEBase.d_orders(x, bcs) for x in PDEBase.all_ivs(v))
     return PDEBase.parse_bcs(bcs, v, orders, disc)
@@ -170,7 +170,7 @@ end
 function _check_terms(wf)
     for term in vcat(wf.volume, wf.facet)
         term.kind in (:mass, :bilinear) && term.timedep && throw(
-            ArgumentError("time-dependent coefficients in the mass or stiffness operator land in M3: equation $(term.eq) has $(term.integrand)")
+            ArgumentError("time-dependent coefficients in the mass or stiffness operator are not supported: equation $(term.eq) has $(term.integrand)")
         )
     end
     return nothing
@@ -331,7 +331,7 @@ function _lower(pdesys, disc::FEMDiscretization)
     ics, bcmap = PDEBase.split_ics_bcs(boundarymap, v, disc)
     ctx = StrongForm.SlotContext(sys, v)
     an = _paired(StrongForm.analyse(sys, v, boundarymap; ibp = disc.ibp), pdesys.eqs, ctx, disc)
-    isempty(an.periodic) || throw(ArgumentError(_PERIODIC_M4))
+    isempty(an.periodic) || throw(ArgumentError(_PERIODIC_UNSUPPORTED))
     covered = Set(Γ for bykey in values(bcmap) for (Γ, bs) in bykey if !isempty(bs))
     if any(c -> !all(x -> isequal(x, 0), c), an.conormal)
         for Γ in PDEBase.boundarypieces(disc.domain)
@@ -408,7 +408,7 @@ the Galerkin operators, with Dirichlet rows `u_d = g_d(t)` as algebraic equation
 `dirichlet = :eliminate`, restricted to the free dofs), a sparse
 analytic Jacobian (the nonlinear part `N` from the terms whose coefficients depend on the
 state, with its symbolic tangent) and the `FEMMetadata` as its `problem_type`, so `solve` returns a
-`PDETimeSeriesSolution`. Nothing calls `mtkcompile`; anything this milestone cannot
+`PDETimeSeriesSolution`. Nothing calls `mtkcompile`; anything it cannot
 discretize raises. Keywords are passed to the `DAEProblem` after `disc.kwargs`, so a keyword
 given here wins; the keywords the discretization sets (`iv`, `unknowns`, `du0`, `coordinate`,
 `name`, `parameters`) are rejected. The problem carries an `abstol` vector when `disc.algebraic_abstol`
