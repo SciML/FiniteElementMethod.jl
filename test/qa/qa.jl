@@ -16,6 +16,9 @@ run_qa(
             ignore = (:FieldWise, :derivative, :dirichlet_facetdof_indices, NONPUBLIC_PDEBASE...),
         ),
     ),
+    # FEMDiscretization is rendered on the Discretization page, which docs/make.jl copies into
+    # docs/src from docs/discretization.md only when the front end is available.
+    api_docs_kwargs = (; rendered_ignore = (:FEMDiscretization,)),
     # The user API of a FEM model: PDEBase's mesh vocabulary and Ferrite's interpolations.
     reexports_allow = (
         :MeshDomain, :boundarypiece, :boundarypieces, :NormalDerivative, :Lagrange,

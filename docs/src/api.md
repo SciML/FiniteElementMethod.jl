@@ -1,17 +1,8 @@
 # API
 
-## Discretization
-
-`FEMDiscretization` is exported, as are the PDEBase names a model needs (`MeshDomain`,
-`boundarypiece`, `boundarypieces`, `NormalDerivative`) and Ferrite's `Lagrange` and reference
-shapes. The rest of this page documents the internal building blocks of the Ferrite backend.
-
-```@docs
-FEMDiscretization
-FiniteElementMethod.SciMLBase.DAEProblem(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
-FiniteElementMethod.AbstractTestSpace
-FiniteElementMethod.Galerkin
-```
+These are the internal building blocks of the Ferrite backend. The PDESystem front end is
+documented on the Discretization page, which is built when the installed PDEBase has the
+mesh-discretization layer.
 
 ## Meshes
 
@@ -73,5 +64,4 @@ FiniteElementMethod.AssemblyContext
 FiniteElementMethod.assemble_linear
 FiniteElementMethod.assemble_nonlinear
 FiniteElementMethod._split
-FiniteElementMethod.assemble_sources!
 ```

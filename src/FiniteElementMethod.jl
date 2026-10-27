@@ -4,7 +4,7 @@
 A SciML discretizer that takes a ModelingToolkit `PDESystem` in strong form on a mesh,
 derives the Galerkin weak form, assembles it with Ferrite and lowers it to a `DAEProblem`.
 
-The entry point is [`FEMDiscretization`](@ref); `DAEProblem(pdesys, disc)` lowers a `PDESystem`.
+The entry point is `FEMDiscretization`; `DAEProblem(pdesys, disc)` lowers a `PDESystem`.
 """
 module FiniteElementMethod
 
