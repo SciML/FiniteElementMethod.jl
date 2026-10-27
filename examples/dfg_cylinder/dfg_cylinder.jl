@@ -14,10 +14,12 @@
 #     (`pressure = :weak` or `:strong`).
 #   - The pressure has no equation of its own: the continuity equation is paired with it explicitly, and the
 #     system is a DAE of index 2. Its initial state is consistent without index reduction because the flow starts
-#     at rest and the inflow is ramped up by 1 − exp(−t²), whose value and rate vanish at t = 0; the default
-#     initialisation, which would solve the continuity rows for p, is replaced by a check. The zero
+#     at rest and the inflow is ramped up by 1 − exp(−t²), whose value and rate vanish at t = 0. The zero
 #     velocity is discretely divergence free, and p needs no initial condition: it is algebraic, starts at zero,
-#     and every residual row vanishes at t = 0.
+#     and every residual row vanishes at t = 0. `CheckInit()` therefore only verifies that start. The default
+#     initialiser would instead solve the algebraic rows for the algebraic variables, and the continuity rows do
+#     not contain p, so its Newton matrix is singular in the pressure columns: there is nothing for it to fix
+#     and nothing it could determine.
 #   - The pressure, an index-2 algebraic variable, and the Dirichlet rows are left out of DFBDF's error control (an
 #     absolute tolerance of 1e8 on them): the local error of an index-2 variable does not shrink with the step, so
 #     with it DFBDF cuts the step to nothing. The Dirichlet rows are exact anyway with a W refreshed every step.

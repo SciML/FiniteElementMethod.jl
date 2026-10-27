@@ -49,8 +49,10 @@ sol = solve(prob, DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0), linsolve = UMFP
   meshes from 5 000 to 149 000 unknowns.
 - **Index-2 DAE.** The continuity equation is paired with the pressure explicitly. The flow
   starts at rest and the inflow is ramped by `1 − exp(−t²)`, whose value and rate vanish at
-  `t = 0`, so the zero initial state is consistent and the default initialisation (which
-  would solve the continuity rows for the pressure) is replaced by `CheckInit()`. The zero
+  `t = 0`, so the zero initial state is consistent and `CheckInit()` only verifies it. The
+  default initialiser would solve the algebraic rows for the algebraic variables, and the
+  continuity rows do not contain the pressure, so its Newton matrix would be singular in the
+  pressure columns. The zero
   velocity is discretely divergence free; the pressure, an algebraic variable, starts at zero
   and needs no initial condition, since every residual row vanishes at `t = 0`. The
   pressure and the Dirichlet rows are left out of the error control: the local error of an
