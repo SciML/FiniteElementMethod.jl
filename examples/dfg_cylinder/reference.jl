@@ -48,15 +48,15 @@ function dfg_reference_steady(grid; ν = 1.0e-3, Umax = 0.3, tol = 1.0e-10, maxi
             Ferrite.reinit!(cv_u, cell)
             Ferrite.reinit!(cv_p, cell)
             dofs = Ferrite.celldofs(cell)
-            ue, ve, pe = x[dofs[ru]], x[dofs[rv]], x[dofs[rp]]
+            u_cell, v_cell, p_cell = x[dofs[ru]], x[dofs[rv]], x[dofs[rp]]
             fill!(Je, 0)
             fill!(re, 0)
             for q in 1:Ferrite.getnquadpoints(cv_u)
                 dΩ = Ferrite.getdetJdV(cv_u, q)
-                U = (Ferrite.function_value(cv_u, q, ue), Ferrite.function_value(cv_u, q, ve))
-                ∇U = (Ferrite.function_gradient(cv_u, q, ue), Ferrite.function_gradient(cv_u, q, ve))
-                p = Ferrite.function_value(cv_p, q, pe)
-                ∇p = Ferrite.function_gradient(cv_p, q, pe)
+                U = (Ferrite.function_value(cv_u, q, u_cell), Ferrite.function_value(cv_u, q, v_cell))
+                ∇U = (Ferrite.function_gradient(cv_u, q, u_cell), Ferrite.function_gradient(cv_u, q, v_cell))
+                p = Ferrite.function_value(cv_p, q, p_cell)
+                ∇p = Ferrite.function_gradient(cv_p, q, p_cell)
                 div = ∇U[1][1] + ∇U[2][2]
                 blocks = (ru, rv)
                 for i in 1:nu

@@ -30,3 +30,6 @@ versions = ["lts", "1", "pre"]
 
 [Perf]
 versions = ["1"]
+
+[NavierStokes]
+versions = ["lts", "1", "pre"]

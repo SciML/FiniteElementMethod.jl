@@ -42,21 +42,21 @@ function dfg_coefficients(dh, x; ν, Umean, D = 0.1, dxdt = nothing, fields = (:
     coords = Ferrite.getcoordinates(grid, 1)
     for cell in 1:Ferrite.getncells(grid)
         dofs = Ferrite.celldofs(dh, cell)
-        we = w[dofs[ru]]
-        any(!iszero, we) || continue
+        w_cell = w[dofs[ru]]
+        any(!iszero, w_cell) || continue
         Ferrite.getcoordinates!(coords, grid, cell)
         Ferrite.reinit!(cv_u, coords)
         Ferrite.reinit!(cv_p, coords)
-        ue, ve, pe = x[dofs[ru]], x[dofs[rv]], x[dofs[rp]]
+        u_cell, v_cell, p_cell = x[dofs[ru]], x[dofs[rv]], x[dofs[rp]]
         for q in 1:Ferrite.getnquadpoints(cv_u)
             dΩ = Ferrite.getdetJdV(cv_u, q)
-            U = (Ferrite.function_value(cv_u, q, ue), Ferrite.function_value(cv_u, q, ve))
-            ∇U = (Ferrite.function_gradient(cv_u, q, ue), Ferrite.function_gradient(cv_u, q, ve))
+            U = (Ferrite.function_value(cv_u, q, u_cell), Ferrite.function_value(cv_u, q, v_cell))
+            ∇U = (Ferrite.function_gradient(cv_u, q, u_cell), Ferrite.function_gradient(cv_u, q, v_cell))
             ∂U = dxdt === nothing ? (0.0, 0.0) :
                 (Ferrite.function_value(cv_u, q, dxdt[dofs[ru]]), Ferrite.function_value(cv_u, q, dxdt[dofs[rv]]))
-            p = Ferrite.function_value(cv_p, q, pe)
-            W = Ferrite.function_value(cv_u, q, we)
-            ∇W = Ferrite.function_gradient(cv_u, q, we)
+            p = Ferrite.function_value(cv_p, q, p_cell)
+            W = Ferrite.function_value(cv_u, q, w_cell)
+            ∇W = Ferrite.function_gradient(cv_u, q, w_cell)
             for k in 1:2
                 convection = U[1] * ∇U[k][1] + U[2] * ∇U[k][2]
                 F[k] -= ((∂U[k] + convection) * W + ν * dot(∇U[k], ∇W) - p * ∇W[k]) * dΩ
