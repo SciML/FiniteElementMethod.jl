@@ -181,3 +181,14 @@ function emit_dirichlet(analysis)
     s = analysis.slots
     return Tuple((bc.piece, bc.field, compile(assert_differentiated(bc.g), (s.X, s.T, s.P))) for bc in analysis.essential)
 end
+
+"""
+    emit_strong(analysis; expression = Val(false))
+
+The strong residual `e = lhs − rhs` of each equation as a function `r(U, G, Ud, H, X, T, P)`, for collocation (test
+function δ, spec §1 goal 4): it vanishes at the exact solution.
+"""
+function emit_strong(analysis; expression = Val(false))
+    s = analysis.slots
+    return Tuple(compile(assert_differentiated(e), (s.U, s.G, s.Ud, s.H, s.X, s.T, s.P); expression) for e in analysis.strong)
+end
