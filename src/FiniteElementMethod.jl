@@ -72,12 +72,12 @@ const MESH_PDEBASE = isdefined(PDEBase, :AbstractMeshDiscretization) &&
 ) && _orders_mesh_axes_by_pairing()
 
 @static if MESH_PDEBASE
-    using PDEBase: StrongForm, MeshDomain, boundarypiece, boundarypieces, NormalDerivative
+    using PDEBase: StrongForm, MeshDomain, Region, boundarypiece, boundarypieces, NormalDerivative
     include("discretization.jl")
     include("frontend.jl")
     _is_normal_derivative(op) = op isa NormalDerivative
-    export FEMDiscretization
-    export MeshDomain, boundarypiece, boundarypieces, NormalDerivative
+    export FEMDiscretization, Galerkin, SUPG
+    export MeshDomain, Region, boundarypiece, boundarypieces, NormalDerivative
 else
     _is_normal_derivative(op) = false
 end

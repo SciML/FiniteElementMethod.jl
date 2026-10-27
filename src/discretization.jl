@@ -5,18 +5,26 @@ PDEBase.cellset_names(grid::Ferrite.Grid) = _cellset_names(grid)
 PDEBase.contains_point(grid::Ferrite.Grid, x) = _contains_point(grid, x)
 
 """
-    FEMDiscretization(Ω::MeshDomain, t = nothing; spaces = Dict(), quadrature = nothing,
-        test_space = Galerkin(), ibp = Dict(), pairing = Dict(), codegen = :numeric,
-        dirichlet = :algebraic, kwargs...)
+    FEMDiscretization(Ω::MeshDomain, t = nothing; spaces = Dict(), regions = Dict(),
+        quadrature = nothing, test_space = Galerkin(), ibp = Dict(), pairing = Dict(),
+        codegen = :numeric, dirichlet = :algebraic, kwargs...)
 
 Finite-element discretization of a `PDESystem` whose spatial domain is the mesh domain `Ω`
 (of a `Ferrite.Grid`), with time variable `t`. `DAEProblem(pdesys, disc)` assembles the
 Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknown per field.
 
   - `spaces`: dependent variable (`u` or `u(t, x, y)`) `=>` `Ferrite.Interpolation`; the
-    default is `Lagrange{RefShape, 1}()` on the mesh's reference shape. All fields must
-    currently share one interpolation.
-  - `quadrature`: quadrature order; `nothing` means `2p` for Lagrange order `p`.
+    default is `Lagrange{RefShape, 1}()` on the mesh's reference shape. Fields may have
+    different orders, such as the Taylor–Hood pair `Lagrange{RefTriangle, 2}()` for the
+    velocity and `Lagrange{RefTriangle, 1}()` for the pressure.
+  - `regions`: dependent variable `=>` `Region(Ω, name)`, a cell set of the mesh on which the
+    field lives (a `Ferrite.SubDofHandler`); elsewhere it has no dofs, its equation is not
+    assembled, it enters other equations as zero and the solution reads `NaN`. Its
+    conditions must be on pieces whose facets belong to the region's cells.
+  - `quadrature`: quadrature order shared by all fields; `nothing` means `2p` for the
+    highest Lagrange order `p`.
+  - `test_space`: `Galerkin()` or [`SUPG`](@ref)`(τ; b)`, streamline-upwind Petrov–Galerkin
+    stabilisation of every equation; linear terms only, and `τ` cannot reference parameters.
   - `ibp`: equation (or its index) `=>` `PDEBase.StrongForm` integration-by-parts policy.
   - `pairing`: equation `=>` dependent variable it is tested with, needed for an equation
     with no time derivative of its own, such as `0 ~ Dxx(v) + f`.
@@ -45,6 +53,7 @@ struct FEMDiscretization{T} <: PDEBase.AbstractMeshDiscretization
     domain::PDEBase.MeshDomain
     time::T
     spaces::Dict{Any, Ferrite.Interpolation}
+    regions::Dict{Any, Any}
     quadrature::Union{Nothing, Int}
     test_space::AbstractTestSpace
     ibp::Dict{Any, StrongForm.IBPPolicy}
@@ -70,7 +79,7 @@ function _check_reserved(kwargs)
 end
 
 function FEMDiscretization(
-        domain::PDEBase.MeshDomain, time = nothing; spaces = Dict(), quadrature = nothing,
+        domain::PDEBase.MeshDomain, time = nothing; spaces = Dict(), regions = Dict(), quadrature = nothing,
         test_space = Galerkin(), ibp = Dict(), pairing = Dict(), codegen::Symbol = :numeric,
         dirichlet::Symbol = :algebraic, kwargs...
     )
@@ -81,11 +90,16 @@ function FEMDiscretization(
     dirichlet === :eliminate &&
         throw(ArgumentError("dirichlet = :eliminate lands in M4; use the default dirichlet = :algebraic"))
     dirichlet === :algebraic || throw(ArgumentError("dirichlet must be :algebraic, got $(repr(dirichlet))"))
-    test_space isa Galerkin ||
-        throw(ArgumentError("test space $(test_space) lands in M4; only Galerkin() is supported"))
+    test_space isa Union{Galerkin, SUPG} ||
+        throw(ArgumentError("test_space must be Galerkin() or SUPG(τ; b = nothing), got $(repr(test_space))"))
+    for (dv, region) in regions
+        region isa PDEBase.Region && region.parent === domain ||
+            throw(ArgumentError("the region of $(_field_op(dv)) must be a Region of the FEMDiscretization's MeshDomain, as Region(Ω, name); got $(repr(region))"))
+    end
     _check_reserved(kwargs)
     return FEMDiscretization{typeof(time)}(
         domain, time, Dict{Any, Ferrite.Interpolation}(_field_op(k) => ip for (k, ip) in spaces),
+        Dict{Any, Any}(_field_op(k) => r for (k, r) in regions),
         quadrature, test_space, Dict{Any, StrongForm.IBPPolicy}(ibp), Dict{Equation, Any}(pairing),
         codegen, dirichlet, NamedTuple(kwargs)
     )

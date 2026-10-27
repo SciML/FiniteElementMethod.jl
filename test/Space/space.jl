@@ -99,6 +99,42 @@ end
     @test getnquadpoints(coarse.cellvalues.u) == 1
 end
 
+@testset "fields on regions and Hessians" begin
+    grid = rectangle_grid(Triangle, (4, 4))
+    Ferrite.addcellset!(grid, "left_half", x -> x[1] <= 0.5 + 1.0e-12)
+    grid.cellsets["nothing"] = empty(grid.cellsets["left_half"])   # addcellset! warns on an empty set
+    space = FEMSpace(grid, [:u => P1, :w => P2]; regions = Dict(:w => "left_half"), hessians = true)
+    @test length(space.dh.subdofhandlers) == 2
+    @test field_range(space, :u) == 1:getnnodes(grid)
+    @test length(field_range(space, :w)) == 5 * 9                     # P2 nodes of the 2 × 4 left cells
+    @test last(field_range(space, :w)) == ndofs(space)
+    @test Ferrite.shape_hessian(space.cellvalues.w, 1, 1) isa Ferrite.Tensor{2, 2}
+    @test_throws ArgumentError("region given for unknown field :v; fields are [:u, :w]") FEMSpace(
+        grid, [:u => P1, :w => P2]; regions = Dict(:v => "left_half")
+    )
+    @test_throws ArgumentError(
+        "unknown cell set :right_half for the region of field w; the mesh has cell sets :left_half, :nothing"
+    ) FEMSpace(grid, [:u => P1, :w => P2]; regions = Dict(:w => "right_half"))
+    @test_throws ArgumentError("the region :nothing of field w has no cells") FEMSpace(
+        grid, [:u => P1, :w => P2]; regions = Dict(:w => "nothing")
+    )
+end
+
+@testset "fields on disjoint regions keep declaration order" begin
+    # u on the left half, v on the right half, w everywhere: the sub-handlers hold [u, w] and [v, w], so Ferrite
+    # lists the fields as [u, w, v], yet the blocks must follow the declaration order u, v, w.
+    grid = rectangle_grid(Triangle, (2, 2))
+    Ferrite.addcellset!(grid, "left_half", x -> x[1] <= 0.5 + 1.0e-12)
+    Ferrite.addcellset!(grid, "right_half", x -> x[1] >= 0.5 - 1.0e-12)
+    space = FEMSpace(grid, [:u => P1, :v => P1, :w => P1]; regions = Dict(:u => "left_half", :v => "right_half"))
+    @test field_range(space, :u) == 1:6
+    @test field_range(space, :v) == 7:12
+    @test field_range(space, :w) == 13:21
+    for sdh in space.dh.subdofhandlers, cell in sdh.cellset, f in sdh.field_names
+        @test all(in(field_range(space, f)), celldofs(space.dh, cell)[dof_range(sdh, f)])
+    end
+end
+
 @testset "shared sparsity pattern" begin
     grid = rectangle_grid(Triangle, (4, 4))
     space = FEMSpace(grid, [:u => P1, :v => P2]; dirichlet = [(:u, :left, (x, t) -> 0.0)])
