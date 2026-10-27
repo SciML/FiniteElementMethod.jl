@@ -411,7 +411,9 @@ state, with its symbolic tangent) and the `FEMMetadata` as its `problem_type`, s
 `PDETimeSeriesSolution`. Nothing calls `mtkcompile`; anything this milestone cannot
 discretize raises. Keywords are passed to the `DAEProblem` after `disc.kwargs`, so a keyword
 given here wins; the keywords the discretization sets (`iv`, `unknowns`, `du0`, `coordinate`,
-`name`, `parameters`) are rejected. The problem carries an `abstol` vector when `disc.algebraic_abstol`
+`name`, `parameters`) are rejected, and so are `tspan` (the `PDESystem`'s time domain), `u0` (its
+initial conditions; use `remake(prob; u0)`), `p` (its parameter defaults) and `differential_vars`
+(computed from the weak form). The problem carries an `abstol` vector when `disc.algebraic_abstol`
 applies (see [`FEMDiscretization`](@ref)).
 
 The Dirichlet rows are linear with identity Jacobian rows, so a Newton step with a current
@@ -481,7 +483,8 @@ elsewhere, `remake(prob; u0)` with a vector laid out like `prob.u0`, the problem
 vector (with the default `dirichlet = :algebraic` it holds every dof, and field `name`
 occupies `FiniteElementMethod.field_range(prob.problem_type.space, name)`).
 Keywords are passed to the `NonlinearProblem` after `disc.kwargs`; the keywords
-`iv`, `unknowns`, `du0`, `coordinate`, `name` and `parameters` are rejected, as for the `DAEProblem`.
+`iv`, `unknowns`, `du0`, `coordinate`, `name`, `parameters`, `tspan`, `u0`, `p` and
+`differential_vars` are rejected, as for the `DAEProblem`.
 """
 function SciMLBase.NonlinearProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
     _check_reserved(kwargs)
@@ -496,6 +499,12 @@ end
 
 SciMLBase.discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...) =
     disc.time === nothing ? NonlinearProblem(pdesys, disc; kwargs...) : DAEProblem(pdesys, disc; kwargs...)
+
+SciMLBase.discretize(::ModelingToolkit.PDESystem, ::FEMDiscretization, arg, args...; kwargs...) =
+    throw(ArgumentError("discretize(pdesys, disc; kwargs...) takes no further positional arguments; got $(length(args) + 1)"))
+
+SciMLBase.discretize(x, ::FEMDiscretization, args...; kwargs...) =
+    throw(ArgumentError("FEMDiscretization discretizes a ModelingToolkit.PDESystem; got $(typeof(x))"))
 
 # `(sys, tspan)`, the shape PDEBase and MethodOfLines return.
 function SciMLBase.symbolic_discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
