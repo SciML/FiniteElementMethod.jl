@@ -25,17 +25,16 @@ seam path; checks that need the mesh pieces use `@test_pdebase_mesh`, which is `
 To run the Integration group on the PDEBase path, add a PDEBase development revision to a throwaway environment.
 Never commit a Project or Manifest that points at one. Two revisions of xtalax-droid/PDEBase.jl are in use:
 
-- `80715ae` (`forge/strongform`, SciML/PDEBase.jl#148 and #149): box-face boundary conditions, fields in declared
-  order, conditions in input order. The mesh-piece rows stay `@test_broken`.
-- `f14989d` (`forge/m0-all`, the whole M0 stack including #154): also the mesh-piece rows. The tests stop
-  `symbolic_discretize` at the parsed boundary map to get it.
-- `093bbfc` (`forge/boundarymap-accessor`, PDEBase#155 on top of `f14989d`): the same rows, with the boundary map
-  from the public `PDEBase.parsed_boundary_map`.
+- `3dc036b` (`forge/m0-all`, the whole M0 stack: StrongForm, `MeshDomain`, `BoundaryPiece` and `NormalDerivative`
+  slotting from #154, and the public `parsed_boundary_map` from #155): every row, including the mesh-piece ones. This
+  is the default.
+- `80715ae` (`forge/strongform`, SciML/PDEBase.jl#148 and #149), the minimal one: box-face boundary conditions,
+  fields in declared order, conditions in input order. The mesh-piece rows stay `@test_broken`.
 
 From the repository root, with `rev` one of those:
 
 ```sh
-rev=093bbfc
+rev=3dc036b
 env=$(mktemp -d)
 julia --project="$env" -e "using Pkg
     Pkg.develop(path = \".\")
