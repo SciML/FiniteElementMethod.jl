@@ -32,6 +32,7 @@ FiniteElementMethod.dirichlet_rates
 FiniteElementMethod.fem_system
 FiniteElementMethod.numeric_dae_problem
 FiniteElementMethod.consistent_du0
+FiniteElementMethod.eliminate_dirichlet
 FiniteElementMethod.check_finite_initial_condition
 ```
 

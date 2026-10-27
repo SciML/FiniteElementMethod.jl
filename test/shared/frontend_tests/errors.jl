@@ -86,15 +86,36 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         @test_throws ArgumentError("codegen = :mtk lands in M3; use the default codegen = :numeric") FEMDiscretization(
             Ω, t; codegen = :mtk
         )
-        @test_throws ArgumentError("dirichlet = :eliminate lands in M4; use the default dirichlet = :algebraic") FEMDiscretization(
-            Ω, t; dirichlet = :eliminate
+        @test_throws ArgumentError("dirichlet must be :algebraic or :eliminate, got :condense") FEMDiscretization(
+            Ω, t; dirichlet = :condense
         )
+    end
+
+    @testset "steady and time-dependent entry points" begin
+        Ω = box()
         @named steady = PDESystem(
             [Dx(Dx(u(x, y))) + Dy(Dy(u(x, y))) ~ 0], [u(Γ) ~ 0 for Γ in sides(Ω)], [(x, y) ∈ Ω], [x, y], [u(x, y)], []
         )
-        @test_throws ArgumentError("steady problems land in M4; give FEMDiscretization a time variable") discretize(
-            steady, FEMDiscretization(Ω)
-        )
+        @test_throws ArgumentError(
+            "the FEMDiscretization has no time variable, so it lowers to a NonlinearProblem, not a DAEProblem; " *
+                "call discretize(pdesys, disc) or NonlinearProblem(pdesys, disc)"
+        ) DAEProblem(steady, FEMDiscretization(Ω))
+        @test_throws ArgumentError(
+            "a steady FEMDiscretization builds no symbolic System, so it has no symbolic_discretize; " *
+                "call discretize(pdesys, disc) for its NonlinearProblem"
+        ) SciMLBase.symbolic_discretize(steady, FEMDiscretization(Ω))
+        @named transient = PDESystem([heat], [dirichlet(Ω); ic], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
+        @test_throws ArgumentError(
+            "the FEMDiscretization has the time variable t, so it lowers to a DAEProblem; " *
+                "for a steady problem write FEMDiscretization(Ω) without a time variable"
+        ) SciMLBase.NonlinearProblem(transient, FEMDiscretization(Ω, t))
+        @test_throws ArgumentError(
+            "the PDESystem pairs t with an interval, but the FEMDiscretization has no time variable; " *
+                "for a time-dependent problem write FEMDiscretization(Ω, t)"
+        ) discretize(transient, FEMDiscretization(Ω))
+        @test_throws ArgumentError(
+            "keyword `name` is set by the FEM discretization and cannot be passed; the reserved keywords are iv, unknowns, du0, coordinate, name, parameters"
+        ) discretize(steady, FEMDiscretization(Ω); name = :other)
     end
 
     @testset "time-dependent operators" begin

@@ -10,6 +10,7 @@ using FiniteElementMethod: FiniteElementMethod, rectangle_grid
 using Ferrite: Triangle
 using LinearAlgebra: I, norm
 using SciMLBase: remake
+using NonlinearSolveFirstOrder: NewtonRaphson
 
 include(joinpath(@__DIR__, "..", "frontend.jl"))
 
@@ -168,6 +169,44 @@ end
         rd = zeros(Dual{Nothing, Float64, 1}, n)
         prob.f(rd, zeros(n), Dual{Nothing}.(prob.u0, 1.0), prob.p, 0.0)
         @test FiniteElementMethod.ForwardDiff.value.(rd) ≈ r
+    end
+
+    @testset "steady nonlinear diffusion, dirichlet = $dirichlet" for dirichlet in (:algebraic, :eliminate)
+        # ∇·((1 + u*²)∇u*) = 2u*|∇u*|² = 10u* for u* = 1 + x + 2y, which lies in the P1 space.
+        Ω = square()
+        us = 1 + x + 2y
+        eq = Dx((1 + u(x, y)^2) * Dx(u(x, y))) + Dy((1 + u(x, y)^2) * Dy(u(x, y))) ~ 10 * us
+        @named steady = PDESystem([eq], [u(Γ) ~ us for Γ in sides(Ω)], [(x, y) ∈ Ω], [x, y], [u(x, y)], [])
+        prob = discretize(steady, FEMDiscretization(Ω; dirichlet))
+        sol = solve(prob, NewtonRaphson(); abstol = 1.0e-12)
+        @test SciMLBase.successful_retcode(sol)
+        @test sol.stats.nsteps > 1
+        pts = range(0.05, 0.95; length = 7)
+        @test maximum(abs(sol(px, py; dv = u(x, y)) - (1 + px + 2py)) for px in pts, py in pts) <= tol
+    end
+
+    @testset "dirichlet = :eliminate keeps the nonlinear terms" begin
+        # u* = 1 + x + 2y is steady, so its Dirichlet data are constant in time; the sources cancel the diffusion
+        # (10u*) and reaction (u*²) terms at u*, so u stays u* only if N is evaluated.
+        Ω = square()
+        us = 1 + x + 2y
+        eq = Dt(U) ~ Dx((1 + U^2) * Dx(U)) + Dy((1 + U^2) * Dy(U)) - U^2 + us^2 - 10 * us
+        bcs = [[u(t, Γ) ~ us for Γ in sides(Ω)]; u(0, x, y) ~ us]
+        exact(t_, x_, y_) = 1 + x_ + 2y_
+        sole, probe = fem_solve([eq], bcs, Ω, (x, y), t, [U]; dirichlet = :eliminate)
+        sola, _ = fem_solve([eq], bcs, Ω, (x, y), t, [U])
+        @test SciMLBase.successful_retcode(sole)
+        @test nodal_error(sole, U, exact) <= tol
+        @test maximum(abs, sole[U][end, :] - sola[U][end, :]) <= tol
+        @test any(p -> nameof(p) === :Nop, ModelingToolkit.parameters(probe.f.sys))
+        # The analytic Jacobian on the free dofs against central differences of the reduced residual.
+        n = length(probe.u0)
+        rng_u = [1.0 + 0.1 * sin(3i) for i in 1:n]
+        rng_du = [0.2 * cos(5i) for i in 1:n]
+        J = copy(probe.f.jac_prototype)
+        probe.f.jac(J, rng_du, rng_u, probe.p, 0.7, 0.4)
+        Jfd = fd_jacobian(probe, rng_du, rng_u, 0.7, 0.4)
+        @test norm(Matrix(J) - Jfd, Inf) <= 1.0e-7 * norm(Jfd, Inf)
     end
 
     @testset "a parameter changed by remake is rejected, not ignored" begin

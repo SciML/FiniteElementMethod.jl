@@ -12,6 +12,9 @@ PDEBase.contains_point(grid::Ferrite.Grid, x) = _contains_point(grid, x)
 Finite-element discretization of a `PDESystem` whose spatial domain is the mesh domain `Ω`
 (of a `Ferrite.Grid`), with time variable `t`. `DAEProblem(pdesys, disc)` assembles the
 Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknown per field.
+Without `t` the discretization is steady: the `PDESystem` must have no time variable, and
+`discretize` (or `NonlinearProblem(pdesys, disc)`) returns a `NonlinearProblem` whose `solve`
+gives a `PDENoTimeSolution`.
 
   - `spaces`: dependent variable (`u` or `u(t, x, y)`) `=>` `Ferrite.Interpolation`; the
     default is `Lagrange{RefShape, 1}()` on the mesh's reference shape. Fields may have
@@ -27,11 +30,27 @@ Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknow
     stabilisation of every equation; linear terms only, and `τ` cannot reference parameters.
   - `ibp`: equation (or its index) `=>` `PDEBase.StrongForm` integration-by-parts policy.
   - `pairing`: equation `=>` dependent variable it is tested with, needed for an equation
-    with no time derivative of its own, such as `0 ~ Dxx(v) + f`.
-  - `codegen = :mtk` and `dirichlet = :eliminate` are reserved for later milestones and
-    raise; remaining keywords are passed to the `DAEProblem`, where a keyword given at the
-    `DAEProblem`/`discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate`, `name` and
-    `parameters` are set by the discretization and rejected.
+    with no time derivative of its own, such as `0 ~ Dxx(v) + f`. In a steady system the
+    equations not named here take the remaining dependent variables in declared order.
+  - `dirichlet`: how Dirichlet conditions enter the DAE (spec §7.3). The default `:algebraic`
+    keeps every dof as an unknown and makes each prescribed row the algebraic equation
+    `u_d = g_d(t)`. `:eliminate` removes the prescribed dofs: the unknowns are the free dofs
+    `fr`, the operators are `M[fr, fr]` and `K[fr, fr]` and the load is `F[fr] - K[fr, cd] g`;
+    nonlinear terms are evaluated at the full state with `u_cd = g` and keep their rows `fr`.
+    It needs Dirichlet data that are constant in time (they may vary in space); data that
+    depend on time raise `ArgumentError("dirichlet = :eliminate needs Dirichlet data that are
+    constant in time, but the condition on boundary piece <name> depends on time; use the default
+    dirichlet = :algebraic")` from `DAEProblem`. A field whose dofs are all prescribed has no
+    array unknown (its `FieldInfo.unknown` is `nothing`); if every dof of the problem is
+    prescribed, `DAEProblem` raises `ArgumentError("dirichlet = :eliminate leaves no unknowns
+    because every dof is prescribed; use the default dirichlet = :algebraic")`. The solution
+    still returns full fields, with `g` at the prescribed nodes, through `sol[u]`,
+    `sol(t, x, y)`, traces and `write_vtk`; only `sol.original_sol` and the array unknowns
+    hold the free dofs alone. `:algebraic` is recommended.
+  - `codegen = :mtk` is reserved for a later milestone and raises; remaining keywords are
+    passed to the `DAEProblem` (or `NonlinearProblem`), where a keyword given at the
+    `DAEProblem`/`NonlinearProblem`/`discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate`,
+    `name` and `parameters` are set by the discretization and rejected.
 
 Pieces come from `boundarypiece.(Ω, names)`; on an analytic DomainSets box write
 `boundarypiece.(Ref(rect), names)`, since DomainSets types do not broadcast as scalars.
@@ -87,9 +106,8 @@ function FEMDiscretization(
         throw(ArgumentError("FEMDiscretization needs a MeshDomain of a Ferrite.Grid, got a mesh of type $(typeof(domain.mesh))"))
     codegen === :mtk && throw(ArgumentError("codegen = :mtk lands in M3; use the default codegen = :numeric"))
     codegen === :numeric || throw(ArgumentError("codegen must be :numeric, got $(repr(codegen))"))
-    dirichlet === :eliminate &&
-        throw(ArgumentError("dirichlet = :eliminate lands in M4; use the default dirichlet = :algebraic"))
-    dirichlet === :algebraic || throw(ArgumentError("dirichlet must be :algebraic, got $(repr(dirichlet))"))
+    dirichlet in (:algebraic, :eliminate) ||
+        throw(ArgumentError("dirichlet must be :algebraic or :eliminate, got $(repr(dirichlet))"))
     test_space isa Union{Galerkin, SUPG} ||
         throw(ArgumentError("test_space must be Galerkin() or SUPG(τ; b = nothing), got $(repr(test_space))"))
     for (dv, region) in regions
