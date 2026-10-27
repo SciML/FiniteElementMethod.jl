@@ -207,14 +207,6 @@ function assemble_sources!(F, ctx::AssemblyContext, kernels, p, t)
     return F
 end
 
-# `reinit!` mutates CellValues and FacetValues, so each load evaluation gets its own copies and
-# concurrent solves of one problem's remakes share no mutable state.
-function _fresh_values(ctx::AssemblyContext{NF, DH, CV, FV}) where {NF, DH, CV, FV}
-    return AssemblyContext{NF, DH, CV, FV}(
-        ctx.dh, ctx.fields, map(copy, ctx.cellvalues), map(copy, ctx.facetvalues), ctx.facetsets, ctx.facetcells
-    )
-end
-
 function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
     kernels = emit_kernels(wf)
     timedep = [term.kind === :source && term.timedep for term in vcat(wf.volume, wf.facet)]

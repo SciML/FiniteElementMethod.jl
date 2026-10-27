@@ -50,6 +50,10 @@ function load!(out, F::FEMLoad, t)
     return out
 end
 
+# ForwardDiff residuals, as from the default initializer's NewtonRaphson: the load does not depend on the state
+# and is assembled in `Float64`.
+load!(out::AbstractVector{<:ForwardDiff.Dual}, F::FEMLoad, t) = (out .= load!(zeros(length(out)), F, t))
+
 function dirichlet_values!(out, F::FEMLoad, t)
     g = F.values
     if g isa Union{Number, AbstractVector}
@@ -91,31 +95,69 @@ Opaque wrapper for the nonlinear part `N(u, t)` of `M du + K u + N(u, t) = F(t)`
 non-tunable `System` parameter like [`FEMOp`](@ref): `op` is a [`NonlinearOperator`](@ref)
 and `p` the parameter values its kernels are evaluated with. [`FEMOperators`](@ref) marks the
 prescribed dofs, whose rows of `N` and of its Jacobian are then zero. `op` is untyped so that
-the parameter has one concrete type; each call dispatches on it once. The operator's buffers
-are shared by every problem holding this wrapper (remakes, ensembles), so those problems must
-not be solved concurrently.
+the parameter has one concrete type; each call dispatches on it once. `op` itself is never
+evaluated: each evaluation borrows a copy with its own buffers and values objects from a pool,
+so problems sharing this wrapper (remakes, ensembles) can be solved concurrently.
 """
 struct FEMNonlinear
     op::Any
     p::Vector{Float64}
     prescribed::BitVector
+    pool::Vector{Any}
+    lock::ReentrantLock
 end
-FEMNonlinear(op, p) = FEMNonlinear(op, collect(Float64, p), falses(0))
+FEMNonlinear(op, p, prescribed = falses(0)) = FEMNonlinear(op, collect(Float64, p), prescribed, Any[], ReentrantLock())
 Base.show(io::IO, ::FEMNonlinear) = print(io, "FEMNonlinear")
 
-function nonlinear_residual!(r, N::FEMNonlinear, u, t)
-    residual!(r, N.op, u, N.p, t)
-    r[N.prescribed] .= 0
-    return r
+# `f(op)` with an operator no other running call holds; the pool grows to the number of concurrent calls.
+function with_operator(f, N::FEMNonlinear)
+    op = @lock N.lock isempty(N.pool) ? nothing : pop!(N.pool)
+    op === nothing && (op = independent_copy(N.op))
+    try
+        return f(op)
+    finally
+        @lock N.lock push!(N.pool, op)
+    end
 end
 
-function nonlinear_jacobian!(N::FEMNonlinear, u, t)
-    J = jacobian!(N.op.J, N.op, u, N.p, t)
-    rows = rowvals(J)
-    for k in eachindex(rows)
-        N.prescribed[rows[k]] && (nonzeros(J)[k] = 0)
+# `r .+= N(u, t)` outside the prescribed rows.
+function add_nonlinear!(r, N::FEMNonlinear, u, t)
+    return with_operator(N) do op
+        residual!(op.r, op, u, N.p, t)
+        for i in eachindex(r)
+            N.prescribed[i] || (r[i] += op.r[i])
+        end
+        r
     end
-    return J
+end
+
+# ForwardDiff states, as from the default initializer's NewtonRaphson: the partials are pushed through the
+# analytic tangent, `∂N(u) = J_N(value(u)) ∂u`, since the element buffers hold `Float64`.
+function add_nonlinear!(r, N::FEMNonlinear, u::AbstractVector{ForwardDiff.Dual{T, Float64, P}}, t) where {T, P}
+    du = [ForwardDiff.partials(x, k) for x in u, k in 1:P]
+    return with_operator(N) do op
+        J = jacobian!(op.J, op, ForwardDiff.value.(u), N.p, t)
+        dr = J * du
+        for i in eachindex(r)
+            N.prescribed[i] || (r[i] += ForwardDiff.Dual{T}(op.r[i], ForwardDiff.Partials(ntuple(k -> dr[i, k], Val(P)))))
+        end
+        r
+    end
+end
+
+nonlinear_residual!(r, N::FEMNonlinear, u, t) = add_nonlinear!(fill!(r, 0), N, u, t)
+
+# `nonzeros(J) .+= nonzeros(∂N/∂u)` outside the prescribed rows; `J` must have the pattern of `N`'s Jacobian.
+function add_nonlinear_jacobian!(J, N::FEMNonlinear, u, t)
+    return with_operator(N) do op
+        JN = jacobian!(op.J, op, u, N.p, t)
+        check_pattern(J, JN, "Nop")
+        rows, vals, out = rowvals(JN), nonzeros(JN), nonzeros(J)
+        for k in eachindex(rows)
+            N.prescribed[rows[k]] || (out[k] += vals[k])
+        end
+        J
+    end
 end
 
 # `fem_nonlinear(op, rows, t, x)` is rows `rows` of `N(x, t)`, with `x` the whole state built from the
@@ -360,7 +402,6 @@ function numeric_dae_problem(
     check_assembled = assembled_parameter_check(sys, parameters)
     getM, getK, getF = getp(sys, sys.Mop), getp(sys, sys.Kop), getp(sys, sys.Fop)
     getN = ops.nonlinear === nothing ? Returns(nothing) : getp(sys, sys.Nop)
-    nbuf = zeros(length(u0))
     function residual!(res, du, u, p, t)
         check_assembled(p)
         load!(res, getF(p), t)
@@ -368,10 +409,10 @@ function numeric_dae_problem(
         mul!(res, getM(p).A, du, true, true)
         mul!(res, getK(p).A, u, true, true)
         N = getN(p)
-        N === nothing || (res .+= nonlinear_residual!(nbuf, N, u, t))
+        N === nothing || add_nonlinear!(res, N, u, t)
         return nothing
     end
-    # The Dirichlet rows of K + γM are already e_d and those of N's Jacobian zero, so the
+    # The Dirichlet rows of K + γM are already e_d and N's Jacobian skips them, so the
     # stored values are added as they are.
     function jac!(J, du, u, p, γ, t)
         check_assembled(p)
@@ -380,11 +421,7 @@ function numeric_dae_problem(
         check_pattern(J, Mp, "Mop")
         nonzeros(J) .= nonzeros(Kp) .+ γ .* nonzeros(Mp)
         N = getN(p)
-        if N !== nothing
-            JN = nonlinear_jacobian!(N, u, t)
-            check_pattern(J, JN, "Nop")
-            nonzeros(J) .+= nonzeros(JN)
-        end
+        N === nothing || add_nonlinear_jacobian!(J, N, u, t)
         return nothing
     end
     u0 = collect(u0)
