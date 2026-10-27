@@ -185,6 +185,10 @@ end
     @test sol[Differential(x)(U)] ≈ -ones(getnnodes(grid)) atol = 1.0e-10
     @test sol(0.3, 0.6; dv = Differential(x)(U)) ≈ -1 atol = 1.0e-12
     @test isnan(sol(1.5, 0.5; dv = U))
+    @test sol[U^2 + x] ≈ sol[U] .^ 2 .+ sol[x] atol = 1.0e-12
+    @test sol[2U + Differential(x)(U)] ≈ 1 .- 2 .* sol[x] atol = 1.0e-10
+    @test sol(0.3, 0.6; dv = U * y) ≈ 0.7 * 0.6 atol = 1.0e-12
+    @test sol(Γ; dv = U + y) ≈ 1 .+ sol[y][piece_nodes(sol, Γ)] atol = 1.0e-12
 end
 
 @testset "Points missed by Ferrite's nearest-node search" begin
