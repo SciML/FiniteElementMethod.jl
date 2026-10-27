@@ -15,7 +15,9 @@ Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknow
 
   - `spaces`: dependent variable (`u` or `u(t, x, y)`) `=>` `Ferrite.Interpolation`; the
     default is `Lagrange{RefShape, 1}()` on the mesh's reference shape. All fields must
-    currently share one interpolation.
+    currently share one interpolation. The geometry is not a choice here: cells are mapped
+    with the geometric interpolation of the mesh's cell type, so a mesh of quadratic cells
+    (`QuadraticTriangle`, say, from a second-order Gmsh mesh) is mapped isoparametrically.
   - `quadrature`: quadrature order; `nothing` means `2p` for Lagrange order `p`.
   - `ibp`: equation (or its index) `=>` `PDEBase.StrongForm` integration-by-parts policy.
   - `pairing`: equation `=>` dependent variable it is tested with, needed for an equation
