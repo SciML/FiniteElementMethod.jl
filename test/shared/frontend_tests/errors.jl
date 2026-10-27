@@ -86,8 +86,8 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         @test_throws ArgumentError("codegen = :mtk lands in M3; use the default codegen = :numeric") FEMDiscretization(
             Ω, t; codegen = :mtk
         )
-        @test_throws ArgumentError("dirichlet = :eliminate lands in M4; use the default dirichlet = :algebraic") FEMDiscretization(
-            Ω, t; dirichlet = :eliminate
+        @test_throws ArgumentError("dirichlet must be :algebraic or :eliminate, got :condense") FEMDiscretization(
+            Ω, t; dirichlet = :condense
         )
         @named steady = PDESystem(
             [Dx(Dx(u(x, y))) + Dy(Dy(u(x, y))) ~ 0], [u(Γ) ~ 0 for Γ in sides(Ω)], [(x, y) ∈ Ω], [x, y], [u(x, y)], []

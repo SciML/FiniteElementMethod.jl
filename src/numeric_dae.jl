@@ -155,6 +155,51 @@ function replace_dirichlet_rows!(M, K, prescribed)
     return M, K
 end
 
+# What the post-step needs to rebuild the full dof vector from the free dofs.
+struct DirichletElimination
+    n::Int
+    free::Vector{Int}
+    prescribed::Vector{Int}
+    values::Vector{Float64}
+end
+
+function full_state(e::DirichletElimination, u_free)
+    u = zeros(eltype(u_free), e.n)
+    u[e.free] = u_free
+    u[e.prescribed] = e.values
+    return u
+end
+
+"""
+    eliminate_dirichlet(ops::FEMOperators) -> (reduced::FEMOperators, elimination)
+
+Restrict `ops` to its free dofs `fr` (spec §7.3): `M[fr, fr]`, `K[fr, fr]` and the load
+`F[fr] - K[fr, cd] g` for the prescribed dofs `cd`. The Dirichlet data `g` must be constant in
+time, so `g' = 0` and the term `M[fr, cd] g'` vanishes; time-dependent data throw an `ArgumentError`.
+The field ranges of `reduced` count free dofs only; `full_state(elimination, u_free)` rebuilds
+the full dof vector with `u[cd] = g`.
+"""
+function eliminate_dirichlet(ops::FEMOperators)
+    F = ops.load
+    F.values isa Union{Number, AbstractVector} ||
+        throw(ArgumentError("eliminate_dirichlet needs Dirichlet data that are constant in time"))
+    n = size(ops.K, 1)
+    isfree = trues(n)
+    isfree[ops.prescribed] .= false
+    free = findall(isfree)
+    g = dirichlet_values!(zeros(length(ops.prescribed)), F, 0.0)
+    Kg = ops.K[free, ops.prescribed] * g
+    load = F.load isa AbstractVector ? F.load[free] - Kg :
+        (out, t) -> (out .= view(F.load(zeros(n), t), free) .- Kg; out)
+    stop = 0
+    fields = map(ops.fields) do (name, r)
+        start, stop = stop + 1, stop + count(view(isfree, r))
+        name => start:stop
+    end
+    reduced = FEMOperators(ops.M[free, free], ops.K[free, free], load, fields)
+    return reduced, DirichletElimination(n, free, ops.prescribed, g)
+end
+
 """
     check_finite_initial_condition(u0, fields; coordinate = nothing)
 

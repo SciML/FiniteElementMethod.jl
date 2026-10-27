@@ -230,6 +230,7 @@ heat_operators(fe; kw...) = FEMOperators(fe.M, fe.K, fe.F, [:u => 1:length(fe.F)
         @test SciMLBase.successful_retcode(sol)
         @test sol(0.05) ≈ [-0.05, 0.05] atol = 1.0e-12
         @test sol.u[end] ≈ [-1.0, 1.0] atol = 1.0e-12
+        @test_throws ArgumentError("eliminate_dirichlet needs Dirichlet data that are constant in time") FiniteElementMethod.eliminate_dirichlet(ops2)
         # Constant Dirichlet data gives du_d = 0.
         @test FiniteElementMethod.dirichlet_rates(ops.load, 0.0) == zeros(length(fe.prescribed))
     end
