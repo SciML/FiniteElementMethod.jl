@@ -15,10 +15,16 @@ the package behave differently from what a MethodOfLines user expects.
     for a surface mesh embedded in 3D it is the embedding dimension 3. A mismatch is an error
     when the system is discretized:
     `domain MeshDomain of a … mesh has 3 coordinates but the pairing names 2`.
-  - The dependent variables must take the coordinates in the order of the pairing: with
-    `(x, y) ∈ Ω`, write `u(t, x, y)`, not `u(t, y, x)`. To make `y` mesh coordinate 1, write
-    `(y, x) ∈ Ω` and `u(t, y, x)`. A mismatch is an error in this release:
-    `the domain pairing names the coordinates in the order (y, x) but the dependent variables take them in the order (x, y); write both in the same order`.
+  - The order of the pairing, not the argument order of the dependent variables, decides
+    which name is which mesh coordinate: with `(y, x) ∈ Ω` and `u(t, x, y)`, `y` is mesh
+    coordinate 1 and `x` is mesh coordinate 2.
+
+    !!! note "PDEBase versions before PDEBase#158"
+        Before PDEBase#158 the coordinates were numbered in the dependent variables' argument
+        order, so on those versions the discretization requires the pairing to list the
+        coordinates in that same order and raises an error otherwise:
+        `the domain pairing names the coordinates in the order (y, x) but the dependent variables take them in the order (x, y); write both in the same order`.
+
   - The same pairing orders `sol[x]` and `sol[y]` (the node coordinates) and the spatial
     arguments of `sol(t, x, y)`.
   - Trace and `NormalDerivative` conditions never mention coordinate names, so they need none.
