@@ -14,6 +14,9 @@ const NONPUBLIC_PDEBASE = Tuple(
             (isdefined(PDEBase, :StrongForm) ? PDEBase.StrongForm : PDEBase, :pair_equations),
         ) if !ispublic_in(mod, name)
 )
+# ModelingToolkit re-exports these ModelingToolkitBase names; on Julia 1.10 `Base.which` reports
+# ModelingToolkitBase as their owner, on 1.11+ ModelingToolkit, the module we depend on.
+const LTS_MTK_OWNER = VERSION < v"1.11" ? (:ProblemTypeCtx, :t_nounits) : ()
 
 run_qa(
     FiniteElementMethod;
@@ -23,6 +26,8 @@ run_qa(
         all_qualified_accesses_are_public = (;
             ignore = (:FieldWise, :derivative, :dirichlet_facetdof_indices, NONPUBLIC_PDEBASE...),
         ),
+        all_explicit_imports_via_owners = (; ignore = LTS_MTK_OWNER),
+        all_qualified_accesses_via_owners = (; ignore = LTS_MTK_OWNER),
     ),
     # FEMDiscretization is rendered on the Discretization page, which docs/make.jl copies into
     # docs/src from docs/discretization.md only when the front end is available.
