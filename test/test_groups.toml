@@ -6,3 +6,12 @@ versions = ["lts", "1"]
 
 [WeakForm]
 versions = ["lts", "1", "pre"]
+
+[Kernels]
+versions = ["lts", "1", "pre"]
+
+[Assembly]
+versions = ["lts", "1", "pre"]
+
+[Integration]
+versions = ["lts", "1", "pre"]
