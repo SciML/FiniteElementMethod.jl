@@ -36,7 +36,8 @@ gives a `PDENoTimeSolution`.
     (those with `differential_vars` false: algebraic fields and Dirichlet rows), so that they
     are left out of the solver's error control. `:auto` sets `1e8` when the system has index
     2, that is when an algebraic field's own unknowns are absent from its equation (the
-    pressure in `0 ~ Dx(u1) + Dy(u2)`), and nothing otherwise; a positive number sets that
+    pressure in `0 ~ Dx(u1) + Dy(u2)`; a nonlinear term in the field, as in `0 ~ v^2 - u`,
+    counts as present), and nothing otherwise; a positive number sets that
     value on the algebraic rows of any system; `nothing` sets nothing. The differential rows
     get the `abstol` passed to `FEMDiscretization` or `DAEProblem` if it is a number, else
     OrdinaryDiffEq's default `1e-6`; an array `abstol` passed there is used as it is. An
