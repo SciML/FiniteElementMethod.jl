@@ -80,7 +80,8 @@ Dirichlet rows" in [Getting started](@ref) for the setting that holds them to ro
 
 **Corners.** Where two pieces with Dirichlet conditions on the same field meet, the shared
 nodes take the condition listed last in the `PDESystem`'s boundary conditions, as in Ferrite's
-`ConstraintHandler`. A condition listed twice counts at its last occurrence.
+`ConstraintHandler`. Listing a Dirichlet condition on the same piece and field twice is an
+error.
 
 ## Neumann conditions
 
@@ -139,6 +140,5 @@ is an error that names the problem; nothing falls back to `mtkcompile`.
 | Fields with different interpolations, such as P2 velocity and P1 pressure | error; lands in M4 |
 | A periodic condition `u(t, Γa) ~ u(t, Γb)` | error; lands in M4 |
 | A dependent variable whose first argument is not time, such as `u(x, y, t)` | error |
-| A pairing whose coordinate order differs from the dependent variables' argument order | error on PDEBase before PDEBase#158; accepted after it, with the pairing deciding the order |
 | Two Dirichlet pieces of one field sharing nodes | the condition listed last wins |
 | A boundary piece with no condition | natural zero-flux condition, with a warning when the equations have a flux |

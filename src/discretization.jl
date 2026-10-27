@@ -121,7 +121,7 @@ end
 
 # The SciMLBase PDE-interface checklist of this discretization (PDEBase#147). docs/make.jl renders
 # it on the Discretization page and docs/src/boundary_conditions.md keeps a static copy for builds
-# without the front end; test/Frontend/supported_conditions.jl keeps the two equal.
+# without the front end; test/Frontend/documentation.jl keeps the two equal.
 # Tracking: drop the `isdefined` guard once the PDEBase compat floor has `supported_conditions`.
 @static if isdefined(PDEBase, :supported_conditions)
     PDEBase.supported_conditions(::FEMDiscretization) = PDEBase.SupportedConditions(;
