@@ -15,7 +15,9 @@
 #   - The pressure has no equation of its own: the continuity equation is paired with it explicitly, and the
 #     system is a DAE of index 2. Its initial state is consistent without index reduction because the flow starts
 #     at rest and the inflow is ramped up by 1 − exp(−t²), whose value and rate vanish at t = 0; the default
-#     initialisation, which would solve the continuity rows for p, is replaced by a check.
+#     initialisation, which would solve the continuity rows for p, is replaced by a check. The zero
+#     velocity is discretely divergence free, and p needs no initial condition: it is algebraic, starts at zero,
+#     and every residual row vanishes at t = 0.
 #   - The pressure, an index-2 algebraic variable, and the Dirichlet rows are left out of DFBDF's error control (an
 #     absolute tolerance of 1e8 on them): the local error of an index-2 variable does not shrink with the step, so
 #     with it DFBDF cuts the step to nothing. The Dirichlet rows are exact anyway with a W refreshed every step.
@@ -78,7 +80,16 @@ differential_abstol(prob, abstol) = [d ? abstol : 1.0e8 for d in prob.differenti
 
 # UMFPACK by name: LinearSolve 5.18's default sparse LU (supernodal) throws "snlu! requires the same sparsity
 # pattern as the analyzed matrix" on these Newton matrices, as it does on Ferrite's own ns_vs_diffeq tutorial.
+# Naming it also removes the default's silent fall-back to sparse QR when a Newton matrix is singular, which
+# for this index-2 system took tens of GB: a singular matrix now fails the step, and `check_solved` raises.
 const DFG_ALG = DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0), linsolve = UMFPACKFactorization())
+
+"Raise unless `sol` reached its final time; a DAE solve that stopped early must not report coefficients."
+function check_solved(sol)
+    SciMLBase.successful_retcode(sol) ||
+        error("the DFG solve stopped at t = $(sol.t[end]) with retcode $(sol.retcode); with the pressure in the error control or a singular Newton matrix DFBDF cuts its step to nothing")
+    return sol
+end
 
 """
     dfg_solve(; h = 0.04, hc = 0.0025, tend = 60.0, alg = DFG_ALG, abstol = 1e-7, reltol = 1e-7)
@@ -89,7 +100,7 @@ coefficients `(cD, cL, Δp)` at `tend`.
 function dfg_solve(; h = 0.04, hc = 0.0025, tend = 60.0, alg = DFG_ALG, abstol = 1.0e-7, reltol = 1.0e-7)
     grid = dfg_channel_grid(; h, hc)
     build_s = @elapsed prob = dfg_problem(grid; tend)
-    solve_s = @elapsed sol = solve(prob, alg; abstol = differential_abstol(prob, abstol), reltol, save_everystep = false)
+    solve_s = @elapsed sol = check_solved(solve(prob, alg; abstol = differential_abstol(prob, abstol), reltol, save_everystep = false))
     dh = sol.disc_data.space.dh
     xend = sol.original_sol.u[end]
     dxdt = sol.original_sol(tend, Val{1})

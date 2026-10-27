@@ -50,7 +50,9 @@ sol = solve(prob, DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0), linsolve = UMFP
 - **Index-2 DAE.** The continuity equation is paired with the pressure explicitly. The flow
   starts at rest and the inflow is ramped by `1 − exp(−t²)`, whose value and rate vanish at
   `t = 0`, so the zero initial state is consistent and the default initialisation (which
-  would solve the continuity rows for the pressure) is replaced by `CheckInit()`. The
+  would solve the continuity rows for the pressure) is replaced by `CheckInit()`. The zero
+  velocity is discretely divergence free; the pressure, an algebraic variable, starts at zero
+  and needs no initial condition, since every residual row vanishes at `t = 0`. The
   pressure and the Dirichlet rows are left out of the error control: the local error of an
   index-2 variable does not shrink with the step.
 - **Steady state.** 2D-1 is steady; the DAE is integrated to `t = 60`, where the flow has
@@ -58,7 +60,9 @@ sol = solve(prob, DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0), linsolve = UMFP
   functional.
 - **Linear solver.** UMFPACK is named because LinearSolve 5.18's default sparse LU throws
   "snlu! requires the same sparsity pattern as the analyzed matrix" on these Newton matrices
-  (and on Ferrite's own `ns_vs_diffeq.jl` tutorial).
+  (and on Ferrite's own `ns_vs_diffeq.jl` tutorial). Naming it also removes the default's
+  silent fall-back to sparse QR on a singular Newton matrix, which costs tens of gigabytes
+  here; the example's `check_solved` raises if the solve stops before its final time.
 
 ## Drag and lift
 

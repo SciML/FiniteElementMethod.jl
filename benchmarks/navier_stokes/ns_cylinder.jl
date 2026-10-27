@@ -25,7 +25,7 @@ const T_END = parse(Float64, get(ENV, "BENCHMARK_NS_T", "6.0"))
 function fem_tutorial(grid; T)
     build_s = @elapsed prob = dfg_problem(grid; tend = T, ν_ = 1.0e-3, Umax_ = 1.5, ramp = min(t, 1))
     abstol = differential_abstol(prob, 1.0e-4)
-    solve_s = @elapsed sol = solve(prob, DFG_ALG; abstol, reltol = 1.0e-5, saveat = 0.1, tstops = [1.0])
+    solve_s = @elapsed sol = check_solved(solve(prob, DFG_ALG; abstol, reltol = 1.0e-5, saveat = 0.1, tstops = [1.0]))
     return (; sol, build_s, solve_s, ndofs = length(prob.u0), steps = sol.original_sol.stats.naccept + sol.original_sol.stats.nreject)
 end
 

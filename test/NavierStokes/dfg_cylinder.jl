@@ -10,6 +10,8 @@ if FiniteElementMethod.MESH_PDEBASE
         r = dfg_solve(; h, hc)
         @info "DFG 2D-1" r.ndofs r.build_s r.solve_s r.coefficients
         @test SciMLBase.successful_retcode(r.sol)
+        stopped = solve(r.prob, DFG_ALG; abstol = differential_abstol(r.prob, 1.0e-7), reltol = 1.0e-7, maxiters = 3)
+        @test_throws "the DFG solve stopped at t = " check_solved(stopped)
         c = r.coefficients
         for k in (:cD, :cL, :Δp)
             lo, hi = DFG_2D1_BANDS[k]
