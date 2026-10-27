@@ -155,9 +155,10 @@ function _space(disc, ctx, analysis, dirichlet, pvals, t0)
     shape = Ferrite.getrefshape(Ferrite.getcelltype(grid))
     names = Symbol[nameof(op) for op in ctx.ops]
     ips = [get(disc.spaces, op, Ferrite.Lagrange{shape, 1}()) for op in ctx.ops]
-    allequal(ips) || throw(ArgumentError("fields with different interpolations land in M4; got $(join(ips, ", "))"))
-    Ferrite.getrefshape(first(ips)) == shape ||
-        throw(ArgumentError("the interpolation $(first(ips)) is not on the reference shape $shape of the mesh cells"))
+    for ip in ips
+        Ferrite.getrefshape(ip) == shape ||
+            throw(ArgumentError("the interpolation $ip is not on the reference shape $shape of the mesh cells"))
+    end
     bcs = [
         (names[bc.field], String(bc.piece.name), (x, t) -> g(x, t, pvals))
             for (bc, (_, _, g)) in zip(analysis.essential, dirichlet)

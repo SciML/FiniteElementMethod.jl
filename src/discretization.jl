@@ -14,9 +14,11 @@ Finite-element discretization of a `PDESystem` whose spatial domain is the mesh 
 Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknown per field.
 
   - `spaces`: dependent variable (`u` or `u(t, x, y)`) `=>` `Ferrite.Interpolation`; the
-    default is `Lagrange{RefShape, 1}()` on the mesh's reference shape. All fields must
-    currently share one interpolation.
-  - `quadrature`: quadrature order; `nothing` means `2p` for Lagrange order `p`.
+    default is `Lagrange{RefShape, 1}()` on the mesh's reference shape. Fields may have
+    different orders, such as the Taylor–Hood pair `Lagrange{RefTriangle, 2}()` for the
+    velocity and `Lagrange{RefTriangle, 1}()` for the pressure.
+  - `quadrature`: quadrature order shared by all fields; `nothing` means `2p` for the
+    highest Lagrange order `p`.
   - `ibp`: equation (or its index) `=>` `PDEBase.StrongForm` integration-by-parts policy.
   - `pairing`: equation `=>` dependent variable it is tested with, needed for an equation
     with no time derivative of its own, such as `0 ~ Dxx(v) + f`.
