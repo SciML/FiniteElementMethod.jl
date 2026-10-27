@@ -503,13 +503,17 @@ function _evaluate_observed(A::FEMSolution, ts, states, tshape, xs, dv, outside)
         lost = isnothing.(_located(A, pts, outside).cells)
         coords = [getindex.(pts, d) for d in eachindex(md.x̄)]
     end
+    # The expression is evaluated only inside the mesh, where its domain (sqrt, log) may not
+    # extend, and the output is floating point so that the outside points can hold NaN.
+    inside = findall(!, lost)
     function value(term, kind)
         kind === :time && return ts
-        kind === :coord && return permutedims(coords[findfirst(x -> isequal(term, Symbolics.unwrap(x)), md.x̄)])
-        return reshape(_evaluate(A, ts, states, (nt,), xs, term, outside), nt, :)
+        kind === :coord && return permutedims(coords[findfirst(x -> isequal(term, Symbolics.unwrap(x)), md.x̄)][inside])
+        return reshape(_evaluate(A, ts, states, (nt,), xs, term, outside), nt, :)[:, inside]
     end
-    out = _broadcast_observed(fn, (nt, length(lost)), map(value, terms, kinds))
-    out[:, lost] .= NaN
+    vals = _broadcast_observed(fn, (nt, length(inside)), map(value, terms, kinds))
+    out = fill(eltype(vals) <: Number ? float(eltype(vals))(NaN) : NaN, nt, length(lost))
+    out[:, inside] .= vals
     shp = (tshape..., pshape...)
     return isempty(shp) ? out[1] : reshape(out, shp)
 end

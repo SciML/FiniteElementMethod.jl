@@ -59,6 +59,13 @@ observed_error(ex, why) = ArgumentError("cannot evaluate the expression $ex on t
         # A coordinate-only expression is NaN outside the mesh, like a field value.
         @test isequal(sol(0.5, [Vec(0.3, 0.2), Vec(2.0, 0.0)]; dv = x + y), [0.5, NaN])
         @test_throws DomainError sol(0.5, 2.0, 0.0; dv = 2x, outside = :error)
+        # Outside points are not evaluated, so an expression undefined there is NaN, not an error.
+        @test isnan(sol(0.5, -1.0, 0.5; dv = sqrt(x)))
+        @test isequal(sol(0.5, [0.25, -1.0], 0.5; dv = log(x) + U), [log(0.25) + sol(0.5, 0.25, 0.5; dv = U), NaN])
+        # An integer-valued expression is returned as floating point so outside points hold NaN.
+        @test sol(0.5, 0.3, 0.5; dv = 2k) === 4.0
+        @test isequal(sol(0.5, [0.3, 2.0], 0.5; dv = 2k), [4.0, NaN])
+        @test isnan(sol(0.5, 2.0, 0.5; dv = 2k))
         Γ = first(pieces(Ω))
         nodes = piece_nodes(sol, Γ)
         @test sol(0.5, Γ; dv = U + y) ≈ sol(0.5, Γ; dv = U) .+ sol[y][nodes] atol = 1.0e-14
