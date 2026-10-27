@@ -12,6 +12,7 @@ using DomainSets: DomainSets
 using Ferrite: Ferrite
 using ModelingToolkit: ModelingToolkit
 using PDEBase: PDEBase
+using PrecompileTools: PrecompileTools
 using RuntimeGeneratedFunctions: RuntimeGeneratedFunctions
 using SciMLBase: SciMLBase
 using Symbolics: Symbolics, Num
@@ -23,5 +24,6 @@ include("weakform.jl")
 include("kernels.jl")
 include("assembly.jl")
 include("operators.jl")
+include("precompile.jl")
 
 end # module
