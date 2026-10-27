@@ -107,11 +107,23 @@ end
 @testset "facet-count assertion" begin
     ks = heat_kernels()
     bogus = Set([FacetIndex(1, 1), FacetIndex(10^6, 1)])   # no cell 10^6; triangles have no facet 4
-    @test_throws ErrorException assemble_linear(heat_context(4; neumann = bogus), ks, P_HEAT)
-    @test_throws ErrorException assemble_linear(heat_context(4; robin = Set([FacetIndex(1, 4)])), ks, P_HEAT)
-    @test_throws ErrorException assemble_linear(heat_context(4; neumann = "nonexistent"), ks, P_HEAT)
+    @test_throws ArgumentError(
+        "piece neumann: assembled 1 facets, but its facet set has 2; the set must hold FacetIndex entries of this grid"
+    ) assemble_linear(heat_context(4; neumann = bogus), ks, P_HEAT)
+    @test_throws ArgumentError(
+        "piece robin: assembled 0 facets, but its facet set has 1; the set must hold FacetIndex entries of this grid"
+    ) assemble_linear(heat_context(4; robin = Set([FacetIndex(1, 4)])), ks, P_HEAT)
+    @test_throws ArgumentError("piece neumann: the grid has no facet set named \"nonexistent\"") heat_context(4; neumann = "nonexistent")
     unknown = (KernelSpec(1, :source, :elsewhere, (U, G, Ud, V, W, X, T, N, P) -> V, nothing),)
-    @test_throws ErrorException assemble_linear(heat_context(4), unknown, P_HEAT)
+    @test_throws ArgumentError("no facet set is given for piece elsewhere: add it to the pieces of the AssemblyContext") assemble_linear(heat_context(4), unknown, P_HEAT)
+end
+
+@testset "malformed kernels are rejected with ArgumentErrors" begin
+    f(U, G, Ud, V, W, X, T, N, P) = V
+    reject(kernel) = assemble_linear(heat_context(4), (kernel,), P_HEAT)
+    @test_throws ArgumentError("kernel kind :stiffness is not one of :mass, :bilinear, :source, :nonlinear") reject(KernelSpec(1, :stiffness, nothing, f, nothing))
+    @test_throws ArgumentError("kernel equation 2 is outside 1:1, the fields of the AssemblyContext") reject(KernelSpec(2, :source, nothing, f, nothing))
+    @test_throws ArgumentError("nonlinear kernel of equation 1 has no tangent") assemble_nonlinear(heat_context(4), (KernelSpec(1, :nonlinear, nothing, f, nothing),), zeros(25), P_HEAT)
 end
 
 @testset "facet sets are snapshots taken at construction" begin

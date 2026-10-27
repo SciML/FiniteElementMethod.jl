@@ -40,7 +40,7 @@ function _named_facetset(grid, piece, name)
     try
         return Ferrite.getfacetset(grid, name)
     catch err
-        err isa KeyError && error("piece $piece: the grid has no facet set named \"$name\"")
+        err isa KeyError && throw(ArgumentError("piece $piece: the grid has no facet set named \"$name\""))
         rethrow()
     end
 end
@@ -125,9 +125,9 @@ end
 "Volume kernels of `kinds` as a tuple, and one `(facet set, kernel tuple, piece)` group per facet piece."
 function _split(ctx::AssemblyContext{NF}, kernels, kinds) where {NF}
     for k in kernels
-        k.kind in (:mass, :bilinear, :source, :nonlinear) || error("kernel kind $(repr(k.kind)) is not one of :mass, :bilinear, :source, :nonlinear")
-        1 ≤ k.eq ≤ NF || error("kernel equation $(k.eq) is outside 1:$NF")
-        k.kind === :nonlinear && k.tangent === nothing && error("nonlinear kernel of equation $(k.eq) has no tangent")
+        k.kind in (:mass, :bilinear, :source, :nonlinear) || throw(ArgumentError("kernel kind $(repr(k.kind)) is not one of :mass, :bilinear, :source, :nonlinear"))
+        1 ≤ k.eq ≤ NF || throw(ArgumentError("kernel equation $(k.eq) is outside 1:$NF, the fields of the AssemblyContext"))
+        k.kind === :nonlinear && k.tangent === nothing && throw(ArgumentError("nonlinear kernel of equation $(k.eq) has no tangent"))
         k.f === nothing && (k.coeffs === nothing || k.kind === :nonlinear) &&
             throw(ArgumentError("$(k.kind) kernel of equation $(k.eq) has no f: pass f, or coeffs for a linear kind"))
     end
@@ -135,7 +135,7 @@ function _split(ctx::AssemblyContext{NF}, kernels, kinds) where {NF}
     volume = _fuse([k for k in selected if k.piece === nothing])
     pieces = unique(k.piece for k in selected if k.piece !== nothing)
     groups = map(pieces) do piece
-        haskey(ctx.facetsets, piece) || error("no facet set is given for piece $piece")
+        haskey(ctx.facetsets, piece) || throw(ArgumentError("no facet set is given for piece $piece: add it to the pieces of the AssemblyContext"))
         (ctx.facetsets[piece], _fuse([k for k in selected if isequal(k.piece, piece)]), piece)
     end
     return volume, Tuple(groups)
@@ -189,7 +189,7 @@ function _assemble!(op, ctx::AssemblyContext{NF}, volume::Tuple, groups::Tuple, 
     end
     for (g, (set, _, piece)) in enumerate(groups)
         counts[g] == length(set) ||
-            error("piece $piece: assembled $(counts[g]) facets, but its facet set has $(length(set)); the set must hold FacetIndex entries of this grid")
+            throw(ArgumentError("piece $piece: assembled $(counts[g]) facets, but its facet set has $(length(set)); the set must hold FacetIndex entries of this grid"))
     end
     return nothing
 end
