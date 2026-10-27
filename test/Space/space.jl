@@ -120,6 +120,21 @@ end
     )
 end
 
+@testset "fields on disjoint regions keep declaration order" begin
+    # u on the left half, v on the right half, w everywhere: the sub-handlers hold [u, w] and [v, w], so Ferrite
+    # lists the fields as [u, w, v], yet the blocks must follow the declaration order u, v, w.
+    grid = rectangle_grid(Triangle, (2, 2))
+    Ferrite.addcellset!(grid, "left_half", x -> x[1] <= 0.5 + 1.0e-12)
+    Ferrite.addcellset!(grid, "right_half", x -> x[1] >= 0.5 - 1.0e-12)
+    space = FEMSpace(grid, [:u => P1, :v => P1, :w => P1]; regions = Dict(:u => "left_half", :v => "right_half"))
+    @test field_range(space, :u) == 1:6
+    @test field_range(space, :v) == 7:12
+    @test field_range(space, :w) == 13:21
+    for sdh in space.dh.subdofhandlers, cell in sdh.cellset, f in sdh.field_names
+        @test all(in(field_range(space, f)), celldofs(space.dh, cell)[dof_range(sdh, f)])
+    end
+end
+
 @testset "shared sparsity pattern" begin
     grid = rectangle_grid(Triangle, (4, 4))
     space = FEMSpace(grid, [:u => P1, :v => P2]; dirichlet = [(:u, :left, (x, t) -> 0.0)])

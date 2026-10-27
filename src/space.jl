@@ -48,7 +48,8 @@ function FEMSpace(
     check_facetsets(grid, [Symbol(set) for (_, set, _) in dirichlet])
 
     dh = _dofhandler(grid, names, ips, regions)
-    Ferrite.renumber!(dh, Ferrite.DofOrder.FieldWise())
+    # With regions, Ferrite lists the fields in sub-handler order, not declaration order; block k is field k.
+    Ferrite.renumber!(dh, Ferrite.DofOrder.FieldWise([findfirst(==(f), names) for f in Ferrite.getfieldnames(dh)]))
 
     # `close!(ch)` calls `update!(ch, 0.0)` itself; until it returns, time-dependent data are evaluated at
     # `t0` instead. Time-independent `g(x)` is passed through for Ferrite's own arity detection.

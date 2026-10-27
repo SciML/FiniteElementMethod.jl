@@ -159,6 +159,45 @@ rates(errs) = [log2(errs[i] / errs[i + 1]) for i in 1:(length(errs) - 1)]
         @test isfile(write_vtk(sol, joinpath(mktempdir(), "region")))
     end
 
+    @testset "fields on disjoint regions and a global field" begin
+        # u on the left half, v on the right half, w everywhere, declared [u, v, w]. Both region fields have zero
+        # flux through the interface x = 1/2 and read w; all exact solutions are in P1.
+        U, V, W = u(t, x, y), v(t, x, y), w(t, x, y)
+        u_exact(t_, x_, y_) = (1 + 2y_) * (1 + t_)
+        v_exact(t_, x_, y_) = (2 - y_) * (1 + t_)
+        w_exact(t_, x_, y_) = (1 + x_ + 2y_) * (1 + t_)
+        wexpr = (1 + x + 2y) * (1 + t)
+        eqs = [
+            Dt(U) ~ Δ(U) + W - wexpr + (1 + 2y),
+            Dt(V) ~ Δ(V) + 2W - 2wexpr + (2 - y),
+            Dt(W) ~ Δ(W) + (1 + x + 2y),
+        ]
+        grid = halves_grid(4)
+        addcellset!(grid, "right_half", X -> X[1] >= 0.5 - 1.0e-12)
+        Ω = MeshDomain(grid)
+        Γ = Dict(n => boundarypiece(Ω, n) for n in HALF_PIECES)
+        bcs = [
+            [u(t, Γ[n]) ~ (1 + 2y) * (1 + t) for n in (:left, :bottom_left, :top_left)];
+            [v(t, Γ[n]) ~ (2 - y) * (1 + t) for n in (:right, :bottom_right, :top_right)];
+            [w(t, Γ[n]) ~ wexpr for n in HALF_PIECES];
+            u(0, x, y) ~ 1 + 2y; v(0, x, y) ~ 2 - y; w(0, x, y) ~ 1 + x + 2y
+        ]
+        sol, _ = fem_solve(
+            eqs, bcs, Ω, (x, y), t, [U, V, W];
+            regions = Dict(u => Region(Ω, :left_half), v => Region(Ω, :right_half))
+        )
+        @test SciMLBase.successful_retcode(sol)
+        space = sol.disc_data.space
+        @test [first(FiniteElementMethod.field_range(space, f)) for f in (:u, :v, :w)] == [1, 16, 31]
+        xs, ys = sol[x], sol[y]
+        for (dv, exact, inside) in ((U, u_exact, <=(0.5 + 1.0e-12)), (V, v_exact, >=(0.5 - 1.0e-12)), (W, w_exact, _ -> true))
+            vals = sol[dv]
+            in_region = findall(inside, xs)
+            @test all(isnan, vals[:, setdiff(eachindex(xs), in_region)])
+            @test maximum(abs(vals[k, i] - exact(sol.t[k], xs[i], ys[i])) for k in eachindex(sol.t), i in in_region) <= 1.0e-8
+        end
+    end
+
     @testset "error paths" begin
         Ω = MeshDomain(halves_grid(2))
         Γ = Dict(n => boundarypiece(Ω, n) for n in HALF_PIECES)
