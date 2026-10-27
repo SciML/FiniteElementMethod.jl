@@ -3,7 +3,7 @@
 kernel_slots(wf::WeakForm) = kernel_slots(wf.analysis.slots, wf.test)
 kernel_slots(s, test) = (s.U, s.G, s.Ud, test.V, test.W, s.X, s.T, s.N, s.P)
 
-compile(ex, slots) = Symbolics.build_function(ex, slots...; expression = Val(false))
+compile(ex, slots) = Symbolics.build_function(ex, slots...; expression = Val(false), expression_module = @__MODULE__)
 
 "The first unevaluated `Differential` call in `ex`, or `nothing`."
 function find_differential(ex)
@@ -66,7 +66,7 @@ function compile_tuple(exs, slots; zero = 0.0)
         value = SU.unwrap_const(x)
         return iszero(value) ? zero : Float64(value)
     end
-    return Symbolics.build_function(SU.Code.MakeTuple(entries), slots...; expression = Val(false))
+    return Symbolics.build_function(SU.Code.MakeTuple(entries), slots...; expression = Val(false), expression_module = @__MODULE__)
 end
 
 compile_tangent(ex, s, slots) = compile_tuple([checked_derivative(ex, x) for x in [s.U; s.G]], slots)

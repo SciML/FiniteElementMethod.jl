@@ -1,5 +1,6 @@
 # Stage f (spec §5.1, §5.2): kernels evaluate their symbolic integrands, tangents match central
 # differences, every KernelSpec is concrete, and calls with the driver's slot types do not allocate.
+import FiniteElementMethod
 using FiniteElementMethod: weak_form, emit_kernels, emit_dirichlet, WeakForm, VolumeTerm, FacetTerm, TestSlots,
     StructuralZero
 using Ferrite: Vec
@@ -179,4 +180,14 @@ end
     @test allunique(keys)
     @test Set(keys) == Set([(term.eq, term.kind, nothing) for term in wf.volume]) ∪ Set([(term.eq, term.kind, term.piece) for term in wf.facet])
     @test length(wf.facet) > length(filter(kernel -> kernel.piece !== nothing, kernels))
+end
+
+@testset "generated functions are RuntimeGeneratedFunctions owned by FiniteElementMethod" begin
+    # The cache tag is the second type parameter of a RuntimeGeneratedFunction.
+    owner(g) = parentmodule(typeof(g).parameters[2])
+    functions = [g for k in emit_kernels(weak_form(two_field())) for g in (k.f, k.tangent, k.coeffs) if g !== nothing]
+    @test !isempty(functions)
+    @test all(g -> owner(g) === FiniteElementMethod, functions)
+    _, _, g = only(emit_dirichlet(case_i()))
+    @test owner(g) === FiniteElementMethod
 end

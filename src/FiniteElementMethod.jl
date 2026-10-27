@@ -12,8 +12,12 @@ using DomainSets: DomainSets
 using Ferrite: Ferrite
 using ModelingToolkit: ModelingToolkit
 using PDEBase: PDEBase
+using RuntimeGeneratedFunctions: RuntimeGeneratedFunctions
 using SciMLBase: SciMLBase
 using Symbolics: Symbolics, Num
+
+# Generated kernels are RuntimeGeneratedFunctions owned by this module, so they can be built in a precompile workload.
+RuntimeGeneratedFunctions.init(@__MODULE__)
 
 include("weakform.jl")
 include("kernels.jl")
