@@ -1,0 +1,40 @@
+# Claims of the user documentation that the code must keep true.
+using Test
+using FiniteElementMethod: FiniteElementMethod, rectangle_grid
+using Ferrite: Ferrite, Triangle
+
+include(joinpath(@__DIR__, "..", "frontend.jl"))
+
+using ModelingToolkit: t_nounits as t
+
+@testset verbose = true "documentation" begin
+    @testset "the domain pairing names the mesh coordinates" begin
+        @variables x y u(..)
+        Dt = Differential(t)
+        grid = rectangle_grid(Triangle, (4, 2); hi = (2.0, 1.0))
+        Ω = MeshDomain(grid)
+        bcs(u) = [u(t, Γ) ~ 0 for Γ in boundarypieces(Ω)]
+        coordinate(d) = [Ferrite.get_node_coordinate(n)[d] for n in Ferrite.getnodes(grid)]
+
+        # `(y, x) ∈ Ω` with `u(t, y, x)`: y is mesh coordinate 1.
+        eq = Dt(u(t, y, x)) ~ Differential(x)(Differential(x)(u(t, y, x))) + Differential(y)(Differential(y)(u(t, y, x)))
+        @named sys = PDESystem(
+            [eq], [bcs(u); u(0, y, x) ~ y], [(y, x) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, y, x], [u(t, y, x)], []
+        )
+        sol = solve(discretize(sys, FEMDiscretization(Ω, t)), EXACT_ROWS)
+        @test sol[y] == coordinate(1)
+        @test sol[x] == coordinate(2)
+        interior = [i for i in eachindex(sol[y]) if 0 < sol[y][i] < 2 && 0 < sol[x][i] < 1]
+        @test sol[u(t, y, x)][1, interior] ≈ sol[y][interior]
+        @test sol(0.0, 1.5, 0.5; dv = u(t, y, x)) ≈ 1.5
+
+        # A pairing in another order than the dependent variable's arguments is an error.
+        eq = Dt(u(t, x, y)) ~ Differential(x)(Differential(x)(u(t, x, y)))
+        @named swapped = PDESystem(
+            [eq], [bcs(u); u(0, x, y) ~ 0], [(y, x) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], []
+        )
+        @test_throws ArgumentError(
+            "the domain pairing names the coordinates in the order (y, x) but the dependent variables take them in the order (x, y); write both in the same order"
+        ) discretize(swapped, FEMDiscretization(Ω, t))
+    end
+end
