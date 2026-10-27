@@ -95,20 +95,6 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
     return nothing
 end
 
-# PDEBase's mesh `parse_bcs` files the conditions by field and piece; StrongForm orders the
-# essential conditions by first position in the system's bcs, and the condition listed last wins
-# at a dof shared by two Dirichlet pieces. A condition listed twice must therefore count at its
-# last occurrence, so earlier repeats are dropped before PDEBase sees the system.
-# Tracking: drop `_last_occurrences` once StrongForm.boundary_conditions ranks by last occurrence.
-function _last_occurrences(pdesys)
-    bcs = pdesys.bcs
-    keep = [i for (i, eq) in enumerate(bcs) if findlast(b -> isequal(b, eq), bcs) == i]
-    length(keep) == length(bcs) && return pdesys
-    return ModelingToolkit.PDESystem(
-        pdesys.eqs, bcs[keep], pdesys.domain, pdesys.ivs, pdesys.dvs, pdesys.ps; name = nameof(pdesys)
-    )
-end
-
 function _boundary_map(bcs, v, disc)
     for eq in bcs
         length(_trace_pieces(eq.lhs - eq.rhs)) > 1 && throw(ArgumentError("$(_PERIODIC_M4): $eq"))
@@ -304,7 +290,7 @@ end
 function _lower(pdesys, disc::FEMDiscretization)
     disc.time === nothing && throw(ArgumentError("steady problems land in M4; give FEMDiscretization a time variable"))
     _check_domains(pdesys, disc)
-    sys, replaced = PDEBase.make_pdesys_compatible(_last_occurrences(pdesys))
+    sys, replaced = PDEBase.make_pdesys_compatible(pdesys)
     v = PDEBase.VariableMap(sys, disc; replaced_vars = replaced)
     PDEBase.interface_errors(sys, v, disc)
     boundarymap = _boundary_map(sys.bcs, v, disc)

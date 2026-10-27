@@ -219,19 +219,22 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         bump = ifelse(x < 1.0e-9, 5.0, 0.0)
         left = u(t, Γl) ~ (1 + 2y) * (1 + t)
         bottom = u(t, Γb) ~ (1 + x) * (1 + t) + bump
-        # (u conditions in input order, corner bump expected); a repeated condition counts at its last position.
-        cases = [([left, bottom], 5), ([bottom, left], 0), ([left, bottom, left], 0)]
-        for (u_bcs, corner_bump) in cases
-            bcs = [
-                u_bcs; u(t, Γr) ~ (2 + 2y) * (1 + t); u(t, Γt) ~ (3 + x) * (1 + t);
-                [w(t, Γ) ~ (2 - x + y) * (1 + t) for Γ in pieces(Ω)];
-                ic; w(0, x, y) ~ 2 - x + y
-            ]
-            sol, _ = fem_solve([w_eq, u_eq], bcs, Ω, (x, y), t, [u(t, x, y), w(t, x, y)])
+        all_bcs(u_bcs) = [
+            u_bcs; u(t, Γr) ~ (2 + 2y) * (1 + t); u(t, Γt) ~ (3 + x) * (1 + t);
+            [w(t, Γ) ~ (2 - x + y) * (1 + t) for Γ in pieces(Ω)];
+            ic; w(0, x, y) ~ 2 - x + y
+        ]
+        # (u conditions in input order, corner bump expected)
+        for (u_bcs, corner_bump) in [([left, bottom], 5), ([bottom, left], 0)]
+            sol, _ = fem_solve([w_eq, u_eq], all_bcs(u_bcs), Ω, (x, y), t, [u(t, x, y), w(t, x, y)])
             @test nodal_error(sol, w(t, x, y), we) <= tol
             corner = findfirst(i -> sol[x][i] == 0 && sol[y][i] == 0, eachindex(sol[x]))
             @test sol[u(t, x, y)][:, corner] ≈ (1 .+ sol.t) .+ corner_bump atol = tol
         end
+        # The same piece and field listed twice is a user error, reported by PDEBase.
+        @test_throws ErrorException("boundary conditions $left on Γ_left and $left on Γ_left both fix field 1") fem_solve(
+            [w_eq, u_eq], all_bcs([left, bottom, left]), Ω, (x, y), t, [u(t, x, y), w(t, x, y)]
+        )
     end
 
     @testset "registered coefficient function in divergence form" begin
