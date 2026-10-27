@@ -12,6 +12,9 @@ PDEBase.contains_point(grid::Ferrite.Grid, x) = _contains_point(grid, x)
 Finite-element discretization of a `PDESystem` whose spatial domain is the mesh domain `Ω`
 (of a `Ferrite.Grid`), with time variable `t`. `DAEProblem(pdesys, disc)` assembles the
 Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknown per field.
+Without `t` the discretization is steady: the `PDESystem` must have no time variable, and
+`discretize` (or `NonlinearProblem(pdesys, disc)`) returns a `NonlinearProblem` whose `solve`
+gives a `PDENoTimeSolution`.
 
   - `spaces`: dependent variable (`u` or `u(t, x, y)`) `=>` `Ferrite.Interpolation`; the
     default is `Lagrange{RefShape, 1}()` on the mesh's reference shape. All fields must
@@ -19,11 +22,12 @@ Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknow
   - `quadrature`: quadrature order; `nothing` means `2p` for Lagrange order `p`.
   - `ibp`: equation (or its index) `=>` `PDEBase.StrongForm` integration-by-parts policy.
   - `pairing`: equation `=>` dependent variable it is tested with, needed for an equation
-    with no time derivative of its own, such as `0 ~ Dxx(v) + f`.
+    with no time derivative of its own, such as `0 ~ Dxx(v) + f`. In a steady system the
+    equations not named here take the remaining dependent variables in declared order.
   - `codegen = :mtk` and `dirichlet = :eliminate` are reserved for later milestones and
-    raise; remaining keywords are passed to the `DAEProblem`, where a keyword given at the
-    `DAEProblem`/`discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate`, `name` and
-    `parameters` are set by the discretization and rejected.
+    raise; remaining keywords are passed to the `DAEProblem` (or `NonlinearProblem`), where a
+    keyword given at the `DAEProblem`/`NonlinearProblem`/`discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate`,
+    `name` and `parameters` are set by the discretization and rejected.
 
 Pieces come from `boundarypiece.(Ω, names)`; on an analytic DomainSets box write
 `boundarypiece.(Ref(rect), names)`, since DomainSets types do not broadcast as scalars.
