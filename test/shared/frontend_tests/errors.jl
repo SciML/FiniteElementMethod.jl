@@ -207,6 +207,20 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         @test SciMLBase.successful_retcode(sol)
     end
 
+    @testset "parameters" begin
+        Ω = box()
+        @parameters k
+        eq = Dt(u(t, x, y)) ~ k * (Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))))
+        system(ps...) = PDESystem([eq], [dirichlet(Ω); ic], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], ps...; name = :pdesys)
+        # An undeclared parameter is reported the same way whether `ps` is empty or left out.
+        for pdesys in (system([]), system())
+            @test occursin("unresolved symbols", errmsg(() -> discretize(pdesys, FEMDiscretization(Ω, t))))
+        end
+        @test_throws ArgumentError("parameter k needs a numeric value in the PDESystem, as k => value") discretize(
+            system([k]), FEMDiscretization(Ω, t)
+        )
+    end
+
     @testset "a piece with no condition warns when its flux is not zero" begin
         Ω = box()
         Γl, Γr, Γb, Γt = sides(Ω)

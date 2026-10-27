@@ -46,6 +46,20 @@ end
         @test log2(e1 / e2) > order + 0.8
     end
 
+    @testset "PDESystem without parameters" begin
+        # Leaving out `ps` gives the system `NullParameters()`, which means no parameters.
+        # u* = 1 + x² + 2y² + xy has Δu* = 6 and is exact in P2.
+        u_exact(x_, y_) = 1 + x_^2 + 2y_^2 + x_ * y_
+        Ω = MeshDomain(rectangle_grid(Triangle, (3, 3)))
+        bcs = [u(Γ) ~ u_exact(x, y) for Γ in sides(Ω)]
+        @named pdesys = PDESystem([Dx(Dx(u(x, y))) + Dy(Dy(u(x, y))) ~ 6], bcs, [(x, y) ∈ Ω], [x, y], [u(x, y)])
+        @test pdesys.ps isa SciMLBase.NullParameters
+        disc = FEMDiscretization(Ω; spaces = Dict(u => Lagrange{RefTriangle, 2}()))
+        sol = solve(discretize(pdesys, disc), NewtonRaphson(); abstol = 1.0e-12)
+        @test SciMLBase.successful_retcode(sol)
+        @test maximum(abs, sol[u(x, y)] - u_exact.(sol[x], sol[y])) <= 1.0e-10
+    end
+
     @testset "L-shape with Dirichlet, Neumann and Robin pieces" begin
         # u* = 1 + x + 2y + xy + x², Δu* = 2, is exact in P2 on straight triangles. ∇u* = (1 + y + 2x, 2 + x).
         u_exact(x_, y_) = 1 + x_ + 2y_ + x_ * y_ + x_^2
