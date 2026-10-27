@@ -39,16 +39,22 @@ using ModelingToolkit: t_nounits as t
         @test sol[u(t, y, x)][1, interior] ≈ sol[y][interior]
         @test sol(0.0, 1.5, 0.5; dv = u(t, y, x)) ≈ 1.5
 
-        # A pairing in another order than the dependent variable's arguments is an error.
-        eq = Dt(u(t, x, y)) ~ Differential(x)(Differential(x)(u(t, x, y)))
-        @named swapped = PDESystem(
-            [eq], [bcs(u); u(0, x, y) ~ 0], [(y, x) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], []
-        )
-        @test_throws ArgumentError(
-            "the domain pairing names the coordinates in the order (y, x) but the dependent variables take them in the order (x, y); write both in the same order"
-        ) discretize(swapped, FEMDiscretization(Ω, t))
+        # `(y, x) ∈ Ω` with `u(t, x, y)`: the pairing, not the argument order, numbers the coordinates.
+        # On the 2 × 1 mesh the same physical solution, 1 + p₁ + 2p₂ in mesh coordinates p, is
+        # written once with x = p₁ and once with y = p₁; the two solves must agree node by node.
+        Dx, Dy = Differential(x), Differential(y)
+        heat(f) = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + f
+        dirichlet(f) = [[u(t, Γ) ~ f * (1 + t) for Γ in boundarypieces(Ω)]; u(0, x, y) ~ f]
+        straight, _ = fem_solve([heat(1 + x + 2y)], dirichlet(1 + x + 2y), Ω, (x, y), t, [u(t, x, y)])
+        swapped, _ = fem_solve([heat(1 + y + 2x)], dirichlet(1 + y + 2x), Ω, (y, x), t, [u(t, x, y)])
+        @test SciMLBase.successful_retcode(straight) && SciMLBase.successful_retcode(swapped)
+        @test straight[x] == swapped[y] == coordinate(1)
+        @test straight[y] == swapped[x] == coordinate(2)
+        @test straight.t == swapped.t
+        @test maximum(abs, swapped[u(t, x, y)] - straight[u(t, x, y)]) <= 1.0e-12
+        exact = [(1 + swapped[y][i] + 2swapped[x][i]) * (1 + tk) for tk in swapped.t, i in eachindex(swapped[x])]
+        @test maximum(abs, swapped[u(t, x, y)] - exact) <= 1.0e-8
     end
-
     @testset "a time-dependent Robin coefficient is rejected" begin
         @variables x y u(..)
         Ω = MeshDomain(rectangle_grid(Triangle, (2, 2)))

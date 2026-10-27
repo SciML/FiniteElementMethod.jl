@@ -44,7 +44,8 @@ Pieces come from `boundarypiece.(Ω, names)`; on an analytic DomainSets box writ
 `boundarypiece.(Ref(rect), names)`, since DomainSets types do not broadcast as scalars.
 
 Where pieces with Dirichlet conditions on the same field meet (a corner), the condition listed
-last in the `PDESystem`'s boundary conditions wins, as in Ferrite's `ConstraintHandler`.
+last in the `PDESystem`'s boundary conditions wins, as in Ferrite's `ConstraintHandler`. Listing
+the same piece and field twice is an error.
 Fields are numbered in one order throughout (`DofHandler` blocks, array unknowns,
 `FEMMetadata.fields`), the declared order of the `PDESystem`'s dependent variables
 (`PDEBase.StrongForm.declared_fields`); equations are paired with fields

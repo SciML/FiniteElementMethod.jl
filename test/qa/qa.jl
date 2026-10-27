@@ -3,10 +3,17 @@ using SciMLTesting, FiniteElementMethod
 # `Ferrite.DofOrder.FieldWise` is Ferrite's documented renumbering API but is not declared `public`;
 # ForwardDiff documents `derivative` as its API but does not declare it `public`;
 # `Ferrite.dirichlet_facetdof_indices` (a facet's local nodes) has no public spelling in Ferrite 1.
-# Tracking: drop NONPUBLIC_PDEBASE once the PDEBase compat floor is the M0 release (public
-# `make_pdesys_compatible` and `pair_equations`) and declares `parse_bcs` public; ExplicitImports
-# also scans the gated source on PDEBase 0.1.39.
-const NONPUBLIC_PDEBASE = (:make_pdesys_compatible, :parse_bcs, :pair_equations)
+# The front end uses these PDEBase names, public on the M0 stack but not on PDEBase 0.1.39 (and
+# `Base.ispublic` does not exist on Julia 1.10), so each is ignored only where it is not public.
+# Tracking: drop NONPUBLIC_PDEBASE once the PDEBase compat floor is the M0 release.
+const PDEBase = FiniteElementMethod.PDEBase
+ispublic_in(mod, name) = isdefined(Base, :ispublic) && Base.ispublic(mod, name)
+const NONPUBLIC_PDEBASE = Tuple(
+    name for (mod, name) in (
+            (PDEBase, :make_pdesys_compatible), (PDEBase, :parse_bcs),
+            (isdefined(PDEBase, :StrongForm) ? PDEBase.StrongForm : PDEBase, :pair_equations),
+        ) if !ispublic_in(mod, name)
+)
 
 run_qa(
     FiniteElementMethod;
