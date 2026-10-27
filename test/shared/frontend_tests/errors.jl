@@ -142,12 +142,12 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         )
     end
 
-    @testset "time must be the first argument" begin
+    @testset "time must be the first or the last argument" begin
         Ω = box()
-        eq = Dt(u(x, y, t)) ~ Dx(Dx(u(x, y, t))) + Dy(Dy(u(x, y, t)))
-        bcs = [u(x, y, 0) ~ 0]
-        @test_throws ArgumentError("time must be the first argument of u(x, y, t); time-last ordering lands later") lower(
-            [eq], bcs, Ω; dvs = [u(x, y, t)]
+        eq = Dt(u(x, t, y)) ~ Dx(Dx(u(x, t, y))) + Dy(Dy(u(x, t, y)))
+        bcs = [u(x, 0, y) ~ 0]
+        @test_throws ArgumentError("time must be the first or the last argument of u(x, t, y), as in u(t, x, y) or u(x, y, t)") lower(
+            [eq], bcs, Ω; dvs = [u(x, t, y)]
         )
     end
 
