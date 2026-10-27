@@ -130,10 +130,8 @@ function _paired(an, eqs, ctx, disc)
     )
 end
 
-function _check_linear(wf)
+function _check_terms(wf)
     for term in vcat(wf.volume, wf.facet)
-        term.kind === :nonlinear &&
-            throw(ArgumentError("nonlinear terms land in M3: equation $(term.eq) has the nonlinear term $(term.integrand)"))
         term.kind in (:mass, :bilinear) && term.timedep && throw(
             ArgumentError("time-dependent coefficients in the mass or stiffness operator land in M3: equation $(term.eq) has $(term.integrand)")
         )
@@ -228,11 +226,13 @@ function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
     M, K, F = copy(space.pattern), copy(space.pattern), zeros(n)
     assemble_linear!(M, K, F, ctx, static, pvals; t = t0)
     load = isempty(dynamic) ? F : (out, t) -> (assemble_sources!(out, _fresh_values(ctx), dynamic, pvals, t); out .+= F)
+    nonlinear = any(k -> k.kind === :nonlinear, kernels) ?
+        FEMNonlinear(NonlinearOperator(_fresh_values(ctx), kernels; ch = space.ch), pvals) : nothing
     coords = _dof_coordinates(space)
     values!, values0 = _dirichlet_values(space, dirichlet, coords, pvals, t0)
     ops = FEMOperators(
         M, K, load, [name => field_range(space, name) for name in names];
-        prescribed = prescribed_dofs(space), dirichlet_values = timedep_dirichlet ? values! : values0
+        prescribed = prescribed_dofs(space), dirichlet_values = timedep_dirichlet ? values! : values0, nonlinear
     )
     return ops, coords
 end
@@ -287,7 +287,7 @@ function _lower(pdesys, disc::FEMDiscretization)
         end
     end
     wf = weak_form(an)
-    _check_linear(wf)
+    _check_terms(wf)
     pvals = _parameter_values(sys, ctx)
     dirichlet = emit_dirichlet(an)
     t0, t1 = v.intervals[v.time]
@@ -301,19 +301,21 @@ function _lower(pdesys, disc::FEMDiscretization)
     fields = [FieldInfo(dv, name, u, ip) for (dv, name, u, ip) in zip(StrongForm.declared_fields(sys, v), names, unknowns, ips)]
     pieces = Dict{Any, String}(Γ => String(Γ.name) for Γ in PDEBase.boundarypieces(disc.domain))
     md = FEMMetadata(space, iv, v.x̄, fields, pieces, pdesys; u0)
-    return (; ops, u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys))
+    parameters = [q => v for (q, v) in zip(ctx.params, pvals)]
+    return (; ops, u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys), parameters)
 end
 
 """
     DAEProblem(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
 
-Discretize `pdesys` with `disc` and return the `DAEProblem` `M du + K u = F(t)` of the
-Galerkin operators, with Dirichlet rows `u_d = g_d(t)` as algebraic equations, a sparse
-analytic Jacobian and the `FEMMetadata` as its `problem_type`, so `solve` returns a
+Discretize `pdesys` with `disc` and return the `DAEProblem` `M du + K u + N(u, t) = F(t)` of
+the Galerkin operators, with Dirichlet rows `u_d = g_d(t)` as algebraic equations, a sparse
+analytic Jacobian (the nonlinear part `N` from the terms whose coefficients depend on the
+state, with its symbolic tangent) and the `FEMMetadata` as its `problem_type`, so `solve` returns a
 `PDETimeSeriesSolution`. Nothing calls `mtkcompile`; anything this milestone cannot
 discretize raises. Keywords are passed to the `DAEProblem` after `disc.kwargs`, so a keyword
 given here wins; the keywords the discretization sets (`iv`, `unknowns`, `du0`, `coordinate`,
-`name`) are rejected.
+`name`, `parameters`) are rejected.
 
 The Dirichlet rows are linear with identity Jacobian rows, so a Newton step with a current
 Jacobian satisfies them exactly. OrdinaryDiffEq's BDF methods reuse the Jacobian across
@@ -326,7 +328,8 @@ function SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscre
     parts = _lower(pdesys, disc)
     return numeric_dae_problem(
         parts.ops, parts.u0, parts.tspan, parts.md;
-        iv = parts.iv, unknowns = parts.unknowns, name = parts.name, disc.kwargs..., kwargs...
+        iv = parts.iv, unknowns = parts.unknowns, name = parts.name, parameters = parts.parameters,
+        disc.kwargs..., kwargs...
     )
 end
 

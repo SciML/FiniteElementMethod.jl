@@ -22,8 +22,8 @@ Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknow
     with no time derivative of its own, such as `0 ~ Dxx(v) + f`.
   - `codegen = :mtk` and `dirichlet = :eliminate` are reserved for later milestones and
     raise; remaining keywords are passed to the `DAEProblem`, where a keyword given at the
-    `DAEProblem`/`discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate` and `name`
-    are set by the discretization and rejected.
+    `DAEProblem`/`discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate`, `name` and
+    `parameters` are set by the discretization and rejected.
 
 Pieces come from `boundarypiece.(Ω, names)`; on an analytic DomainSets box write
 `boundarypiece.(Ref(rect), names)`, since DomainSets types do not broadcast as scalars.
@@ -37,7 +37,9 @@ Fields are numbered in one order throughout (`DofHandler` blocks, array unknowns
 through `PDEBase.StrongForm.pair_equations`.
 
 Parameters are substituted by the values given in the `PDESystem` when the operators are
-assembled, so `remake` with new parameter values does not reassemble them.
+assembled, and are parameters of the problem at those values. The operators are not
+reassembled for new values: after `remake(prob; p = [k => 3.0])` the solve throws an
+`ArgumentError` naming `k`; build a new problem with `DAEProblem(pdesys, disc)` instead.
 """
 struct FEMDiscretization{T} <: PDEBase.AbstractMeshDiscretization
     domain::PDEBase.MeshDomain
@@ -53,7 +55,7 @@ struct FEMDiscretization{T} <: PDEBase.AbstractMeshDiscretization
 end
 
 # Keywords of `numeric_dae_problem` that the front end sets itself.
-const _RESERVED_KWARGS = (:iv, :unknowns, :du0, :coordinate, :name)
+const _RESERVED_KWARGS = (:iv, :unknowns, :du0, :coordinate, :name, :parameters)
 
 function _check_reserved(kwargs)
     for k in keys(kwargs)

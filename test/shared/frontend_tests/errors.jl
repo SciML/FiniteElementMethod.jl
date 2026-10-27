@@ -97,12 +97,8 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         )
     end
 
-    @testset "nonlinear and time-dependent operators" begin
+    @testset "time-dependent operators" begin
         Ω = box()
-        nl = Dt(u(t, x, y)) ~ Dx((1 + u(t, x, y)^2) * Dx(u(t, x, y))) + Dy(Dy(u(t, x, y)))
-        @test_throws ArgumentError("nonlinear terms land in M3: equation 1 has the nonlinear term G₁*(U₁^2)*W₁") lower(
-            [nl], [dirichlet(Ω); ic], Ω
-        )
         td = Dt(u(t, x, y)) ~ Dx((1 + t) * Dx(u(t, x, y))) + Dy((1 + t) * Dy(u(t, x, y)))
         @test_throws ArgumentError(
             "time-dependent coefficients in the mass or stiffness operator land in M3: equation 1 has " *

@@ -163,6 +163,11 @@ heat_operators(fe; kw...) = FEMOperators(fe.M, fe.K, fe.F, [:u => 1:length(fe.F)
         Kp = SparseMatrixCSC(2, 2, [1, 3, 5], [1, 2, 1, 2], [0.0, 0.0, 0.0, 1.0])
         opsp = FEMOperators(pat, Kp, (out, t) -> (out .= (0.0, t); out), [:u => 1:2])
         @test_throws "pass du0 explicitly" numeric_dae_problem(opsp, zeros(2), (0.0, 1.0))
+        # The nonlinear part must share the pattern of M and K; checking it needs no working operator.
+        FN = FiniteElementMethod.FEMNonlinear
+        @test_throws ArgumentError(
+            "the nonlinear operator's Jacobian must have the sparsity pattern of M and K, e.g. NonlinearOperator(ctx, kernels; ch) with the ConstraintHandler of allocate_matrix(dh, ch)"
+        ) FEMOperators(Md, copy(Md), zeros(3), [:u => 1:3]; nonlinear = FN((; J = Kt), Float64[]))
         probp = numeric_dae_problem(opsp, zeros(2), (0.0, 1.0); du0 = [-1.0, 1.0])
         solp = solve(probp, DFBDF(); tol...)
         @test solp.u[end] ≈ [-1.0, 1.0] atol = 1.0e-8
