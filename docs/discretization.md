@@ -8,6 +8,7 @@
 FEMDiscretization
 FiniteElementMethod.SciMLBase.DAEProblem(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
 FiniteElementMethod.SciMLBase.NonlinearProblem(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
+FiniteElementMethod.SciMLBase.symbolic_discretize(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
 FiniteElementMethod.AbstractTestSpace
 FiniteElementMethod.Galerkin
 FiniteElementMethod.assemble_sources!

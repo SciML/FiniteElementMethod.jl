@@ -105,10 +105,6 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
             "the FEMDiscretization has no time variable, so it lowers to a NonlinearProblem, not a DAEProblem; " *
                 "call discretize(pdesys, disc) or NonlinearProblem(pdesys, disc)"
         ) DAEProblem(steady, FEMDiscretization(Ω))
-        @test_throws ArgumentError(
-            "a steady FEMDiscretization builds no symbolic System, so it has no symbolic_discretize; " *
-                "call discretize(pdesys, disc) for its NonlinearProblem"
-        ) SciMLBase.symbolic_discretize(steady, FEMDiscretization(Ω))
         @named transient = PDESystem([heat], [dirichlet(Ω); ic], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
         @test_throws ArgumentError(
             "the FEMDiscretization has the time variable t, so it lowers to a DAEProblem; " *
