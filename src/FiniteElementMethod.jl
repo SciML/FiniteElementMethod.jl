@@ -38,13 +38,13 @@ export Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexa
 
 # Whether the installed PDEBase has the mesh-discretization layer the PDESystem front end is
 # built on (spec §4). Without it the package still loads, with the Ferrite backend only.
-# Tracking: delete this gate once a PDEBase release with the mesh classifier and
-# StrongForm boundary routing is the compat floor.
+# Tracking: delete this gate once a PDEBase release with the M0 layer (forge/m0-all) is the
+# compat floor.
 const MESH_PDEBASE = isdefined(PDEBase, :AbstractMeshDiscretization) &&
     isdefined(PDEBase, :classify_condition) && isdefined(PDEBase, :substitute_traces) &&
     isdefined(PDEBase, :PieceBoundary) && isdefined(PDEBase, :StrongForm) && all(
     name -> isdefined(getfield(PDEBase, :StrongForm), name),
-    (:analyse, :declared_fields, :route_natural, :essential_condition, :pair_equations)
+    (:analyse, :declared_fields, :boundary_conditions, :pair_equations)
 )
 
 @static if MESH_PDEBASE

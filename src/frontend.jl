@@ -1,12 +1,12 @@
 # The PDESystem front end (spec §4.6, §5, §7): PDEBase classifies the conditions and analyses the
-# strong form, this file slots the trace conditions on mesh pieces, projects with Galerkin, assembles
-# with m1's driver and lowers to the numeric DAE path.
+# strong form with its boundary conditions; this file projects with Galerkin, assembles with m1's
+# driver and lowers to the numeric DAE path.
 #
 # This driver calls PDEBase's steps (make_pdesys_compatible, VariableMap, interface_errors,
 # parse_bcs, split_ics_bcs, StrongForm.analyse) itself rather than through the generic
 # `symbolic_discretize`, whose remaining hooks build an MTK system this numeric path does not use.
-# Tracking: move to PDEBase's `symbolic_discretize` with hook methods once a PDEBase release has
-# the mesh `parse_bcs` (PDEBase#152) and piece slotting in StrongForm.
+# Tracking: move to PDEBase's `symbolic_discretize` with hook methods once the numeric path builds
+# its system through `generate_system` (PDEBase M0 release as the compat floor).
 
 const _PERIODIC_M4 = "periodic conditions need milestone M4 (Ferrite PeriodicDirichlet)"
 
@@ -95,22 +95,26 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
     return nothing
 end
 
-# Initial conditions, and `piece => equation` for every boundary condition in input order.
-# PDEBase's mesh `parse_bcs` files the conditions by field and piece; FEM restores the input
-# order because the condition listed last wins at a dof shared by two Dirichlet pieces.
-# Tracking: use the boundary map's order directly once PDEBase keeps essential conditions in input order.
-function _split_conditions(bcs, v, disc)
+# PDEBase's mesh `parse_bcs` files the conditions by field and piece; StrongForm orders the
+# essential conditions by first position in the system's bcs, and the condition listed last wins
+# at a dof shared by two Dirichlet pieces. A condition listed twice must therefore count at its
+# last occurrence, so earlier repeats are dropped before PDEBase sees the system.
+# Tracking: drop `_last_occurrences` once StrongForm.boundary_conditions ranks by last occurrence.
+function _last_occurrences(pdesys)
+    bcs = pdesys.bcs
+    keep = [i for (i, eq) in enumerate(bcs) if findlast(b -> isequal(b, eq), bcs) == i]
+    length(keep) == length(bcs) && return pdesys
+    return ModelingToolkit.PDESystem(
+        pdesys.eqs, bcs[keep], pdesys.domain, pdesys.ivs, pdesys.dvs, pdesys.ps; name = nameof(pdesys)
+    )
+end
+
+function _boundary_map(bcs, v, disc)
     for eq in bcs
         length(_trace_pieces(eq.lhs - eq.rhs)) > 1 && throw(ArgumentError("$(_PERIODIC_M4): $eq"))
     end
     orders = Dict(x => PDEBase.d_orders(x, bcs) for x in PDEBase.all_ivs(v))
-    boundarymap = PDEBase.parse_bcs(bcs, v, orders, disc)
-    ics, bcmap = PDEBase.split_ics_bcs(boundarymap, v, disc)
-    # A condition listed twice takes the position of its last occurrence.
-    position(eq) = findlast(b -> isequal(b, eq), bcs)
-    piecebcs = unique(Pair{Any, Equation}[b.piece => b.eq for bykey in values(bcmap) for bs in values(bykey) for b in bs])
-    sort!(piecebcs; by = pb -> position(last(pb)))
-    return Equation[b.eq for b in ics], piecebcs
+    return PDEBase.parse_bcs(bcs, v, orders, disc)
 end
 
 _field_index(ctx, ex) = SymbolicUtils.iscall(ex) ?
@@ -118,82 +122,8 @@ _field_index(ctx, ex) = SymbolicUtils.iscall(ex) ?
 
 _depends(ex, syms) = any(s -> any(isequal(unwrap(s)), Symbolics.get_variables(ex)), syms)
 
-function _has_op(ex, T)
-    found = false
-    _walk(e -> (found |= SymbolicUtils.iscall(e) && SymbolicUtils.operation(e) isa T), ex)
-    return found
-end
-
-# Trace `u_f(t, Γ)` => `U[f]`, `Dn_Γ(u_f(t, Γ))` => `N·G_f` and `Dx_d(u_f(t, Γ))` => `G_f[d]`.
-# Tracking: delete `_trace_rules!` and `_slot_piece_condition` once PDEBase.StrongForm slots
-# piece traces and `NormalDerivative` (strongform-3 `boundary.jl`, "A NormalDerivative(Γ) method").
-function _trace_rules!(rules, ex, ctx, slots, eq)
-    SymbolicUtils.iscall(ex) || return rules
-    dim = length(ctx.sivs)
-    op = SymbolicUtils.operation(ex)
-    if op isa PDEBase.NormalDerivative || op isa Differential
-        inner = _unwrap_arg(only(SymbolicUtils.arguments(ex)))
-        f = _field_index(ctx, inner)
-        if f === nothing
-            isempty(_trace_pieces(inner)) && return rules
-            throw(ArgumentError("in boundary condition $eq, $(Num(ex)) differentiates an expression of traces; apply the derivative to the trace itself"))
-        end
-        if op isa PDEBase.NormalDerivative
-            rules[ex] = sum(slots.N[d] * slots.G[(f - 1) * dim + d] for d in 1:dim)
-            return rules
-        end
-        d = findfirst(x -> isequal(x, op.x), ctx.sivs)
-        d === nothing && throw(ArgumentError("time derivative of a trace in boundary condition $eq is not supported"))
-        op.order == 1 ||
-            throw(ArgumentError("derivative of order $(op.order) of a trace in boundary condition $eq is not supported"))
-        rules[ex] = slots.G[(f - 1) * dim + d]
-        return rules
-    end
-    f = _field_index(ctx, ex)
-    f === nothing || return (rules[ex] = slots.U[f]; rules)
-    foreach(a -> _trace_rules!(rules, _unwrap_arg(a), ctx, slots, eq), SymbolicUtils.arguments(ex))
-    return rules
-end
-
-_leaf_rules(ctx, slots) = Dict{Any, Any}(
-    (x => slots.X[d] for (d, x) in enumerate(ctx.sivs))...,
-    (ctx.t === nothing ? () : (ctx.t => slots.T,))...,
-    (p => slots.P[j] for (j, p) in enumerate(ctx.params))...,
-)
-
-# Boundary residual in slots. Traces are replaced before anything is derivative-expanded, because
-# `expand_derivatives(Dx(u(t, Γ)))` is zero (spec §3.3).
-function _slot_piece_condition(eq, ctx, slots)
-    ex = unwrap(eq.lhs - eq.rhs)
-    B = PDEBase.assert_no_traces(PDEBase.substitute_traces(ex, _trace_rules!(Dict{Any, Any}(), ex, ctx, slots, eq)))
-    B = substitute(Symbolics.expand_derivatives(Num(B)), _leaf_rules(ctx, slots))
-    allowed = Set(unwrap.(vcat(slots.U, slots.G, slots.X, [slots.T], slots.N, slots.P)))
-    leftover = filter(s -> !(s in allowed), Symbolics.get_variables(B))
-    (isempty(leftover) && !_has_op(B, Differential)) ||
-        throw(ArgumentError("unresolved symbols in boundary condition $eq: $(Num(B)); register the derivative of any coefficient function"))
-    return B
-end
-
-function _with_boundary_conditions(an, piecebcs, ctx)
-    s = an.slots
-    essential, natural = StrongForm.EssentialBC{Any}[], StrongForm.NaturalBC{Any}[]
-    for (Γ, eq) in piecebcs
-        B = _slot_piece_condition(eq, ctx, s)
-        if _depends(B, vcat(s.G, s.N))
-            e, Φ = StrongForm.route_natural(B, an.flux, s.N, s; label = eq)
-            push!(natural, StrongForm.NaturalBC{Any}(Γ, e, Φ))
-        else
-            f, g = StrongForm.essential_condition(B, s; label = eq)
-            push!(essential, StrongForm.EssentialBC{Any}(Γ, f, g))
-        end
-    end
-    return StrongForm.StrongFormAnalysis{Any}(
-        s, an.nfields, an.dim, an.strong, an.mass, an.flux, an.remainder, an.conormal,
-        essential, natural, StrongForm.PeriodicBC{Any}[]
-    )
-end
-
-# Reorder the equations so that equation `f` is the one tested with field `f` (spec §5.4).
+# Reorder the equations so that equation `f` is the one tested with field `f` (spec §5.4); a
+# natural condition routed to equation `e` moves with it.
 function _paired(an, eqs, ctx, disc)
     an.nfields == length(eqs) ||
         throw(ArgumentError("the system has $(length(eqs)) equations for $(an.nfields) dependent variables"))
@@ -205,10 +135,12 @@ function _paired(an, eqs, ctx, disc)
         f === nothing && throw(ArgumentError("pairing value $dv is not a dependent variable of the system"))
         explicit[e] = f
     end
-    order = invperm(StrongForm.pair_equations(an.mass, an.slots; pairing = explicit))
-    return StrongForm.StrongFormAnalysis{Any}(
+    fields = StrongForm.pair_equations(an.mass, an.slots; pairing = explicit)
+    order = invperm(fields)
+    natural = [typeof(bc)(bc.piece, fields[bc.eq], bc.Φ) for bc in an.natural]
+    return typeof(an)(
         an.slots, an.nfields, an.dim, an.strong[order], an.mass[order], an.flux[order],
-        an.remainder[order], an.conormal[order], an.essential, an.natural, an.periodic
+        an.remainder[order], an.conormal[order], an.essential, natural, an.periodic
     )
 end
 
@@ -372,15 +304,15 @@ end
 function _lower(pdesys, disc::FEMDiscretization)
     disc.time === nothing && throw(ArgumentError("steady problems land in M4; give FEMDiscretization a time variable"))
     _check_domains(pdesys, disc)
-    sys, replaced = PDEBase.make_pdesys_compatible(pdesys)
+    sys, replaced = PDEBase.make_pdesys_compatible(_last_occurrences(pdesys))
     v = PDEBase.VariableMap(sys, disc; replaced_vars = replaced)
     PDEBase.interface_errors(sys, v, disc)
-    ics, piecebcs = _split_conditions(sys.bcs, v, disc)
+    boundarymap = _boundary_map(sys.bcs, v, disc)
+    ics, bcmap = PDEBase.split_ics_bcs(boundarymap, v, disc)
     ctx = StrongForm.SlotContext(sys, v)
-    an = StrongForm.analyse(sys, v, Dict(); ibp = disc.ibp)
-    an = _with_boundary_conditions(_paired(an, pdesys.eqs, ctx, disc), piecebcs, ctx)
+    an = _paired(StrongForm.analyse(sys, v, boundarymap; ibp = disc.ibp), pdesys.eqs, ctx, disc)
     isempty(an.periodic) || throw(ArgumentError(_PERIODIC_M4))
-    covered = Set(first.(piecebcs))
+    covered = Set(Γ for bykey in values(bcmap) for (Γ, bs) in bykey if !isempty(bs))
     if any(c -> !all(x -> isequal(x, 0), c), an.conormal)
         for Γ in PDEBase.boundarypieces(disc.domain)
             Γ in covered || @warn "boundary piece $Γ has no condition, so it gets the natural zero-flux condition"
@@ -394,7 +326,7 @@ function _lower(pdesys, disc::FEMDiscretization)
     space, names, ips = _space(disc, ctx, an, dirichlet, pvals, t0)
     timedep_dirichlet = any(bc -> _depends(bc.g, [an.slots.T]), an.essential)
     ops, coords = _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
-    u0 = _initial_values(ics, ctx, space, coords, an, names, pvals)
+    u0 = _initial_values(Equation[b.eq for b in ics], ctx, space, coords, an, names, pvals)
     dirichlet_values!(view(u0, ops.prescribed), ops.load, t0)
     iv = disc.time
     unknowns = [only(@variables $name(iv)[1:length(field_range(space, name))]) for name in names]
