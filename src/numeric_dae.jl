@@ -98,6 +98,8 @@ prescribed dofs, whose rows of `N` and of its Jacobian are then zero. `op` is un
 the parameter has one concrete type; each call dispatches on it once. `op` itself is never
 evaluated: each evaluation borrows a copy with its own buffers and values objects from a pool,
 so problems sharing this wrapper (remakes, ensembles) can be solved concurrently.
+After [`eliminate_dirichlet`](@ref) the wrapper evaluates `N` at the full state rebuilt from
+the free dofs with `u_d = g_d`, and keeps its free rows and its `[free, free]` Jacobian block.
 
 The element pipeline is `Float64`: `N` is evaluated at `Float64` states and at first-order
 `ForwardDiff.Dual`s of `Float64` (as the default initializer passes), whose partials go through
@@ -113,8 +115,9 @@ struct FEMNonlinear
     prescribed::BitVector
     pool::Vector{Any}
     lock::ReentrantLock
+    elimination::Any   # `nothing`, or `(e::DirichletElimination, nzmap)` with `nzmap` the positions of `J_N[free, free]` in `J_N`
 end
-FEMNonlinear(op, p, prescribed = falses(0)) = FEMNonlinear(op, collect(Float64, p), prescribed, Any[], ReentrantLock())
+FEMNonlinear(op, p, prescribed = falses(0)) = FEMNonlinear(op, collect(Float64, p), prescribed, Any[], ReentrantLock(), nothing)
 Base.show(io::IO, ::FEMNonlinear) = print(io, "FEMNonlinear")
 
 # `f(op)` with an operator no other running call holds; the pool grows to the number of concurrent calls.
@@ -132,9 +135,16 @@ check_state(::AbstractVector{Float64}) = nothing
 check_state(::AbstractVector{<:ForwardDiff.Dual{<:Any, Float64}}) = nothing
 check_state(u) = throw(ArgumentError("the nonlinear operator evaluates Float64 states and first-order ForwardDiff Duals of Float64; got $(eltype(u))"))
 
-# `r .+= N(u, t)` outside the prescribed rows.
+# `r .+= N(u, t)` outside the prescribed rows. After elimination `u` and `r` hold the free dofs only.
 function add_nonlinear!(r, N::FEMNonlinear, u, t)
     check_state(u)
+    N.elimination === nothing && return add_full_nonlinear!(r, N, u, t)
+    e = first(N.elimination)
+    r .+= view(add_full_nonlinear!(zeros(eltype(r), e.n), N, full_state(e, u), t), e.free)
+    return r
+end
+
+function add_full_nonlinear!(r, N::FEMNonlinear, u, t)
     return with_operator(N) do op
         residual!(op.r, op, u, N.p, t)
         for i in eachindex(r)
@@ -146,7 +156,7 @@ end
 
 # ForwardDiff states, as from the default initializer's NewtonRaphson: the partials are pushed through the
 # analytic tangent, `∂N(u) = J_N(value(u)) ∂u`, since the element buffers hold `Float64`.
-function add_nonlinear!(r, N::FEMNonlinear, u::AbstractVector{ForwardDiff.Dual{T, Float64, P}}, t) where {T, P}
+function add_full_nonlinear!(r, N::FEMNonlinear, u::AbstractVector{ForwardDiff.Dual{T, Float64, P}}, t) where {T, P}
     du = [ForwardDiff.partials(x, k) for x in u, k in 1:P]
     return with_operator(N) do op
         J = jacobian!(op.J, op, ForwardDiff.value.(u), N.p, t)
@@ -164,12 +174,21 @@ nonlinear_residual!(r, N::FEMNonlinear, u, t) = add_nonlinear!(fill!(r, 0), N, u
 function add_nonlinear_jacobian!(J, N::FEMNonlinear, u, t)
     u isa AbstractVector{Float64} ||
         throw(ArgumentError("the nonlinear operator's Jacobian evaluates Float64 states; got $(eltype(u))"))
+    elimination = N.elimination
     return with_operator(N) do op
-        JN = jacobian!(op.J, op, u, N.p, t)
-        check_pattern(J, JN, "Nop")
-        rows, vals, out = rowvals(JN), nonzeros(JN), nonzeros(J)
-        for k in eachindex(rows)
-            N.prescribed[rows[k]] || (out[k] += vals[k])
+        if elimination === nothing
+            JN = jacobian!(op.J, op, u, N.p, t)
+            check_pattern(J, JN, "Nop")
+            rows, vals, out = rowvals(JN), nonzeros(JN), nonzeros(J)
+            for k in eachindex(rows)
+                N.prescribed[rows[k]] || (out[k] += vals[k])
+            end
+        else
+            e, nzmap = elimination
+            vals, out = nonzeros(jacobian!(op.J, op, full_state(e, u), N.p, t)), nonzeros(J)
+            for k in eachindex(nzmap)
+                out[k] += vals[nzmap[k]]
+            end
         end
         J
     end
@@ -305,7 +324,8 @@ time, so `g' = 0` and the term `M[fr, cd] g'` vanishes; time-dependent data, and
 with every dof prescribed, throw an `ArgumentError`.
 The field ranges of `reduced` count free dofs only, and a field whose dofs are all prescribed
 is left out of them; `full_state(elimination, u_free)` rebuilds
-the full dof vector with `u[cd] = g`.
+the full dof vector with `u[cd] = g`. A nonlinear part `N` is kept: it is evaluated at that
+full vector, with its rows `fr` and its Jacobian block `[fr, fr]`.
 """
 function eliminate_dirichlet(ops::FEMOperators)
     F = ops.load
@@ -331,7 +351,14 @@ function eliminate_dirichlet(ops::FEMOperators)
         stop += nfree
     end
     reduced = FEMOperators(ops.M[free, free], ops.K[free, free], load, fields)
-    return reduced, DirichletElimination(n, free, ops.prescribed, g)
+    elimination = DirichletElimination(n, free, ops.prescribed, g)
+    N = ops.nonlinear
+    N === nothing && return reduced, elimination
+    # The positions of the stored entries of K[free, free], which has the pattern of N's Jacobian block.
+    positions = SparseMatrixCSC(n, n, ops.K.colptr, ops.K.rowval, collect(eachindex(nonzeros(ops.K))))
+    Nfree = FEMNonlinear(N.op, N.p, N.prescribed, Any[], ReentrantLock(), (elimination, nonzeros(positions[free, free])))
+    (; M, K, load, fields, prescribed, differential_vars, jac_prototype) = reduced
+    return FEMOperators(M, K, load, fields, prescribed, differential_vars, jac_prototype, Nfree), elimination
 end
 
 """

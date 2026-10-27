@@ -27,7 +27,8 @@ gives a `PDENoTimeSolution`.
   - `dirichlet`: how Dirichlet conditions enter the DAE (spec §7.3). The default `:algebraic`
     keeps every dof as an unknown and makes each prescribed row the algebraic equation
     `u_d = g_d(t)`. `:eliminate` removes the prescribed dofs: the unknowns are the free dofs
-    `fr`, the operators are `M[fr, fr]` and `K[fr, fr]` and the load is `F[fr] - K[fr, cd] g`.
+    `fr`, the operators are `M[fr, fr]` and `K[fr, fr]` and the load is `F[fr] - K[fr, cd] g`;
+    nonlinear terms are evaluated at the full state with `u_cd = g` and keep their rows `fr`.
     It needs Dirichlet data that are constant in time (they may vary in space); data that
     depend on time raise `ArgumentError("dirichlet = :eliminate needs Dirichlet data that are
     constant in time, but the condition on boundary piece <name> depends on time; use the default
