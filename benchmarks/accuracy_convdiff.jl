@@ -20,11 +20,16 @@ function mol_error(n)
     sys = PDESystemLibrary.all_systems[findfirst(s -> string(s.name) == "convdiff2", PDESystemLibrary.all_systems)]
     z, tt = sys.ivs[2], sys.ivs[1]
     prob = discretize(sys, MOLFiniteDifference([z => L / n], tt))
-    sol = solve(prob, prob isa SciMLBase.DAEProblem ? DFBDF() : FBDF(); TOL...)
+    alg = prob isa SciMLBase.DAEProblem ? DFBDF() : FBDF()
+    sol = solve(prob, alg; TOL...)
     SciMLBase.successful_retcode(sol) || error("MethodOfLines convdiff2 n = $n: $(sol.retcode)")
     values = sol[sys.dvs[1]][end, :]
-    return maximum(abs, values .- steady.(range(0, L, n + 1))), n + 1
+    solver = "$(nameof(typeof(alg)))() on the $(nameof(typeof(prob))) from MethodOfLines; $(tolerances())"
+    return maximum(abs, values .- steady.(range(0, L, n + 1))), n + 1, solver
 end
+
+tolerances() = "reltol = $(TOL.reltol), abstol = $(TOL.abstol)"
+const FEM_SOLVER = "DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0)) on the DAEProblem from FEMDiscretization; $(tolerances())"
 
 @variables z f(..)
 @parameters k v
@@ -42,7 +47,7 @@ function fem_error(n)
     SciMLBase.successful_retcode(sol) || error("FEM convdiff2 n = $n: $(sol.retcode)")
     values = sol[f(t, z)][end, :]
     nodes = sol[Num(only(sol.disc_data.x̄))]
-    return maximum(abs, values .- steady.(nodes)), length(values)
+    return maximum(abs, values .- steady.(nodes)), length(values), FEM_SOLVER
 end
 
 rates(errors) = [NaN; [log2(errors[i - 1] / errors[i]) for i in 2:length(errors)]]
@@ -68,7 +73,8 @@ function run()
         "accuracy_convdiff", Dict(
             "benchmark" => "(a) accuracy per degree of freedom, convdiff2",
             "description" => "max nodal error at t = 30 against the steady solution; FEM P1 Galerkin vs MethodOfLines (default upwind advection), same nodes",
-            "solver" => "DFBDF, reltol = 1e-9, abstol = 1e-11",
+            "fem_solver" => only(unique(last.(fem))),
+            "mol_solver" => join(unique(last.(mol)), "; "),
             "rows" => rows,
         )
     )

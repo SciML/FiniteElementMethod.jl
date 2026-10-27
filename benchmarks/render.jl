@@ -31,7 +31,7 @@ function render_accuracy(r)
     return """
     ## (a) Accuracy per degree of freedom: `convdiff2` against MethodOfLines
 
-    $(r["description"]). Solver: $(r["solver"]). The FEM column is Galerkin P1, which is centred and second order;
+    $(r["description"]). FEM solver: $(r["fem_solver"]). MethodOfLines solver: $(r["mol_solver"]). The FEM column is Galerkin P1, which is centred and second order;
     MethodOfLines' default upwinds the advection term, which is first order. On these meshes `convdiff2` has a cell
     Péclet number below one (Tier 1 of the supported-classes table); advection-dominated problems stay Tier 2 until
     SUPG.

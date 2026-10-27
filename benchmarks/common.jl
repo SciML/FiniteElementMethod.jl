@@ -12,21 +12,27 @@ function git_sha()
     catch
         "unknown"
     end
+    # The package source and the benchmark scripts and environment; not the results this run writes.
     dirty = try
-        !isempty(readchomp(`git -C $(@__DIR__) status --porcelain -- ../src`))
+        !isempty(readchomp(`git -C $(@__DIR__) status --porcelain -- ../src . ':(exclude)results'`))
     catch
         false
     end
     return dirty ? sha * "-dirty" : sha
 end
 
+# A version string that pins what ran: a branch-tracked package also records its resolved git tree hash, and a
+# path package (FiniteElementMethod itself) points at `git_sha`, which carries the dirty flag.
+function package_version(info)
+    version = string(something(info.version, "unversioned"))
+    info.is_tracking_repo && return "$version ($(info.git_revision) at tree $(info.tree_hash))"
+    info.is_tracking_path && return "$version (path, see git_sha)"
+    return version
+end
+
 "Where and with what a result was produced. `BENCHMARK_ORIGIN` is set by the Benchmarks workflow."
 function environment()
-    deps = Pkg.dependencies()
-    packages = Dict(
-        info.name => string(something(info.version, "unversioned")) * (info.is_tracking_repo ? " ($(info.git_revision))" : "")
-            for info in values(deps) if info.is_direct_dep
-    )
+    packages = Dict(info.name => package_version(info) for info in values(Pkg.dependencies()) if info.is_direct_dep)
     return Dict(
         "origin" => get(ENV, "BENCHMARK_ORIGIN", "local run, not CI"),
         "date" => string(now(UTC)) * "Z",
