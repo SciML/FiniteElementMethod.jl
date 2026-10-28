@@ -1,6 +1,6 @@
 # Claims of the user documentation that the code must keep true.
 using Test
-using FiniteElementMethod: FiniteElementMethod, rectangle_grid
+using FiniteElementMethod: FiniteElementMethod, PDEBase, rectangle_grid
 using Ferrite: Ferrite, Triangle
 
 include(joinpath(@__DIR__, "..", "frontend.jl"))
@@ -8,6 +8,17 @@ include(joinpath(@__DIR__, "..", "frontend.jl"))
 using ModelingToolkit: t_nounits as t
 
 @testset verbose = true "documentation" begin
+    @testset "supported_conditions matches docs/src/boundary_conditions.md" begin
+        if isdefined(PDEBase, :supported_conditions)
+            disc = FEMDiscretization(MeshDomain(rectangle_grid(Triangle, (1, 1))))
+            rendered = repr(MIME"text/markdown"(), PDEBase.supported_conditions(disc))
+            page = read(joinpath(pkgdir(FiniteElementMethod), "docs", "src", "boundary_conditions.md"), String)
+            @test occursin(rendered, page)
+        else
+            @test_skip "the installed PDEBase has no supported_conditions"
+        end
+    end
+
     @testset "the domain pairing names the mesh coordinates" begin
         @variables x y u(..)
         Dt = Differential(t)
@@ -43,5 +54,19 @@ using ModelingToolkit: t_nounits as t
         @test maximum(abs, swapped[u(t, x, y)] - straight[u(t, x, y)]) <= 1.0e-12
         exact = [(1 + swapped[y][i] + 2swapped[x][i]) * (1 + tk) for tk in swapped.t, i in eachindex(swapped[x])]
         @test maximum(abs, swapped[u(t, x, y)] - exact) <= 1.0e-8
+    end
+    @testset "a time-dependent Robin coefficient is rejected" begin
+        @variables x y u(..)
+        Ω = MeshDomain(rectangle_grid(Triangle, (2, 2)))
+        Γl, Γr, Γb, Γt = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+        eq = Differential(t)(u(t, x, y)) ~ Differential(x)(Differential(x)(u(t, x, y))) + Differential(y)(Differential(y)(u(t, x, y)))
+        bcs = [
+            u(t, Γl) ~ 0, u(t, Γb) ~ 0, u(t, Γt) ~ 0,
+            NormalDerivative(Γr)(u(t, Γr)) + (1 + t) * u(t, Γr) ~ 0, u(0, x, y) ~ 0,
+        ]
+        @named sys = PDESystem([eq], bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
+        @test_throws ArgumentError(
+            "time-dependent coefficients in the mass or stiffness operator land in M3: equation 1 has U₁*V + T*U₁*V"
+        ) discretize(sys, FEMDiscretization(Ω, t))
     end
 end

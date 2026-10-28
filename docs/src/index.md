@@ -12,6 +12,11 @@ on a mesh, derives the Galerkin weak form, assembles it with
     conditions, time-dependent mass or stiffness coefficients and other test spaces raise
     an error.
 
+[Getting started](@ref) solves a heat equation on a Gmsh mesh. A MethodOfLines user should
+then read [Differences from MethodOfLines](@ref): coordinates are bound differently, boundary
+conditions are written on named boundary pieces, and solutions have different shapes.
+[Supported equation classes](@ref) states what is supported and on what evidence.
+
 ```@docs
 FiniteElementMethod
 ```
