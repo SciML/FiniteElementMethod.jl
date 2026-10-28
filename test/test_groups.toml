@@ -33,3 +33,15 @@ versions = ["1"]
 
 [NavierStokes]
 versions = ["lts", "1", "pre"]
+
+[Convergence]
+versions = ["lts", "1", "pre"]
+
+# Opt-in heavy groups with their own test/<Group>/Project.toml (MethodOfLines, PDESystemLibrary).
+[MOLComparison]
+in_all = false
+versions = ["lts", "1"]
+
+[Library]
+in_all = false
+versions = ["lts", "1"]
