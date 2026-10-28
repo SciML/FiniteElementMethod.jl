@@ -24,5 +24,10 @@ docs/site/
 Manifest.toml
 
 .vscode/
+
+# forge and Nelson session state
+.forge/
+.nelson/
+
 # Copied from docs/discretization.md by docs/make.jl when the front end is available.
 docs/src/discretization.md
