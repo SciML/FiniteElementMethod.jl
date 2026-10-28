@@ -8,7 +8,8 @@
 
 What the driver needs to assemble kernels: the `DofHandler`, its field names in equation/field index order, the
 `CellValues` and `FacetValues` shared by all fields, and `pieces`, a map from boundary piece to its facet set,
-given as a facet-set name of the grid or as a set of `FacetIndex`.
+given as a facet-set name of the grid or as a set of `FacetIndex`. Each facet set is copied at construction, so
+changing the caller's set or the grid's facet sets afterwards does not affect the context; build a new one instead.
 """
 struct AssemblyContext{NF, DH <: Ferrite.DofHandler, CV, FV}
     dh::DH
@@ -16,6 +17,7 @@ struct AssemblyContext{NF, DH <: Ferrite.DofHandler, CV, FV}
     cv::CV
     fv::FV
     facetsets::Dict{Any, Any}
+    facetcells::BitSet   # cells with a facet in some piece; the others skip the per-facet membership tests
 end
 
 function AssemblyContext(dh::Ferrite.DofHandler, fields, cv, fv, pieces = Dict())
@@ -27,9 +29,11 @@ function AssemblyContext(dh::Ferrite.DofHandler, fields, cv, fv, pieces = Dict()
     end
     facetsets = Dict{Any, Any}()
     for (piece, set) in pieces
-        facetsets[piece] = set isa AbstractString ? _named_facetset(dh.grid, piece, set) : set
+        facetsets[piece] = Set{Ferrite.FacetIndex}(set isa AbstractString ? _named_facetset(dh.grid, piece, set) : set)
     end
-    return AssemblyContext{length(fields), typeof(dh), typeof(cv), typeof(fv)}(dh, fields, cv, fv, facetsets)
+    ncells = Ferrite.getncells(dh.grid)
+    facetcells = BitSet(fi[1] for set in values(facetsets) for fi in set if 1 ≤ fi[1] ≤ ncells)
+    return AssemblyContext{length(fields), typeof(dh), typeof(cv), typeof(fv)}(dh, fields, cv, fv, facetsets, facetcells)
 end
 
 function _named_facetset(grid, piece, name)
@@ -129,7 +133,7 @@ function _assemble!(op, ctx::AssemblyContext{NF}, volume::Tuple, groups::Tuple, 
         _start_cell!(op, Ferrite.celldofs(cell))
         xs = Ferrite.getcoordinates(cell)
         _kernels!(op, volume, cv, xs, ranges, p, t)
-        if !isempty(groups)
+        if !isempty(groups) && Ferrite.cellid(cell) in ctx.facetcells
             for lf in 1:Ferrite.nfacets(cell)
                 _facet_groups!(op, groups, counts, 1, Ferrite.FacetIndex(Ferrite.cellid(cell), lf), fv, xs, ranges, p, t)
             end
@@ -237,7 +241,9 @@ function _kernel!(op::NonlinearOp, k::KernelSpec, vals, xs, ranges::NTuple{NF}, 
         for i in 1:nb
             V, W = Ferrite.shape_value(vals, q, i), Ferrite.shape_gradient(vals, q, i)
             op.re[rows[i]] += k.f(U, G, Ud0, V, W, X, t, N, p) * dΩ
-            dI = k.tangent(U, G, Ud0, V, W, X, t, N, p)
+            # promote: a generated tangent returns literal `0` (Int) for constant-zero entries, and indexing a
+            # mixed tuple with a runtime index allocates
+            dI = promote(k.tangent(U, G, Ud0, V, W, X, t, N, p)...)
             for b in 1:NF, j in 1:nb
                 φ, ∇φ = Ferrite.shape_value(vals, q, j), Ferrite.shape_gradient(vals, q, j)
                 value = dI[b] * φ

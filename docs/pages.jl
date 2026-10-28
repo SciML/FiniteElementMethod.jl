@@ -4,5 +4,6 @@ pages = [
     "Differences from MethodOfLines" => "differences.md",
     "Supported equation classes" => "equation_classes.md",
     "Boundary conditions and limitations" => "boundary_conditions.md",
+    "Discretization" => "discretization.md",
     "API" => "api.md",
 ]
