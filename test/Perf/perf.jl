@@ -215,3 +215,36 @@ end
         @test isempty(check_allocs(_start_cell!, map(typeof, (op, celldofs(first(CellIterator(SETUP.dh)))))))
     end
 end
+
+# Spec §6.6 item 2: the coefficient contraction (`coeffs`) must not be slower than the per-shape-function `f` path
+# where it is meant to pay, P2 elements, a variable coefficient and several fields. It is fragile in one way: if
+# the contraction's static-index helpers stop inlining, it becomes over 10× slower (seen at two fields).
+const CONTRACTION_GATE = 1.0
+@testset "gate 4: coefficient contraction no slower than the f path at P2" begin
+    @variables Du Dw χ a b
+    @variables w(..)
+    Wf = w(t, x, y)
+    axy = 1 + x^2 + y
+    iib = weak_form(
+        analyse(
+            [Dt(U) ~ axy * (Dx(Dx(U)) + Dy(Dy(U))) - 0.7 * Dx(U) - 0.3 * Dy(U) - 2.5 * U + x * y + 1],
+            [BC("right", Dx(U) ~ h, RIGHT), BC("top", axy * Dy(U) + α * U ~ β, [0.0, 1.0])];
+            depvars = [U], t, sivs = [x, y], params = [k, α, β, h]
+        )
+    )
+    eqs = [
+        Dt(U) ~ Dx(Du * Dx(U) + χ * Dx(Wf)) + Dy(Du * Dy(U) + χ * Dy(Wf)) + a - U,
+        Dt(Wf) ~ Dx(Dw * Dx(Wf)) + Dy(Dw * Dy(Wf)) + b - U,
+    ]
+    two = weak_form(analyse(eqs, [BC("right", Dx(Wf) ~ 0.2, RIGHT)]; depvars = [U, Wf], t, sivs = [x, y], params = [Du, Dw, χ, a, b]))
+    for (name, wf, fields, p) in (("(ii-b)", iib, [:u], PV), ("two-field", two, [:u, :w], [1.0, 20.0, 0.3, 0.1, 0.9]))
+        setup = mesh_setup(Triangle, 2, 30; fields)
+        fused, plain = emit_kernels(wf), emit_kernels(wf; coeffs = false)
+        Mf, Kf, Ff = operators(setup)
+        Mp, Kp, Fp = operators(setup)
+        tf = best_time(() -> assemble_linear!(Mf, Kf, Ff, setup.ctx, fused, p))
+        tp = best_time(() -> assemble_linear!(Mp, Kp, Fp, setup.ctx, plain, p))
+        @info "$name P2 on 30×30" coeffs_ms = 1.0e3tf f_ms = 1.0e3tp ratio = tf / tp
+        @test tf / tp ≤ CONTRACTION_GATE
+    end
+end

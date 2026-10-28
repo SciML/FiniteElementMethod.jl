@@ -83,7 +83,7 @@ end
 
 function LinearCache(ctx::AssemblyContext, wf::WeakForm, kernels, p; t = 0.0, ch = nothing)
     terms = [wf.volume; wf.facet]
-    length(terms) == length(kernels) || throw(ArgumentError("kernels must be emit_kernels(wf), one per term of wf"))
+    length(fused_terms(wf)) == length(kernels) || throw(ArgumentError("kernels must be emit_kernels(wf), one per equation, kind and piece of wf"))
     timedep = Set{Symbol}(term.kind for term in terms if term.timedep)
     paramdep = Set{Symbol}(term.kind for term in terms if term.paramdep)
     K = allocate_pattern(ctx, ch)
