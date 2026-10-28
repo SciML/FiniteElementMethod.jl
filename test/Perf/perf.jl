@@ -201,9 +201,12 @@ end
     ne = getnbasefunctions(ctx.cv)
     xs = getcoordinates(first(CellIterator(SETUP.dh)))
     ranges = (dof_range(SETUP.dh, :u),)
-    lop = LinearOp(start_assemble(M), start_assemble(K, F), zeros(ne, ne), zeros(ne, ne), zeros(ne))
-    nop = NonlinearOp(start_assemble(allocate_matrix(SETUP.dh), zeros(ndofs(SETUP.dh))), zeros(ne, ne), zeros(ne), rand(ndofs(SETUP.dh)), zeros(ne))
-    for (op, kernels, kinds) in ((lop, linear, (:mass, :bilinear, :source)), (nop, nonlinear, (:nonlinear,)))
+    lop = LinearOp(start_assemble(M), start_assemble(K), F, zeros(ne, ne), zeros(ne, ne), zeros(ne))
+    n = ndofs(SETUP.dh)
+    nop = NonlinearOp(start_assemble(allocate_matrix(SETUP.dh)), zeros(n), zeros(ne, ne), zeros(ne), rand(n), zeros(ne))
+    rop = NonlinearOp(nothing, zeros(n), zeros(ne, ne), zeros(ne), rand(n), zeros(ne))   # residual only
+    cases = ((lop, linear, (:mass, :bilinear, :source)), (nop, nonlinear, (:nonlinear,)), (rop, nonlinear, (:nonlinear,)))
+    for (op, kernels, kinds) in cases
         volume, groups = _split(ctx, kernels, kinds)
         counts = zeros(Int, length(groups))
         fi = FacetIndex(1, 1)
