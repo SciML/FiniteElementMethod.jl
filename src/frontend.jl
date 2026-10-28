@@ -288,7 +288,9 @@ function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
         M, K, load, [name => field_range(space, name) for name in names];
         prescribed = prescribed_dofs(space), dirichlet_values = timedep_dirichlet ? values! : values0, nonlinear
     )
-    return ops, coords
+    raw = (; M, K, load, nonlinear = nonlinear !== nothing, prescribed = prescribed_dofs(space), dirichlet_values = values0,
+        timedep_dirichlet)
+    return ops, coords, raw
 end
 
 function _initial_values(ics, ctx, space, coords, an, names, pvals)
@@ -354,7 +356,7 @@ function _lower(pdesys, disc::FEMDiscretization)
                 "$(an.essential[timedep].piece.name) depends on time; use the default dirichlet = :algebraic"
         )
     )
-    ops, coords = _operators(space, wf, names, dirichlet, pvals, t0, timedep !== nothing)
+    ops, coords, raw = _operators(space, wf, names, dirichlet, pvals, t0, timedep !== nothing)
     u0 = _initial_values(Equation[b.eq for b in ics], ctx, space, coords, an, names, pvals)
     dirichlet_values!(view(u0, ops.prescribed), ops.load, t0)
     elimination = nothing
@@ -376,7 +378,7 @@ function _lower(pdesys, disc::FEMDiscretization)
     md = FEMMetadata(space, iv, v.x̄, fields, pieces, pdesys; u0, elimination)
     parameters = [q => v for (q, v) in zip(ctx.params, pvals)]
     selfnonlinear = Set(names[f] for f in 1:an.nfields if _nonlinear_in_own_field(wf, an, f))
-    return (; ops, u0 = unknown_u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys), parameters, selfnonlinear)
+    return (; ops, u0 = unknown_u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys), parameters, selfnonlinear, raw, full_u0 = u0)
 end
 
 # `K u + N(u, t0) - F` with the Dirichlet rows `u_d - g_d`: `K` holds `e_d`, `F` holds `g_d` and `N` is zero there.
@@ -558,4 +560,43 @@ function SciMLBase.symbolic_discretize(pdesys::ModelingToolkit.PDESystem, disc::
     )
     prob = DAEProblem(pdesys, disc; kwargs...)
     return prob.f.sys, prob.tspan
+end
+
+"""
+    operators(pdesys::PDESystem, disc::FEMDiscretization) -> NamedTuple
+
+The assembled Galerkin operators of `discretize(pdesys, disc)` as plain data, for a caller that
+builds its own system around them (such as a component with boundary ports). Returns
+
+  - `M`, `K`: the mass and stiffness matrices with one sparsity pattern, before any Dirichlet row
+    is replaced, so a caller can impose its own conditions or read reactions from them;
+  - `F`: the load vector, the volume sources and natural boundary data, without Dirichlet values;
+  - `fields`: `name => dof range` per field, in declared order;
+  - `differential_vars`: rows of `M` with a nonzero entry;
+  - `prescribed`, `dirichlet_values`: the dofs of the `PDESystem`'s Dirichlet conditions and
+    their values (the rows `M` and `K` would have replaced);
+  - `u0`: the initial dof vector, with the Dirichlet values on the prescribed dofs;
+  - `metadata`: the [`FEMMetadata`](@ref), for [`facet_dofs`](@ref),
+    [`dof_coordinates`](@ref) and [`cell_dofs`](@ref).
+
+It is the linear, time-independent case only: a nonlinear term, a time-dependent source or
+time-dependent Dirichlet data has no data form and raises an `ArgumentError`. Parameters are
+substituted by their values, as for the `DAEProblem`.
+"""
+function operators(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
+    parts = _lower(pdesys, disc)
+    (; M, K, load, nonlinear, prescribed, dirichlet_values, timedep_dirichlet) = parts.raw
+    nonlinear && throw(ArgumentError("operators returns linear operators only, but the PDESystem has nonlinear terms"))
+    load isa AbstractVector || throw(ArgumentError("operators needs time-independent sources, but a source depends on time"))
+    timedep_dirichlet && throw(ArgumentError("operators needs Dirichlet data that are constant in time"))
+    differential_vars = falses(size(M, 1))
+    for (k, i) in enumerate(rowvals(M))
+        iszero(nonzeros(M)[k]) || (differential_vars[i] = true)
+    end
+    md = parts.md
+    fields = [f.name => field_range(md.space, f.name) for f in md.fields]
+    return (;
+        M = copy(M), K = copy(K), F = copy(load), fields, differential_vars, prescribed = copy(prescribed),
+        dirichlet_values = copy(dirichlet_values), u0 = parts.full_u0, metadata = md,
+    )
 end
