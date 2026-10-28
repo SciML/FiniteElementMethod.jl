@@ -18,8 +18,7 @@ julia --project=benchmarks benchmarks/assembly_cost.jl    # or one at a time
 julia benchmarks/render.jl                                # write docs/src/benchmarks.md from the results
 ```
 
-The environment uses the package in this repository (`[sources]`, Julia 1.11 or later) and, until a PDEBase release
-contains the mesh-discretization layer (PDEBase#158), PDEBase from that branch.
+The environment uses the package in this repository (`[sources]`, Julia 1.11 or later).
 
 Each script writes `results/<name>.toml` with its numbers and an `[environment]` table: where it ran (`origin`,
 set by the Benchmarks workflow through `BENCHMARK_ORIGIN`, otherwise "local run, not CI"), the date, the git
