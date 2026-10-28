@@ -26,6 +26,10 @@ using Symbolics: Symbolics, Num, @register_array_symbolic
 include("weakform.jl")
 include("kernels.jl")
 include("assembly.jl")
+include("operators.jl")
+
+include("mesh.jl")
+include("space.jl")
 include("numeric_dae.jl")
 
 end # module
