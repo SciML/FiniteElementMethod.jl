@@ -66,3 +66,6 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
 test = ["AllocCheck", "FerriteGmsh", "Gmsh", "LinearSolve", "OrdinaryDiffEqBDF", "Random", "SafeTestsets", "SciMLTesting", "Test"]
+
+[sources]
+PDEBase = {url = "https://github.com/SciML/PDEBase.jl", rev = "97599c885e81b85b2f36fcb2c63a2ef8de1886dd"}
