@@ -24,14 +24,15 @@ using SparseArrays: SparseMatrixCSC, nonzeros, nzrange, rowvals
 using SymbolicUtils: SymbolicUtils
 using Symbolics: Symbolics, Equation, Num, @register_array_symbolic, substitute, unwrap
 
+include("weakform.jl")
+include("kernels.jl")
+include("assembly.jl")
+include("operators.jl")
 include("numeric_dae.jl")
 
 include("mesh.jl")
 include("space.jl")
 include("solution.jl")
-include("weakform.jl")
-include("kernels.jl")
-include("assembly.jl")
 export FieldInfo, FEMMetadata, piece_nodes, normal_flux, write_vtk
 # Re-exported so that the user API of a FEM model needs no `using PDEBase, Ferrite`.
 export Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexahedron
