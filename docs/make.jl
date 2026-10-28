@@ -15,6 +15,11 @@ for (title, file) in ("Discretization" => "discretization.md", "Extension contra
     end
 end
 
+# The benchmark page is rendered from benchmarks/results/*.toml at build time (benchmarks/render.jl).
+include(joinpath(@__DIR__, "..", "benchmarks", "render.jl"))
+write(joinpath(@__DIR__, "src", "benchmarks.md"), render(joinpath(@__DIR__, "..", "benchmarks", "results")))
+insert!(pages, length(pages), "Benchmarks" => "benchmarks.md")
+
 makedocs(
     sitename = "FiniteElementMethod.jl",
     authors = "Alex Jones et al.",

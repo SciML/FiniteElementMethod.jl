@@ -27,3 +27,5 @@ Manifest.toml
 # Copied from docs/ by docs/make.jl when the front end is available.
 docs/src/discretization.md
 docs/src/extension_contract.md
+# Rendered from benchmarks/results by docs/make.jl.
+docs/src/benchmarks.md

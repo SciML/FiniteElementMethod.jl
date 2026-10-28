@@ -1,0 +1,23 @@
+[deps]
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+DomainSets = "5b8099bc-c8ec-5219-889f-1d9e522a28bf"
+Ferrite = "c061ca5d-56c9-439f-9c0e-210fe06d3992"
+FiniteElementMethod = "e08948db-0ae8-498a-9b98-73fc7f237ce3"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+MethodOfLines = "94925ecb-adb7-4558-8ed8-f975c56a0bf4"
+ModelingToolkit = "961ee093-0014-501f-94e3-6117800e7a78"
+OrdinaryDiffEqBDF = "6ad6398a-0878-4a85-9266-38940aa047c8"
+PDEBase = "a7812802-0625-4b9e-961c-d332478797e5"
+PDESystemLibrary = "d14f9848-fe58-4297-bd22-c1aba6f3000d"
+Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
+Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+
+[sources]
+FiniteElementMethod = {path = ".."}
+PDEBase = {rev = "forge/mesh-axis-order", url = "https://github.com/xtalax-droid/PDEBase.jl"}
+
+[compat]
+julia = "1.11"
