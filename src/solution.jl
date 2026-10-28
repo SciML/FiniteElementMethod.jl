@@ -190,6 +190,33 @@ function _piece_arg(s)
     return i === nothing ? nothing : args[i]
 end
 
+# `_fieldinfo` matches the function name only; these check the arguments. A trace keeps the
+# dependent variable's other arguments in place and replaces its coordinates by one piece,
+# `u(t, Γ)` or `u(Γ, t)`.
+_is_canonical(f::FieldInfo, s) = isequal(s, Symbolics.unwrap(f.dv))
+function _is_trace(md, f::FieldInfo, s)
+    spatial(a) = any(x -> isequal(a, Symbolics.unwrap(x)), md.x̄)
+    dvargs = SymbolicUtils.arguments(Symbolics.unwrap(f.dv))
+    i = findfirst(spatial, dvargs)
+    i === nothing && return false
+    expected = Any[dvargs[1:(i - 1)]..., :piece, filter(!spatial, dvargs[i:end])...]
+    args = map(SymbolicUtils.unwrap_const, SymbolicUtils.arguments(s))
+    length(args) == length(expected) || return false
+    return all(((a, e),) -> e === :piece ? a isa DomainSets.Domain : isequal(a, e), zip(args, expected))
+end
+
+_fixed_args_message(ex, f::FieldInfo) = "$ex fixes arguments of $(f.dv); write the dependent variable as $(f.dv)"
+
+# A dependent variable, or the field differentiated in `s`, at fixed arguments such as
+# `u(t, 0, y)` is rejected rather than evaluated as the whole field.
+function _reject_fixed(md, s)
+    SymbolicUtils.iscall(s) && SymbolicUtils.operation(s) isa Symbolics.Differential &&
+        (s = Symbolics.unwrap(only(SymbolicUtils.arguments(s))))
+    f = _fieldinfo(md, s)
+    (f === nothing || _piece_arg(s) !== nothing || _is_canonical(f, s)) && return nothing
+    throw(ArgumentError(_fixed_args_message(s, f)))
+end
+
 function _facetset(md, Γ)
     haskey(md.pieces, Γ) ||
         throw(ArgumentError("$Γ is not a boundary piece of this mesh; the pieces are $(collect(keys(md.pieces)))"))
@@ -247,9 +274,11 @@ piece `Γ`, `nt × nfacets` (a vector for a steady solution). Facets are ordered
 """
 function normal_flux(A::FEMSolution, dv, Γ)
     md = A.disc_data
-    f = _fieldinfo(md, Symbolics.unwrap(dv))
-    f === nothing && throw(ArgumentError("$dv is not a dependent variable of this solution; they are $(A.dvs)"))
-    return _stack(A, [_facet_normal_flux(md, f, Γ, U) for U in _states(A)])
+    s = Symbolics.unwrap(dv)
+    _reject_fixed(md, s)
+    f = _fieldinfo(md, s)
+    (f === nothing || !_is_canonical(f, s)) && throw(ArgumentError("$dv is not a dependent variable of this solution; they are $(A.dvs)"))
+    return _stack(A, f, [_facet_normal_flux(md, f, Γ, U) for U in _states(A)])
 end
 
 # L2 projection of the cellwise gradient onto the field's own space, assembled and factorised once
@@ -293,7 +322,7 @@ function _gradkey(md, s)
     D.order == 1 || return nothing
     inner = only(SymbolicUtils.arguments(s))
     f = _fieldinfo(md, inner)
-    (f === nothing || _piece_arg(inner) !== nothing) && return nothing
+    (f === nothing || !_is_canonical(f, inner)) && return nothing
     d = findfirst(x -> isequal(Symbolics.unwrap(x), Symbolics.unwrap(D.x)), md.x̄)
     return d === nothing ? nothing : (f, d)
 end
@@ -316,6 +345,7 @@ function Base.getindex(A::FEMSolution, sym::Num)
     i = findfirst(iv -> isequal(Symbolics.unwrap(iv), s), A.ivs)
     i === nothing || return A.ivdomain[i]
     haskey(A.u, sym) && return A.u[sym]
+    _reject_fixed(md, s)
     g = _gradkey(md, s)
     if g !== nothing
         projector = _gradient_projector(md, g[1])
@@ -325,14 +355,29 @@ function Base.getindex(A::FEMSolution, sym::Num)
         trace = Symbolics.unwrap(only(SymbolicUtils.arguments(s)))
         f = _fieldinfo(md, trace)
         Γ = _piece_arg(trace)
-        (f === nothing || !isequal(Γ, SymbolicUtils.operation(s).piece)) && _key_error(A, sym)
+        (f === nothing || !_is_trace(md, f, trace) || !isequal(Γ, SymbolicUtils.operation(s).piece)) && _key_error(A, sym)
         return normal_flux(A, f.dv, Γ)
     end
     f = _fieldinfo(md, s)
-    f === nothing && _key_error(A, sym)
+    if f === nothing
+        _is_expression(s) || _key_error(A, sym)
+        compiled = _compile_observed(A, sym)
+        fn, terms, kinds = compiled
+        timed = A isa FEMTimeSolution
+        # Evaluated time-first (`nt × nvertices`), then turned as the expression's fields declare.
+        function value(term, kind)
+            kind === :time && return A.t
+            v = A[Num(term)]
+            kind === :coord && return timed ? permutedims(v) : v
+            return timed && _time_last(md, _leaf_field(md, term)) ? permutedims(v) : v
+        end
+        nv = Ferrite.getnnodes(_grid(md))
+        out = _broadcast_observed(fn, timed ? (length(A.t), nv) : (nv,), map(value, terms, kinds))
+        return _observed_time_last(A, sym, compiled) ? permutedims(out) : out
+    end
+    _is_trace(md, f, s) || throw(ArgumentError(_fixed_args_message(s, f)))
     Γ = _piece_arg(s)
-    Γ === nothing && _key_error(A, sym)
-    return _columns(A.u[Num(f.dv)], piece_nodes(md, Γ))
+    return _columns(A, f, A.u[Num(f.dv)], piece_nodes(md, Γ))
 end
 
 Base.getindex(A::FEMSolution, sym::Num, args...) = A[sym][args...]
@@ -358,8 +403,54 @@ function _point_gradient(ph, md, f, d, U)
     return out
 end
 
-# `states` holds one dof vector per requested time; `tshape` is `(nt,)` or `()`.
-function _evaluate(A::FEMSolution, states, tshape, xs, dv, outside)
+# Scattered points `pts` and the shape their values take: vector arguments give a tensor product
+# and scalar arguments drop their axis.
+function _points(md, xs)
+    if length(xs) == 1 && only(xs) isa AbstractVector{<:Ferrite.Vec}
+        pts = collect(only(xs))
+        return pts, (length(pts),)
+    end
+    length(xs) == length(md.x̄) ||
+        throw(ArgumentError("expected $(length(md.x̄)) spatial arguments $(md.x̄), got $(length(xs))"))
+    axes_ = map(_axis, xs)
+    pts = vec([Ferrite.Vec{length(xs)}(Float64.(Tuple(c))) for c in Iterators.product(axes_...)])
+    return pts, Tuple(length(a) for (a, x) in zip(axes_, xs) if x isa AbstractVector)
+end
+
+function _located(A::FEMSolution, pts, outside)
+    ph = _handler(A.interp, pts)
+    if outside === :error
+        i = findfirst(isnothing, ph.cells)
+        i === nothing || throw(DomainError(pts[i], "$(count(isnothing, ph.cells)) point(s) are outside the mesh"))
+    elseif outside !== :nan
+        throw(ArgumentError("outside must be :nan or :error, got $(repr(outside))"))
+    end
+    return ph
+end
+
+_trace_call(md, f::FieldInfo) = md.time === nothing ? "sol(Γ; dv = $(f.dv))" :
+    _time_last(md, f) ? "sol(Γ, t; dv = $(f.dv))" : "sol(t, Γ; dv = $(f.dv))"
+
+# The field `f` a `dv` names and, for a first derivative, `g = (f, d)`; `(nothing, nothing)` for an
+# observed expression.
+function _dvfield(A::FEMSolution, dv)
+    md = A.disc_data
+    s = Symbolics.unwrap(dv)
+    _reject_fixed(md, s)
+    g = _gradkey(md, s)
+    f = g === nothing ? _fieldinfo(md, s) : g[1]
+    if f === nothing
+        _is_expression(s) && return nothing, nothing
+        throw(ArgumentError("dv = $dv is not a dependent variable or a first spatial derivative of one; the dependent variables are $(A.dvs)"))
+    end
+    g === nothing && !_is_canonical(f, s) &&
+        throw(ArgumentError("dv = $dv is a trace; evaluate a trace as $(_trace_call(md, f))"))
+    return f, g
+end
+
+# `states` holds one dof vector per requested time; `tshape` is `(nt,)` or `()`. The time axis of
+# the result goes where field `f` declares its time argument.
+function _evaluate(A::FEMSolution, states, tshape, xs, f, g, outside)
     md = A.disc_data
     dv === nothing && return map(d -> _evaluate(A, states, tshape, xs, d, outside), A.dvs)
     s = Symbolics.unwrap(dv)
@@ -372,43 +463,163 @@ function _evaluate(A::FEMSolution, states, tshape, xs, dv, outside)
         rows = [Ferrite.evaluate_at_grid_nodes(_dh(md), U, f.name)[nodes] for U in states]
         return isempty(tshape) ? only(rows) : permutedims(reduce(hcat, rows))
     end
-    if length(xs) == 1 && only(xs) isa AbstractVector{<:Ferrite.Vec}
-        pts = collect(only(xs))
-        pshape = (length(pts),)
-    else
-        length(xs) == length(md.x̄) ||
-            throw(ArgumentError("expected $(length(md.x̄)) spatial arguments $(md.x̄), got $(length(xs))"))
-        axes_ = map(_axis, xs)
-        pts = vec([Ferrite.Vec{length(xs)}(Float64.(Tuple(c))) for c in Iterators.product(axes_...)])
-        pshape = Tuple(length(a) for (a, x) in zip(axes_, xs) if x isa AbstractVector)
-    end
-    ph = _handler(A.interp, pts)
-    if outside === :error
-        i = findfirst(isnothing, ph.cells)
-        i === nothing || throw(DomainError(pts[i], "$(count(isnothing, ph.cells)) point(s) are outside the mesh"))
-    elseif outside !== :nan
-        throw(ArgumentError("outside must be :nan or :error, got $(repr(outside))"))
-    end
+    pts, pshape = _points(md, xs)
+    ph = _located(A, pts, outside)
     out = Matrix{eltype(first(states))}(undef, length(states), length(pts))
     for (k, U) in enumerate(states)
         out[k, :] .= g === nothing ? Ferrite.evaluate_at_points(ph, _dh(md), U, f.name) :
             _point_gradient(ph, md, f, g[2], U)
     end
-    shp = (tshape..., pshape...)
-    return isempty(shp) ? out[1] : reshape(out, shp)
+    return _shaped(out, tshape, pshape, _time_last(md, f))
+end
+
+# `out` is `nt × npoints`; the time axis goes last for a time-last result.
+function _shaped(out, tshape, pshape, time_last)
+    isempty((tshape..., pshape...)) && return out[1]
+    !isempty(tshape) && time_last && return reshape(permutedims(out), (pshape..., tshape...))
+    return reshape(out, (tshape..., pshape...))
 end
 
 const _CallArg = Union{Number, AbstractArray, DomainSets.Domain}
 
 # Documented in docs/src/solution.md: a docstring on a call of SciMLBase's type has no
 # binding of this package for Documenter to check against.
-function (A::FEMTimeSolution)(t::Union{Real, AbstractVector{<:Real}}, xs::Vararg{_CallArg}; dv = nothing, outside::Symbol = :nan)
-    states = [_dofs_at(A, tk) for tk in _axis(t)]
-    return _evaluate(A, states, t isa AbstractVector ? (length(t),) : (), xs, dv, outside)
+function (A::FEMTimeSolution)(args::Vararg{_CallArg}; dv = nothing, outside::Symbol = :nan)
+    md = A.disc_data
+    if dv === nothing
+        allequal(_time_last(md, f) for f in md.fields) || throw(
+            ArgumentError("the dependent variables $(A.dvs) put time in different argument positions; pass dv to choose one")
+        )
+        return map(d -> A(args...; dv = d, outside), A.dvs)
+    end
+    f, g = _dvfield(A, dv)
+    compiled = f === nothing ? _compile_observed(A, dv) : nothing
+    last_ = f === nothing ? _observed_time_last(A, dv, compiled) : _time_last(md, f)
+    t = isempty(args) ? nothing : last_ ? last(args) : first(args)
+    t isa Union{Real, AbstractVector{<:Real}} || throw(
+        ArgumentError("the $(last_ ? "last" : "first") argument must be a time or a vector of times, as $(f === nothing ? "the dependent variables of $dv declare" : "$(f.dv) declares"); got $(repr(t))")
+    )
+    xs = last_ ? Base.front(args) : Base.tail(args)
+    ts = _axis(t)
+    states = [_dofs_at(A, tk) for tk in ts]
+    tshape = t isa AbstractVector ? (length(t),) : ()
+    f === nothing && return _evaluate_observed(A, ts, states, tshape, xs, compiled, last_, outside)
+    return _evaluate(A, states, tshape, xs, f, g, outside)
 end
 
 function (A::FEMSteadySolution)(xs::Vararg{_CallArg}; dv = nothing, outside::Symbol = :nan)
-    return _evaluate(A, _states(A), (), xs, dv, outside)
+    dv === nothing && return map(d -> A(xs...; dv = d, outside), A.dvs)
+    f, g = _dvfield(A, dv)
+    f === nothing && return _evaluate_observed(A, nothing, _states(A), (), xs, _compile_observed(A, dv), false, outside)
+    return _evaluate(A, _states(A), (), xs, f, g, outside)
+end
+
+# Observed expressions (spec O9). Without `mtkcompile` there are no observed equations, so an
+# expression is compiled once with `build_function` into a scalar function of its leaves (the
+# fields, their first spatial derivatives, time and the coordinates) and broadcast over the
+# leaves' values at every vertex or point; parameters are replaced by their PDESystem values.
+_is_expression(s) = SymbolicUtils.iscall(s) && !(SymbolicUtils.operation(s) isa Symbolics.Differential)
+
+function _observed_error(dv, why)
+    throw(ArgumentError("cannot evaluate the expression $dv on this solution: $why"))
+end
+
+_check_field_call(dv, ex, f::FieldInfo) = _is_canonical(f, ex) || _observed_error(dv, _fixed_args_message(ex, f))
+
+# Adds the leaves of `ex` to `terms` as `term => kind`, with kind `:field`, `:time` or `:coord`,
+# and the value of each parameter to `params`.
+function _observed_leaves!(terms, params, A, dv, ex)
+    md = A.disc_data
+    ex = SymbolicUtils.unwrap_const(Symbolics.unwrap(ex))
+    ex isa Number && return nothing
+    if md.time !== nothing && isequal(ex, Symbolics.unwrap(md.time))
+        terms[ex] = :time
+    elseif any(x -> isequal(ex, Symbolics.unwrap(x)), md.x̄)
+        terms[ex] = :coord
+    elseif _gradkey(md, ex) !== nothing
+        terms[ex] = :field
+    elseif SymbolicUtils.iscall(ex) && SymbolicUtils.operation(ex) isa Symbolics.Differential
+        inner = Symbolics.unwrap(only(SymbolicUtils.arguments(ex)))
+        f = _fieldinfo(md, inner)
+        f === nothing || _piece_arg(inner) !== nothing || _check_field_call(dv, inner, f)
+        _observed_error(dv, "$ex is not a first spatial derivative of a dependent variable, the only derivatives an expression accepts")
+    elseif (f = _fieldinfo(md, ex)) !== nothing
+        _piece_arg(ex) === nothing ||
+            _observed_error(dv, "it contains the trace $ex; an expression is evaluated at every vertex, so write $(f.dv) instead")
+        _check_field_call(dv, ex, f)
+        terms[ex] = :field
+    elseif SymbolicUtils.issym(ex) || SymbolicUtils.issym(SymbolicUtils.operation(ex))
+        # The front end requires a numeric value for every parameter of the PDESystem.
+        ps = md.pdesys === nothing || md.pdesys.ps isa SciMLBase.NullParameters ? [] : md.pdesys.ps
+        i = findfirst(p -> p isa Pair && isequal(Symbolics.unwrap(p.first), ex), ps)
+        i === nothing && _observed_error(
+            dv, "$ex is not a dependent variable, an independent variable or a parameter; the dependent variables are $(join(A.dvs, ", ")) and the independent variables $(join(A.ivs, ", "))"
+        )
+        params[ex] = ps[i].second
+    else
+        foreach(a -> _observed_leaves!(terms, params, A, dv, a), SymbolicUtils.arguments(ex))
+    end
+    return nothing
+end
+
+# `(fn, terms, kinds)`: `fn(values...)` evaluates `dv` given the value of each of `terms`.
+function _compile_observed(A::FEMSolution, dv)
+    terms, params = Dict{Any, Symbol}(), Dict{Any, Any}()
+    _observed_leaves!(terms, params, A, dv, dv)
+    leaves = collect(keys(terms))
+    # Fixed names give an equal expression the same body, so the compiled function is reused.
+    vars = [Symbolics.unwrap(Symbolics.variable(:leaf, i)) for i in eachindex(leaves)]
+    body = substitute(Symbolics.unwrap(dv), merge(Dict{Any, Any}(zip(leaves, vars)), params))
+    fn = Symbolics.build_function(body, vars...; expression = Val(false))
+    return fn, leaves, [terms[l] for l in leaves]
+end
+
+# One call of `fn` per entry of an array of size `shape`; `values` broadcast against it.
+_broadcast_observed(fn, shape, values) = broadcast((_, v...) -> fn(v...), falses(shape), values...)
+
+_leaf_field(md, term) = (g = _gradkey(md, term); g === nothing ? _fieldinfo(md, term) : g[1])
+
+# Whether time goes last in the arrays of an expression: as its dependent variables declare or,
+# when it names none, as all those of the system do.
+function _observed_time_last(A::FEMSolution, dv, (_, terms, kinds))
+    md = A.disc_data
+    md.time === nothing && return false
+    fields = [_leaf_field(md, term) for (term, kind) in zip(terms, kinds) if kind === :field]
+    positions = unique(_time_last(md, f) for f in (isempty(fields) ? md.fields : fields))
+    length(positions) == 1 || _observed_error(
+        dv, "its dependent variables (all those of the system when it names none) put time in different argument positions; evaluate the time-first and the time-last parts separately"
+    )
+    return only(positions)
+end
+
+# Values on the points `xs` at the times `ts` of `states`, through the per-field point evaluation;
+# coordinate-only expressions are `NaN` outside the mesh like field values.
+function _evaluate_observed(A::FEMSolution, ts, states, tshape, xs, (fn, terms, kinds), time_last, outside)
+    md = A.disc_data
+    nt = length(states)
+    if length(xs) == 1 && only(xs) isa DomainSets.Domain
+        nodes = piece_nodes(md, only(xs))
+        coords = [A[Num(x)][nodes] for x in md.x̄]
+        pshape, lost = (length(nodes),), falses(length(nodes))
+    else
+        pts, pshape = _points(md, xs)
+        lost = isnothing.(_located(A, pts, outside).cells)
+        coords = [getindex.(pts, d) for d in eachindex(md.x̄)]
+    end
+    # The expression is evaluated only inside the mesh, where its domain (sqrt, log) may not
+    # extend, and the output is floating point so that the outside points can hold NaN.
+    inside = findall(!, lost)
+    function value(term, kind)
+        kind === :time && return ts
+        kind === :coord && return permutedims(coords[findfirst(x -> isequal(term, Symbolics.unwrap(x)), md.x̄)][inside])
+        f = _leaf_field(md, term)
+        v = _evaluate(A, states, (nt,), xs, f, _gradkey(md, term), outside)
+        return (_time_last(md, f) ? permutedims(reshape(v, :, nt)) : reshape(v, nt, :))[:, inside]
+    end
+    vals = _broadcast_observed(fn, (nt, length(inside)), map(value, terms, kinds))
+    out = fill(eltype(vals) <: Number ? float(eltype(vals))(NaN) : NaN, nt, length(lost))
+    out[:, inside] .= vals
+    return _shaped(out, tshape, pshape, time_last)
 end
 
 _xml_escape(str) = replace(str, '&' => "&amp;", '<' => "&lt;", '>' => "&gt;", '"' => "&quot;", '\'' => "&apos;")
