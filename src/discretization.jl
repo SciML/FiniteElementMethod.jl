@@ -19,7 +19,9 @@ gives a `PDENoTimeSolution`.
   - `spaces`: dependent variable (`u` or `u(t, x, y)`) `=>` `Ferrite.Interpolation`; the
     default is `Lagrange{RefShape, 1}()` on the mesh's reference shape. Fields may have
     different orders, such as the Taylor–Hood pair `Lagrange{RefTriangle, 2}()` for the
-    velocity and `Lagrange{RefTriangle, 1}()` for the pressure.
+    velocity and `Lagrange{RefTriangle, 1}()` for the pressure. The geometry is not a choice here: cells are mapped
+    with the geometric interpolation of the mesh's cell type, so a mesh of quadratic cells
+    (`QuadraticTriangle`, say, from a second-order Gmsh mesh) is mapped isoparametrically.
   - `regions`: dependent variable `=>` `Region(Ω, name)`, a cell set of the mesh on which the
     field lives (a `Ferrite.SubDofHandler`); elsewhere it has no dofs, its equation is not
     assembled, it enters other equations as zero and the solution reads `NaN`. Its
