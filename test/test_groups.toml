@@ -39,3 +39,6 @@ versions = ["lts", "1"]
 [Library]
 in_all = false
 versions = ["lts", "1"]
+
+[Perf]
+versions = ["1"]
