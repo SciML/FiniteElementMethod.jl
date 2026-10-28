@@ -18,3 +18,6 @@ versions = ["lts", "1", "pre"]
 
 [Integration]
 versions = ["lts", "1", "pre"]
+
+[Perf]
+versions = ["1"]

@@ -1,4 +1,5 @@
-using SciMLTesting, FiniteElementMethod
+using SciMLTesting, FiniteElementMethod, Test
+using JET
 
 # `Ferrite.dirichlet_facetdof_indices` (a facet's local nodes) has no public spelling in Ferrite 1.
 run_qa(
