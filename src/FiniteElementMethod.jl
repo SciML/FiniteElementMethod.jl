@@ -20,6 +20,10 @@ using Symbolics: Symbolics, Num
 include("weakform.jl")
 include("kernels.jl")
 include("assembly.jl")
+include("operators.jl")
+
+include("mesh.jl")
+include("space.jl")
 include("solution.jl")
 
 export FieldInfo, FEMMetadata, piece_nodes, normal_flux, write_vtk
