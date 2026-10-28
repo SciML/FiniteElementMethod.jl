@@ -52,8 +52,9 @@ allocate_pattern(ctx::AssemblyContext, ch) = Ferrite.allocate_matrix(ctx.dh, ch)
     assemble_linear(ctx, kernels, p; t = 0.0, ch = nothing) -> (; M, K, F)
 
 Assemble the `:mass`, `:bilinear` and `:source` kernels into `M`, `K` and `F = −∫source`, sharing one sparsity
-pattern (from `allocate_matrix(dh, ch)` when a `ConstraintHandler` is given). Mass and bilinear kernels are
-evaluated with a unit trial function, which is exact because they are linear in the state slots.
+pattern (from `allocate_matrix(dh, ch)` when a `ConstraintHandler` is given). Kernels with `coeffs` are contracted
+with the shape functions once per quadrature point; mass and bilinear kernels without are evaluated with a unit
+trial function, which is exact because they are linear in the state slots.
 """
 function assemble_linear(ctx::AssemblyContext, kernels, p; t = 0.0, ch = nothing)
     K = allocate_pattern(ctx, ch)
@@ -63,10 +64,21 @@ function assemble_linear(ctx::AssemblyContext, kernels, p; t = 0.0, ch = nothing
     return (; M, K, F)
 end
 
-function assemble_linear!(M, K, F, ctx::AssemblyContext{NF}, kernels, p; t = 0.0) where {NF}
+const LINEAR_KINDS = (:mass, :bilinear, :source)
+
+"""
+    assemble_linear!(M, K, F, ctx, kernels, p; t = 0.0, kinds = (:mass, :bilinear, :source))
+
+Assemble in place the kernels of `kinds` only: `M` is overwritten when `:mass` is in `kinds`, `K` when `:bilinear`
+is, `F` when `:source` is, and the others are left as they are.
+"""
+function assemble_linear!(M, K, F, ctx::AssemblyContext{NF}, kernels, p; t = 0.0, kinds = LINEAR_KINDS) where {NF}
     ne = NF * Ferrite.getnbasefunctions(ctx.cv)
-    op = LinearOp(Ferrite.start_assemble(M), Ferrite.start_assemble(K, F), zeros(ne, ne), zeros(ne, ne), zeros(ne))
-    _assemble!(op, ctx, _split(ctx, kernels, (:mass, :bilinear, :source))..., p, t)
+    aM = Ferrite.start_assemble(M; fillzero = :mass in kinds)
+    aK = Ferrite.start_assemble(K; fillzero = :bilinear in kinds)
+    :source in kinds && fill!(F, 0)
+    op = LinearOp(aM, aK, F, zeros(ne, ne), zeros(ne, ne), zeros(ne))
+    _assemble!(op, ctx, _split(ctx, kernels, kinds)..., p, t)
     return M, K, F
 end
 
@@ -85,21 +97,25 @@ end
 
 function assemble_nonlinear!(r, J, ctx::AssemblyContext{NF}, kernels, u, p; t = 0.0) where {NF}
     ne = NF * Ferrite.getnbasefunctions(ctx.cv)
-    op = NonlinearOp(Ferrite.start_assemble(J, r), zeros(ne, ne), zeros(ne), u, zeros(ne))
+    fill!(r, 0)
+    op = NonlinearOp(Ferrite.start_assemble(J), r, zeros(ne, ne), zeros(ne), u, zeros(ne))
     _assemble!(op, ctx, _split(ctx, kernels, (:nonlinear,))..., p, t)
     return r, J
 end
 
-struct LinearOp{AM, AK}
+struct LinearOp{AM, AK, FV <: AbstractVector{Float64}}
     aM::AM
     aK::AK
+    F::FV
     Me::Matrix{Float64}
     Ke::Matrix{Float64}
     Fe::Vector{Float64}
 end
 
-struct NonlinearOp{AJ, U}
+# `aJ === nothing` assembles the residual only.
+struct NonlinearOp{AJ, R <: AbstractVector{Float64}, U}
     aJ::AJ
+    r::R
     Je::Matrix{Float64}
     re::Vector{Float64}
     u::U
@@ -112,15 +128,46 @@ function _split(ctx::AssemblyContext{NF}, kernels, kinds) where {NF}
         k.kind in (:mass, :bilinear, :source, :nonlinear) || error("kernel kind $(repr(k.kind)) is not one of :mass, :bilinear, :source, :nonlinear")
         1 ≤ k.eq ≤ NF || error("kernel equation $(k.eq) is outside 1:$NF")
         k.kind === :nonlinear && k.tangent === nothing && error("nonlinear kernel of equation $(k.eq) has no tangent")
+        k.f === nothing && (k.coeffs === nothing || k.kind === :nonlinear) &&
+            throw(ArgumentError("$(k.kind) kernel of equation $(k.eq) has no f: pass f, or coeffs for a linear kind"))
     end
     selected = [k for k in kernels if k.kind in kinds]
-    volume = Tuple(k for k in selected if k.piece === nothing)
+    volume = _fuse([k for k in selected if k.piece === nothing])
     pieces = unique(k.piece for k in selected if k.piece !== nothing)
     groups = map(pieces) do piece
         haskey(ctx.facetsets, piece) || error("no facet set is given for piece $piece")
-        (ctx.facetsets[piece], Tuple(k for k in selected if isequal(k.piece, piece)), piece)
+        (ctx.facetsets[piece], _fuse([k for k in selected if isequal(k.piece, piece)]), piece)
     end
     return volume, Tuple(groups)
+end
+
+"""
+The linear kernels of one equation that have `coeffs`, at most one per kind, evaluated together in a single
+loop over quadrature points and shape functions; `nothing` for an absent kind.
+"""
+struct LinearBlock{CM, CK, CF}
+    eq::Int
+    mass::CM
+    bilinear::CK
+    source::CF
+end
+
+# The linear kernels with `coeffs` grouped into `LinearBlock`s, one per equation unless an equation has two kernels
+# of one kind; every other kernel is kept as it is.
+function _fuse(kernels)
+    fusible(k) = k.kind in LINEAR_KINDS && k.coeffs !== nothing
+    out = Any[k for k in kernels if !fusible(k)]
+    blocks = Tuple{Int, Dict{Symbol, Any}}[]
+    for k in kernels
+        fusible(k) || continue
+        i = findfirst(((eq, slots),) -> eq == k.eq && slots[k.kind] === nothing, blocks)
+        i === nothing && (push!(blocks, (k.eq, Dict{Symbol, Any}(kind => nothing for kind in LINEAR_KINDS))); i = length(blocks))
+        blocks[i][2][k.kind] = k.coeffs
+    end
+    for (eq, c) in blocks
+        push!(out, LinearBlock(eq, c[:mass], c[:bilinear], c[:source]))
+    end
+    return Tuple(out)
 end
 
 # Function barrier: `volume` and `groups` are concrete tuples from here on.
@@ -180,11 +227,83 @@ function _start_cell!(op::LinearOp, dofs)
 end
 
 function _finish_cell!(op::LinearOp, dofs)
-    Ferrite.assemble!(op.aK, dofs, op.Ke, op.Fe)
+    Ferrite.assemble!(op.aK, dofs, op.Ke)
+    Ferrite.assemble!(op.F, dofs, op.Fe)
     Ferrite.assemble!(op.aM, dofs, op.Me)
     return nothing
 end
 
+# The contraction below indexes the `coeffs` tuple only with compile-time constants, so `StructuralZero` entries
+# vanish from the generated code and blocks that are structurally zero are never written.
+
+# Test-function basis (φ, ∂₁φ, …, ∂_dim φ) of base function `i`, matching the `w = [V; W]` order of `coeffs`.
+@inline _test_basis(vals, q, i) = (Ferrite.shape_value(vals, q, i), _ntuple(Ferrite.shape_gradient(vals, q, i))...)
+@inline _ntuple(v::Ferrite.Vec{D}) where {D} = ntuple(d -> v[d], Val(D))
+
+@inline _sum(t::Tuple{Any}) = t[1]
+@inline _sum(t::Tuple) = t[1] + _sum(Base.tail(t))
+
+# Σ_w c[offset + w] ψ[w], and per trial slot s the trial coefficient Σ_w c[(s - 1) * NW + w] ψ[w].
+@inline _test_contract(c, ψ::NTuple{NW}, offset = 0) where {NW} = _sum(ntuple(@inline(w -> c[offset + w] * ψ[w]), Val(NW)))
+@inline function _trial_coeffs(c, ψ::NTuple{NW}, ::Val{NS}) where {NW, NS}
+    return ntuple(@inline(s -> _test_contract(c, ψ, (s - 1) * NW)), Val(NS))
+end
+
+@inline _static_foreach(f, ::Val{N}) where {N} = (ntuple(@inline(b -> (f(b); nothing)), Val(N)); nothing)
+
+@inline _add!(Ae, row, col, value, dΩ) = (Ae[row, col] += value * dΩ; nothing)
+_add!(Ae, row, col, ::StructuralZero, dΩ) = nothing
+
+# Row `row` of a mass block, trial slots Ud: Σ_j tt[b] φ_j for every field b; nothing for an absent block.
+_mass_row!(Ae, row, ranges::NTuple{NF}, ::Nothing, vals, q, nb, dΩ) where {NF} = nothing
+function _mass_row!(Ae, row, ranges::NTuple{NF}, tt, vals, q, nb, dΩ) where {NF}
+    for j in 1:nb
+        φ = Ferrite.shape_value(vals, q, j)
+        _static_foreach(@inline(b -> _add!(Ae, row, ranges[b][j], tt[b] * φ, dΩ)), Val(NF))
+    end
+    return nothing
+end
+
+# Row `row` of a state block, trial slots [U; G]: Σ_j (tt[U_b] φ_j + Σ_d tt[G_bd] ∂_d φ_j) for every field b.
+_state_row!(Ae, row, ranges::NTuple{NF}, ::Nothing, vals, q, nb, dΩ) where {NF} = nothing
+function _state_row!(Ae, row, ranges::NTuple{NF}, tt, vals, q, nb, dΩ) where {NF}
+    for j in 1:nb
+        χ = _test_basis(vals, q, j)
+        DIM = length(χ) - 1
+        _static_foreach(Val(NF)) do b
+            @inline
+            value = tt[b] * χ[1] + _sum(ntuple(@inline(d -> tt[NF + (b - 1) * DIM + d] * χ[1 + d]), Val(DIM)))
+            _add!(Ae, row, ranges[b][j], value, dΩ)
+        end
+    end
+    return nothing
+end
+
+_coeffs(::Nothing, args...) = nothing
+_coeffs(c, args...) = c(args...)
+_trial_coeffs(::Nothing, ψ::NTuple{NW}, ::Val{NS}) where {NW, NS} = nothing
+_test_contract(::Nothing, ψ::NTuple{NW}) where {NW} = StructuralZero()
+
+function _kernel!(op::LinearOp, blk::LinearBlock, vals, xs, ranges::NTuple{NF}, p, t) where {NF}
+    nb = Ferrite.getnbasefunctions(vals)
+    rows = ranges[blk.eq]
+    for q in 1:Ferrite.getnquadpoints(vals)
+        dΩ = Ferrite.getdetJdV(vals, q)
+        X = Ferrite.spatial_coordinate(vals, q, xs)
+        N = _normal(vals, q, X)
+        cM, cK, cF = _coeffs(blk.mass, X, t, N, p), _coeffs(blk.bilinear, X, t, N, p), _coeffs(blk.source, X, t, N, p)
+        for i in 1:nb
+            ψ = _test_basis(vals, q, i)
+            op.Fe[rows[i]] -= _test_contract(cF, ψ) * dΩ
+            _mass_row!(op.Me, rows[i], ranges, _trial_coeffs(cM, ψ, Val(NF)), vals, q, nb, dΩ)
+            _state_row!(op.Ke, rows[i], ranges, _trial_coeffs(cK, ψ, Val(NF * length(ψ))), vals, q, nb, dΩ)
+        end
+    end
+    return nothing
+end
+
+# A kernel without `coeffs`: evaluate `f` with a unit trial function, exact because these kinds are linear in the
+# state.
 function _kernel!(op::LinearOp, k::KernelSpec, vals, xs, ranges::NTuple{NF}, p, t) where {NF}
     nb = Ferrite.getnbasefunctions(vals)
     rows = ranges[k.eq]
@@ -223,7 +342,11 @@ function _start_cell!(op::NonlinearOp, dofs)
     return nothing
 end
 
-_finish_cell!(op::NonlinearOp, dofs) = Ferrite.assemble!(op.aJ, dofs, op.Je, op.re)
+function _finish_cell!(op::NonlinearOp, dofs)
+    op.aJ === nothing || Ferrite.assemble!(op.aJ, dofs, op.Je)
+    Ferrite.assemble!(op.r, dofs, op.re)
+    return nothing
+end
 
 function _kernel!(op::NonlinearOp, k::KernelSpec, vals, xs, ranges::NTuple{NF}, p, t) where {NF}
     nb = Ferrite.getnbasefunctions(vals)
@@ -241,6 +364,7 @@ function _kernel!(op::NonlinearOp, k::KernelSpec, vals, xs, ranges::NTuple{NF}, 
         for i in 1:nb
             V, W = Ferrite.shape_value(vals, q, i), Ferrite.shape_gradient(vals, q, i)
             op.re[rows[i]] += k.f(U, G, Ud0, V, W, X, t, N, p) * dΩ
+            op.aJ === nothing && continue
             # promote: a generated tangent returns literal `0` (Int) for constant-zero entries, and indexing a
             # mixed tuple with a runtime index allocates
             dI = promote(k.tangent(U, G, Ud0, V, W, X, t, N, p)...)
