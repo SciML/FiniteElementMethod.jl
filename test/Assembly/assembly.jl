@@ -114,6 +114,19 @@ end
     @test_throws ErrorException assemble_linear(heat_context(4), unknown, P_HEAT)
 end
 
+@testset "facet sets are snapshots taken at construction" begin
+    ks = heat_kernels()
+    grid = heat_context(4).dh.grid
+    right = Set(getfacetset(grid, "right"))
+    ctx = heat_context(4; neumann = right)
+    before = assemble_linear(ctx, ks, P_HEAT).F
+    extra = first(fi for fi in getfacetset(grid, "top") if all(r -> r[1] != fi[1], right))
+    push!(right, extra)   # a valid facet whose cell the original set does not touch
+    @test assemble_linear(ctx, ks, P_HEAT).F == before
+    @test sum(assemble_linear(heat_context(4; neumann = right), ks, P_HEAT).F) - sum(before) ≈
+        P_HEAT[1] * P_HEAT[4] * 0.5 rtol = 1.0e-13   # k·h·|facet|, a top facet of the 4×4 grid on [−1, 1]²
+end
+
 # Two fields (u, w), P = [Du, Dw, χ, a, b, c]: cross-diffusion χ∇w in eq 1, linear coupling c w in eq 1,
 # nonlinear reaction ±u²w, Neumann data on `right` for both equations.
 const P_TWO = [1.0, 20.0, 0.3, 0.1, 0.9, 0.7]
