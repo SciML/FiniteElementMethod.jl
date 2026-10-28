@@ -19,4 +19,7 @@ include("weakform.jl")
 include("kernels.jl")
 include("assembly.jl")
 
+include("mesh.jl")
+include("space.jl")
+
 end # module
