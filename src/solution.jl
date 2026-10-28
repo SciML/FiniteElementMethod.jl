@@ -261,6 +261,78 @@ function piece_nodes(md::FEMMetadata, Γ)
     return sort!(unique!(ids))
 end
 
+# A field as its `Symbol`/`String` name or as the dependent variable (`u`, `u(..)` or `u(t, x, y)`).
+function _field_name(md::FEMMetadata, field)
+    name = field isa Union{Symbol, AbstractString} ? Symbol(field) : begin
+        s = Symbolics.unwrap(field)
+        nameof(SymbolicUtils.iscall(s) ? SymbolicUtils.operation(s) : s)
+    end
+    any(f -> f.name === name, md.fields) ||
+        throw(ArgumentError("$field is not a field of this discretization; the fields are $(map(f -> f.name, md.fields))"))
+    return name
+end
+
+# A boundary piece of the discretization, or a facet set named by `String` or `Symbol`.
+function _facetset_name(md::FEMMetadata, Γ)
+    Γ isa Union{Symbol, AbstractString} || (_facetset(md, Γ); return md.pieces[Γ])
+    name = String(Γ)
+    haskey(_grid(md).facetsets, name) ||
+        throw(ArgumentError("$(repr(name)) is not a facet set of the mesh; they are $(sort!(collect(keys(_grid(md).facetsets))))"))
+    return name
+end
+
+"""
+    facet_dofs(md::FEMMetadata, Γ, field) -> Vector{Int}
+
+Sorted global dof indices of `field` on the boundary piece `Γ` (a piece of the discretization, or a
+facet-set name as `String` or `Symbol`): every dof whose basis function is nonzero on a facet of
+`Γ`, so for order 2 the mid-edge dofs as well as the vertices. `field` is the field name or its
+dependent variable. These are the rows a boundary term on `Γ` enters, and the trace of the field
+on `Γ` is determined by the values there.
+"""
+function facet_dofs(md::FEMMetadata, Γ, field)
+    ch = Ferrite.ConstraintHandler(_dh(md))
+    Ferrite.add!(ch, Ferrite.Dirichlet(_field_name(md, field), Ferrite.getfacetset(_grid(md), _facetset_name(md, Γ)), Returns(0.0)))
+    Ferrite.close!(ch)
+    return sort!(copy(ch.prescribed_dofs))
+end
+
+"""
+    dof_coordinates(md::FEMMetadata) -> Matrix{Float64}
+
+`dim × ndofs` matrix whose column `d` is the coordinate of global dof `d` (Lagrange dofs are nodal,
+so the field's value at that point is the dof value). Dofs of a field restricted to a region have
+coordinates only where the field lives; this covers every dof of every field.
+"""
+function dof_coordinates(md::FEMMetadata)
+    dh = _dh(md)
+    dim = Ferrite.getspatialdim(_grid(md))
+    X = zeros(dim, Ferrite.ndofs(dh))
+    for name in map(f -> f.name, md.fields), d in 1:dim
+        a = fill(NaN, Ferrite.ndofs(dh))
+        Ferrite.apply_analytical!(a, dh, name, x -> x[d])
+        r = field_range(md.space, name)
+        X[d, r] .= view(a, r)
+    end
+    return X
+end
+
+"""
+    cell_dofs(md::FEMMetadata, field) -> Matrix{Int}
+
+`nbasis × ncells` matrix of the global dofs of `field` in each cell, in the local order of the
+field's interpolation (vertices first, as Ferrite numbers them). A discretization with regions
+throws, since its fields do not live on every cell.
+"""
+function cell_dofs(md::FEMMetadata, field)
+    name = _field_name(md, field)
+    dh = _dh(md)
+    length(dh.subdofhandlers) == 1 ||
+        throw(ArgumentError("cell_dofs needs a discretization without regions; this one has $(length(dh.subdofhandlers)) subdomains"))
+    r = Ferrite.dof_range(dh, name)
+    return reduce(hcat, (Ferrite.celldofs(dh, c)[r] for c in 1:Ferrite.getncells(_grid(md))))
+end
+
 function _facet_normal_flux(md, f::FieldInfo, Γ, U)
     dh = _dh(md)
     grid = _grid(md)
