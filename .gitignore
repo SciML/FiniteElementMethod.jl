@@ -25,6 +25,12 @@ Manifest.toml
 
 .vscode/
 # Copied from docs/ by docs/make.jl when the front end is available.
+
+# forge and Nelson session state
+.forge/
+.nelson/
+
+# Copied from docs/discretization.md by docs/make.jl when the front end is available.
 docs/src/discretization.md
 docs/src/extension_contract.md
 # Rendered from benchmarks/results by docs/make.jl.
