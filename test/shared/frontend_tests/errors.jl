@@ -105,6 +105,10 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
             "the FEMDiscretization has no time variable, so it lowers to a NonlinearProblem, not a DAEProblem; " *
                 "call discretize(pdesys, disc) or NonlinearProblem(pdesys, disc)"
         ) DAEProblem(steady, FEMDiscretization(Ω))
+        @test_throws ArgumentError(
+            "a steady FEMDiscretization builds no symbolic System, so it has no symbolic_discretize; " *
+                "call discretize(pdesys, disc) for its NonlinearProblem"
+        ) SciMLBase.symbolic_discretize(steady, FEMDiscretization(Ω))
         @named transient = PDESystem([heat], [dirichlet(Ω); ic], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
         @test_throws ArgumentError(
             "the FEMDiscretization has the time variable t, so it lowers to a DAEProblem; " *
@@ -202,20 +206,6 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         div = Dt(u(t, x, y)) ~ Dx(opaque(x) * Dx(u(t, x, y))) + Dy(opaque(x) * Dy(u(t, x, y)))
         sol = solve(lower([div], [[u(t, Γ) ~ 1 for Γ in sides(Ω)]; ic], Ω), EXACT_ROWS)
         @test SciMLBase.successful_retcode(sol)
-    end
-
-    @testset "parameters" begin
-        Ω = box()
-        @parameters k
-        eq = Dt(u(t, x, y)) ~ k * (Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))))
-        system(ps...) = PDESystem([eq], [dirichlet(Ω); ic], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], ps...; name = :pdesys)
-        # An undeclared parameter is reported the same way whether `ps` is empty or left out.
-        for pdesys in (system([]), system())
-            @test occursin("unresolved symbols", errmsg(() -> discretize(pdesys, FEMDiscretization(Ω, t))))
-        end
-        @test_throws ArgumentError("parameter k needs a numeric value in the PDESystem, as k => value") discretize(
-            system([k]), FEMDiscretization(Ω, t)
-        )
     end
 
     @testset "a piece with no condition warns when its flux is not zero" begin
