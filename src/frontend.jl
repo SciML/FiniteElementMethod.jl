@@ -281,7 +281,8 @@ function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
         M, K, load, [name => field_range(space, name) for name in names];
         prescribed = prescribed_dofs(space), dirichlet_values = timedep_dirichlet ? values! : values0
     )
-    return ops, coords
+    raw = (; M, K, load, prescribed = prescribed_dofs(space), dirichlet_values = values0, timedep_dirichlet)
+    return ops, coords, raw
 end
 
 function _initial_values(ics, ctx, space, coords, an, names, pvals)
@@ -341,7 +342,7 @@ function _lower(pdesys, disc::FEMDiscretization)
     t0, t1 = v.intervals[v.time]
     space, names, ips = _space(disc, ctx, an, dirichlet, pvals, t0)
     timedep_dirichlet = any(bc -> _depends(bc.g, [an.slots.T]), an.essential)
-    ops, coords = _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
+    ops, coords, raw = _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
     u0 = _initial_values(Equation[b.eq for b in ics], ctx, space, coords, an, names, pvals)
     dirichlet_values!(view(u0, ops.prescribed), ops.load, t0)
     iv = disc.time
@@ -349,7 +350,7 @@ function _lower(pdesys, disc::FEMDiscretization)
     fields = [FieldInfo(dv, name, u, ip) for (dv, name, u, ip) in zip(StrongForm.declared_fields(sys, v), names, unknowns, ips)]
     pieces = Dict{Any, String}(Γ => String(Γ.name) for Γ in PDEBase.boundarypieces(disc.domain))
     md = FEMMetadata(space, iv, v.x̄, fields, pieces, pdesys; u0)
-    return (; ops, u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys))
+    return (; ops, u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys), raw)
 end
 
 """
@@ -385,4 +386,42 @@ SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization;
 function SciMLBase.symbolic_discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
     prob = SciMLBase.discretize(pdesys, disc)
     return prob.f.sys, prob.tspan
+end
+
+"""
+    operators(pdesys::PDESystem, disc::FEMDiscretization) -> NamedTuple
+
+The assembled Galerkin operators of `discretize(pdesys, disc)` as plain data, for a caller that
+builds its own system around them (such as a component with boundary ports). Returns
+
+  - `M`, `K`: the mass and stiffness matrices with one sparsity pattern, before any Dirichlet row
+    is replaced, so a caller can impose its own conditions or read reactions from them;
+  - `F`: the load vector, the volume sources and natural boundary data, without Dirichlet values;
+  - `fields`: `name => dof range` per field, in declared order;
+  - `differential_vars`: rows of `M` with a nonzero entry;
+  - `prescribed`, `dirichlet_values`: the dofs of the `PDESystem`'s Dirichlet conditions and
+    their values (the rows `M` and `K` would have replaced);
+  - `u0`: the initial dof vector, with the Dirichlet values on the prescribed dofs;
+  - `metadata`: the [`FEMMetadata`](@ref), for [`facet_dofs`](@ref),
+    [`dof_coordinates`](@ref) and [`cell_dofs`](@ref).
+
+It is the linear, time-independent case only: a nonlinear term, a time-dependent source or
+time-dependent Dirichlet data has no data form and raises an `ArgumentError`. Parameters are
+substituted by their values, as for the `DAEProblem`.
+"""
+function operators(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
+    parts = _lower(pdesys, disc)
+    (; M, K, load, prescribed, dirichlet_values, timedep_dirichlet) = parts.raw
+    load isa AbstractVector || throw(ArgumentError("operators needs time-independent sources, but a source depends on time"))
+    timedep_dirichlet && throw(ArgumentError("operators needs Dirichlet data that are constant in time"))
+    differential_vars = falses(size(M, 1))
+    for (k, i) in enumerate(rowvals(M))
+        iszero(nonzeros(M)[k]) || (differential_vars[i] = true)
+    end
+    md = parts.md
+    fields = [f.name => field_range(md.space, f.name) for f in md.fields]
+    return (;
+        M = copy(M), K = copy(K), F = copy(load), fields, differential_vars, prescribed = copy(prescribed),
+        dirichlet_values = copy(dirichlet_values), u0 = parts.u0, metadata = md,
+    )
 end
