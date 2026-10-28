@@ -26,6 +26,7 @@ FiniteElementMethodFerriteGmshExt = "FerriteGmsh"
 
 [compat]
 ADTypes = "1.24"
+AllocCheck = "0.2"
 DiffEqBase = "7.21"
 DomainSets = "0.7, 0.8"
 Ferrite = "1.7"
@@ -48,6 +49,7 @@ Test = "1"
 julia = "1.10"
 
 [extras]
+AllocCheck = "9b6a8646-10ed-4001-bbdc-1d2f46dfbb1a"
 FerriteGmsh = "4f95f4f8-b27c-4ae5-9a39-ea55e634e36b"
 Gmsh = "705231aa-382f-11e9-3f0c-b7cb4346fdeb"
 OrdinaryDiffEqBDF = "6ad6398a-0878-4a85-9266-38940aa047c8"
@@ -57,4 +59,4 @@ SciMLTesting = "09d9d899-5365-40a9-917a-5f67fddea283"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["FerriteGmsh", "Gmsh", "OrdinaryDiffEqBDF", "Random", "SafeTestsets", "SciMLTesting", "Test"]
+test = ["AllocCheck", "FerriteGmsh", "Gmsh", "OrdinaryDiffEqBDF", "Random", "SafeTestsets", "SciMLTesting", "Test"]
