@@ -113,7 +113,21 @@ _full(md::FEMMetadata, U) = md.elimination === nothing ? U : full_state(md.elimi
 _grid(md::FEMMetadata) = _dh(md).grid
 # Ferrite's FE values default to linear geometry, which breaks on quadratic cells.
 _geometry(md::FEMMetadata) = Ferrite.geometric_interpolation(Ferrite.getcelltype(_grid(md)))
+# Local dofs of field `name` in `cell`, `nothing` where the field has no dofs (outside its region).
+function _cell_range(dh, cell, name)
+    sdh = dh.cell_to_subdofhandler[cell]
+    sdh == 0 && return nothing
+    names = dh.subdofhandlers[sdh].field_names
+    return name in names ? Ferrite.dof_range(dh.subdofhandlers[sdh], name) : nothing
+end
+# The cells where field `name` has dofs.
+_field_cells(dh, name) = sort!([c for sdh in dh.subdofhandlers if name in sdh.field_names for c in sdh.cellset])
 _vertex_coordinates(md, d) = [Ferrite.get_node_coordinate(n)[d] for n in Ferrite.getnodes(_grid(md))]
+
+# The time axis of a field's arrays and call arguments goes first or last as in its declared
+# arguments, `u(t, x, y)` or `u(x, y, t)`, as in MethodOfLines (MOL timedep.jl:74-86).
+_time_last(md::FEMMetadata, f::FieldInfo) =
+    md.time !== nothing && isequal(last(SymbolicUtils.arguments(Symbolics.unwrap(f.dv))), Symbolics.unwrap(md.time))
 
 function _wrap_parts(sol, md::FEMMetadata, states)
     nt = length(states)
@@ -124,7 +138,7 @@ function _wrap_parts(sol, md::FEMMetadata, states)
         for (k, U) in enumerate(states)
             out[k, :] .= Ferrite.evaluate_at_grid_nodes(_dh(md), _full(md, U), f.name)
         end
-        umap[Num(f.dv)] = out
+        umap[Num(f.dv)] = _time_last(md, f) ? permutedims(out) : out
     end
     xs = ntuple(d -> _vertex_coordinates(md, d), length(md.x̄))
     dvs = [Num(f.dv) for f in md.fields]
@@ -172,10 +186,11 @@ end
 
 _states(A::FEMTimeSolution) = [_full(A.disc_data, U) for U in A.original_sol.u]
 _states(A::FEMSteadySolution) = [_full(A.disc_data, A.original_sol.u)]
-_stack(::FEMTimeSolution, rows) = permutedims(reduce(hcat, rows))
-_stack(::FEMSteadySolution, rows) = only(rows)
-_columns(values::AbstractMatrix, idxs) = values[:, idxs]
-_columns(values::AbstractVector, idxs) = values[idxs]
+# `rows` holds one row per saved time.
+_stack(A::FEMTimeSolution, f, rows) = _time_last(A.disc_data, f) ? reduce(hcat, rows) : permutedims(reduce(hcat, rows))
+_stack(::FEMSteadySolution, f, rows) = only(rows)
+_columns(A, f, values::AbstractMatrix, idxs) = _time_last(A.disc_data, f) ? values[idxs, :] : values[:, idxs]
+_columns(A, f, values::AbstractVector, idxs) = values[idxs]
 
 function _fieldinfo(md, s)
     SymbolicUtils.iscall(s) || return nothing
@@ -230,8 +245,8 @@ _sorted_facets(md, Γ) = sort!(collect(_facetset(md, Γ)); by = fi -> (fi[1], fi
     piece_nodes(sol, Γ)
 
 Sorted vertex ids of the boundary piece `Γ`. They are the columns of `sol[u(t, Γ)]` and
-`sol(t, Γ; dv)`, and they index `sol[x]`, so `sol[x][piece_nodes(sol, Γ)]` are the
-coordinates of the trace values.
+`sol(t, Γ; dv)` (the rows of `sol[u(Γ, t)]` for a time-last `u(x, y, t)`), and they index
+`sol[x]`, so `sol[x][piece_nodes(sol, Γ)]` are the coordinates of the trace values.
 """
 piece_nodes(A::FEMSolution, Γ) = piece_nodes(A.disc_data, Γ)
 function piece_nodes(md::FEMMetadata, Γ)
@@ -249,9 +264,10 @@ end
 function _facet_normal_flux(md, f::FieldInfo, Γ, U)
     dh = _dh(md)
     grid = _grid(md)
-    r = Ferrite.dof_range(dh, f.name)
     fv = Ferrite.FacetValues(Ferrite.FacetQuadratureRule{Ferrite.getrefshape(f.ip)}(2), f.ip, _geometry(md))
     return map(_sorted_facets(md, Γ)) do fi
+        r = _cell_range(dh, fi[1], f.name)
+        r === nothing && return convert(eltype(U), NaN)
         Ferrite.reinit!(fv, Ferrite.getcoordinates(grid, fi[1]), fi[2])
         u_cell = U[Ferrite.celldofs(dh, fi[1])[r]]
         flux = zero(eltype(U))
@@ -269,7 +285,8 @@ end
     normal_flux(sol, dv, Γ)
 
 Facet-mean outward normal derivative `∇u·n` of the field `dv` on every facet of the boundary
-piece `Γ`, `nt × nfacets` (a vector for a steady solution). Facets are ordered by
+piece `Γ`, `nt × nfacets` (`nfacets × nt` for a time-last `u(x, y, t)`, a vector for a steady
+solution). Facets are ordered by
 `(cell, local facet)`. This is a post-processed flux, not the imposed boundary datum.
 """
 function normal_flux(A::FEMSolution, dv, Γ)
@@ -286,7 +303,7 @@ end
 # p-degree tests.
 function _gradient_projector(md, f::FieldInfo)
     qr = Ferrite.QuadratureRule{Ferrite.getrefshape(f.ip)}(2 * _order(f.ip))
-    proj = Ferrite.L2Projector(f.ip, _grid(md); qr_lhs = qr)
+    proj = Ferrite.L2Projector(f.ip, _grid(md); qr_lhs = qr, set = _field_cells(_dh(md), f.name))
     return (; proj, qr, cv = Ferrite.CellValues(qr, f.ip, _geometry(md)))
 end
 
@@ -294,11 +311,10 @@ end
 function _nodal_gradient(md, f::FieldInfo, d, U, projector)
     (; proj, qr, cv) = projector
     dh = _dh(md)
-    r = Ferrite.dof_range(dh, f.name)
     qpvals = [zeros(eltype(U), Ferrite.getnquadpoints(cv)) for _ in 1:Ferrite.getncells(_grid(md))]
-    for cell in Ferrite.CellIterator(dh)
+    for cell in Ferrite.CellIterator(dh, _field_cells(dh, f.name))
         Ferrite.reinit!(cv, cell)
-        u_cell = U[Ferrite.celldofs(cell)[r]]
+        u_cell = U[Ferrite.celldofs(cell)[_cell_range(dh, Ferrite.cellid(cell), f.name)]]
         for q in 1:Ferrite.getnquadpoints(cv)
             qpvals[Ferrite.cellid(cell)][q] = Ferrite.function_gradient(cv, q, u_cell)[d]
         end
@@ -349,7 +365,7 @@ function Base.getindex(A::FEMSolution, sym::Num)
     g = _gradkey(md, s)
     if g !== nothing
         projector = _gradient_projector(md, g[1])
-        return _stack(A, [_nodal_gradient(md, g..., U, projector) for U in _states(A)])
+        return _stack(A, g[1], [_nodal_gradient(md, g..., U, projector) for U in _states(A)])
     end
     if SymbolicUtils.iscall(s) && _is_normal_derivative(SymbolicUtils.operation(s))
         trace = Symbolics.unwrap(only(SymbolicUtils.arguments(s)))
@@ -392,11 +408,12 @@ _axis(a) = a isa AbstractVector ? collect(a) : [a]
 
 function _point_gradient(ph, md, f, d, U)
     dh = _dh(md)
-    r = Ferrite.dof_range(dh, f.name)
     pv = Ferrite.PointValues(f.ip, _geometry(md))
     out = fill(convert(eltype(U), NaN), length(ph.cells))
     for (i, loc) in enumerate(Ferrite.PointIterator(ph))
         loc === nothing && continue
+        r = _cell_range(dh, Ferrite.cellid(loc), f.name)
+        r === nothing && continue
         Ferrite.reinit!(pv, loc)
         out[i] = Ferrite.function_gradient(pv, 1, U[Ferrite.celldofs(dh, Ferrite.cellid(loc))[r]])[d]
     end
@@ -452,16 +469,11 @@ end
 # the result goes where field `f` declares its time argument.
 function _evaluate(A::FEMSolution, states, tshape, xs, f, g, outside)
     md = A.disc_data
-    dv === nothing && return map(d -> _evaluate(A, states, tshape, xs, d, outside), A.dvs)
-    s = Symbolics.unwrap(dv)
-    g = _gradkey(md, s)
-    f = g === nothing ? _fieldinfo(md, s) : g[1]
-    f === nothing && throw(ArgumentError("dv = $dv is not a dependent variable or a first spatial derivative of one; the dependent variables are $(A.dvs)"))
     if length(xs) == 1 && only(xs) isa DomainSets.Domain
-        g === nothing || throw(ArgumentError("dv = $dv: traces of derivatives are not supported; use normal_flux(sol, dv, Γ)"))
+        g === nothing || throw(ArgumentError("traces of derivatives of $(f.dv) are not supported; use normal_flux(sol, dv, Γ)"))
         nodes = piece_nodes(md, only(xs))
         rows = [Ferrite.evaluate_at_grid_nodes(_dh(md), U, f.name)[nodes] for U in states]
-        return isempty(tshape) ? only(rows) : permutedims(reduce(hcat, rows))
+        return isempty(tshape) ? only(rows) : _stack(A, f, rows)
     end
     pts, pshape = _points(md, xs)
     ph = _located(A, pts, outside)
@@ -630,7 +642,8 @@ _xml_escape(str) = replace(str, '&' => "&amp;", '<' => "&lt;", '>' => "&gt;", '"
 
 Write one `.vtu` file per saved time, `"\$(base)_0001.vtu"` and so on, with every field as
 point data, plus a ParaView collection `"\$(base).pvd"` that maps them to `sol.t`. Returns the
-path of the `.pvd` file.
+path of the `.pvd` file. A steady solution is written to the single file `"\$(base).vtu"`,
+whose path is returned.
 """
 function write_vtk(A::FEMTimeSolution, base::AbstractString)
     dh = _dh(A.disc_data)
@@ -654,4 +667,12 @@ function write_vtk(A::FEMTimeSolution, base::AbstractString)
         """
     )
     return pvd
+end
+
+function write_vtk(A::FEMSteadySolution, base::AbstractString)
+    dh = _dh(A.disc_data)
+    Ferrite.VTKGridFile(base, dh) do vtk
+        Ferrite.write_solution(vtk, dh, only(_states(A)))
+    end
+    return base * ".vtu"
 end
