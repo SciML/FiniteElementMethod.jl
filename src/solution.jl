@@ -241,8 +241,6 @@ function normal_flux(A::FEMSolution, dv, Γ)
     return _stack(A, [_facet_normal_flux(md, f, Γ, U) for U in _states(A)])
 end
 
-_order(::Ferrite.Interpolation{<:Any, p}) where {p} = p
-
 # L2 projection of the cellwise gradient onto the field's own space, assembled and factorised once
 # per field. Order 2p integrates both the mass matrix and the (p - 1)-degree gradient against
 # p-degree tests.
