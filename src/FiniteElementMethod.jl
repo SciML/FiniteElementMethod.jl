@@ -26,4 +26,7 @@ include("assembly.jl")
 include("operators.jl")
 include("precompile.jl")
 
+include("mesh.jl")
+include("space.jl")
+
 end # module
