@@ -11,12 +11,26 @@ A mesh domain carries no coordinate names. The names and their order come only f
 `(x, y) ∈ Ω` pairing of the `PDESystem`: tuple position `i` is coordinate component `i` of the
 mesh. The same pairing orders `sol[x]`, `sol[y]` and the arguments of `sol(t, x, y)`.
 
+## Time axis
+
+The time axis goes first or last according to the declared argument order of each dependent
+variable, as in MethodOfLines. For a time-first `u(t, x, y)` the arrays below are
+`nt × nvertices` and calls take the time first, `sol(t, x, y; dv)`. For a time-last
+`u(x, y, t)` every array keyed by that field is transposed, `nvertices × nt` (the trace
+`sol[u(Γ, t)]`, the gradient `sol[Differential(x)(u(x, y, t))]` and `normal_flux` too), and
+calls take the time last: `sol(x, y, t; dv)`, `sol(Γ, t; dv)`, `sol(pts, t; dv)`. With
+vector arguments `sol(xs, ys, ts; dv)` is `length(xs) × length(ys) × length(ts)`. Fields of
+one system may differ; `sol(args...)` without `dv` then throws, because the position of the
+time argument is ambiguous. Time between two spatial arguments, `u(x, t, y)`, is rejected by
+`discretize`.
+
 ## Shapes that differ from MethodOfLines
 
   - `sol[x]` is the vector of mesh vertex coordinates, not an axis grid, so tensor-grid
     plotting calls such as `heatmap(sol[x], sol[y], …)` fail with a shape error. Resample with
     `sol(t, xs, ys; dv = u(t, x, y))` instead.
-  - `sol[u(t, x, y)]` is `nt × nvertices`, and column `i` pairs with `(sol[x][i], sol[y][i])`.
+  - `sol[u(t, x, y)]` is `nt × nvertices` (`nvertices × nt` for `u(x, y, t)`), and vertex
+    `i` pairs with `(sol[x][i], sol[y][i])`.
     For a P2 field the edge dofs are not included; `sol[u(t, x, y), k, :]` is the row at `t_k`.
   - The raw dof coefficients are in `sol.original_sol`, for example
     `sol.original_sol[u_arr]` for the array unknown of a field.

@@ -62,7 +62,7 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         @test sol.t == 0:0.25:1
         @test sol.disc_data isa FEMMetadata
         @test discretize(pdesys, FEMDiscretization(Ω, t; saveat = 0.25); saveat = 0.5).kwargs[:saveat] == 0.5
-        reserved = "keyword `name` is set by the FEM discretization and cannot be passed; the reserved keywords are iv, unknowns, du0, coordinate, name"
+        reserved = "keyword `name` is set by the FEM discretization and cannot be passed; the reserved keywords are iv, unknowns, du0, coordinate, name, parameters"
         @test_throws ArgumentError(reserved) FEMDiscretization(Ω, t; name = :other)
         @test_throws ArgumentError(replace(reserved, "`name`" => "`du0`")) discretize(pdesys, FEMDiscretization(Ω, t); du0 = zeros(3))
         @test sprint(show, sol.disc_data) == sprint(show, prob.problem_type) == "FEMMetadata(fields = [u], ndofs = 9, hasTime = true)"
@@ -70,6 +70,17 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         sys, tspan = SciMLBase.symbolic_discretize(pdesys, FEMDiscretization(Ω, t))
         @test tspan == (0.0, 1.0)
         @test sys isa ModelingToolkit.System
+    end
+
+    @testset "PDESystem without parameters" begin
+        # Leaving out `ps` gives the system `NullParameters()`, which means no parameters.
+        Ω = MeshDomain(rectangle_grid(Triangle, (4, 4)))
+        domains = [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)]
+        @named pdesys = PDESystem([heat_eq], [dirichlet_all(Ω); ic], domains, [t, x, y], [u(t, x, y)])
+        @test pdesys.ps isa SciMLBase.NullParameters
+        sol = solve(discretize(pdesys, FEMDiscretization(Ω, t)), EXACT_ROWS; abstol = 1.0e-10, reltol = 1.0e-10)
+        @test SciMLBase.successful_retcode(sol)
+        @test nodal_error(sol, u(t, x, y), uexact) <= tol
     end
 
     @testset "P1 quadrilaterals" begin
