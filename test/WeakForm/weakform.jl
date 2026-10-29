@@ -184,3 +184,16 @@ end
         )
     )
 end
+
+@testset "a quotient is split over its numerator's terms (Robin data with a 1/r normal)" begin
+    s = StateSlots(1, 2, 0)
+    (; V) = TestSlots(2)
+    X, T = s.X, s.T
+    r = sqrt(X[1]^2 + X[2]^2)
+    # A Robin condition on a circle, u + ∂ₙu = g with ∂ₙ = −X·∇/r, gathered over one denominator.
+    robin = Num(Symbolics.unwrap((s.U[1] * r * V + (1 + T) * X[1] * V) / r))
+    classes = classify(robin, s, TestSlots(2))
+    @test [c.kind for c in classes] == [:bilinear, :source]
+    @test matches(classes, Dict(:bilinear => s.U[1] * V, :source => (1 + T) * X[1] * V / r))
+    @test only(c.timedep for c in classes if c.kind === :bilinear) == false
+end

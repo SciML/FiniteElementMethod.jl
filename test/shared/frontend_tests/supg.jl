@@ -123,5 +123,9 @@ end
         @test_throws ArgumentError(
             "SUPG: the advection velocity ∂R/∂∇u of equation 1 is $b, which depends on the state; pass SUPG(τ; b = ...)"
         ) lower(Dt(u(t, x)) ~ EPS * Dx(Dx(u(t, x))) - u(t, x) * Dx(u(t, x)), SUPG(0.05))
+        # Nonlinear terms are allowed with Galerkin, but SUPG stabilises linear terms only.
+        @test_throws ArgumentError("SUPG stabilises linear terms only, but the system has a nonlinear term; use test_space = Galerkin()") lower(
+            Dt(u(t, x)) ~ EPS * Dx(Dx(u(t, x))) - Dx(u(t, x)) - u(t, x)^2, SUPG(0.05)
+        )
     end
 end
