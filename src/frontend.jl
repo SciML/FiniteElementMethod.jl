@@ -8,7 +8,7 @@
 # Tracking: move to PDEBase's `symbolic_discretize` with hook methods once the numeric path builds
 # its system through `generate_system` (PDEBase M0 release as the compat floor).
 
-const _PERIODIC_M4 = "periodic conditions need milestone M4 (Ferrite PeriodicDirichlet)"
+const _PERIODIC_UNSUPPORTED = "periodic boundary conditions are not supported"
 
 _unwrap_arg(a) = SymbolicUtils.unwrap_const(unwrap(a))
 
@@ -88,8 +88,8 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
     t = v.time
     for u in dvs
         args = SymbolicUtils.arguments(unwrap(u))
-        t !== nothing && any(a -> isequal(a, t), args) && !isequal(first(args), t) &&
-            throw(ArgumentError("time must be the first argument of $u; time-last ordering lands later"))
+        t !== nothing && any(a -> isequal(a, t), args[2:(end - 1)]) &&
+            throw(ArgumentError("time must be the first or the last argument of $u, as in u(t, x, y) or u(x, y, t)"))
     end
     grid = disc.domain.mesh
     if !isconcretetype(Ferrite.getcelltype(grid))
@@ -100,7 +100,7 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
                     "`spaces`; $(join(unset, ", ")) has none"
             )
         )
-        throw(ArgumentError("meshes with mixed cell types land in M4"))
+        throw(ArgumentError("meshes with mixed cell types are not supported; use a mesh with a single cell type"))
     end
     check_facetsets(grid, [Γ.name for Γ in _condition_pieces(pdesys.bcs)])
     return nothing
@@ -108,7 +108,7 @@ end
 
 function _boundary_map(bcs, v, disc)
     for eq in bcs
-        length(_trace_pieces(eq.lhs - eq.rhs)) > 1 && throw(ArgumentError("$(_PERIODIC_M4): $eq"))
+        length(_trace_pieces(eq.lhs - eq.rhs)) > 1 && throw(ArgumentError("$(_PERIODIC_UNSUPPORTED): $eq"))
     end
     orders = Dict(x => PDEBase.d_orders(x, bcs) for x in PDEBase.all_ivs(v))
     return PDEBase.parse_bcs(bcs, v, orders, disc)
@@ -170,14 +170,15 @@ end
 function _check_terms(wf)
     for term in vcat(wf.volume, wf.facet)
         term.kind in (:mass, :bilinear) && term.timedep && throw(
-            ArgumentError("time-dependent coefficients in the mass or stiffness operator land in M3: equation $(term.eq) has $(term.integrand)")
+            ArgumentError("time-dependent coefficients in the mass or stiffness operator are not supported: equation $(term.eq) has $(term.integrand)")
         )
     end
     return nothing
 end
 
 function _parameter_values(pdesys, ctx)
-    given = Dict{Any, Any}(unwrap(p.first) => p.second for p in pdesys.ps if p isa Pair)
+    ps = pdesys.ps isa SciMLBase.NullParameters ? () : pdesys.ps
+    given = Dict{Any, Any}(unwrap(p.first) => p.second for p in ps if p isa Pair)
     return map(ctx.params) do p
         haskey(given, p) && given[p] isa Number ||
             throw(ArgumentError("parameter $p needs a numeric value in the PDESystem, as $p => value"))
@@ -331,7 +332,7 @@ function _lower(pdesys, disc::FEMDiscretization)
     ics, bcmap = PDEBase.split_ics_bcs(boundarymap, v, disc)
     ctx = StrongForm.SlotContext(sys, v)
     an = _paired(StrongForm.analyse(sys, v, boundarymap; ibp = disc.ibp), pdesys.eqs, ctx, disc)
-    isempty(an.periodic) || throw(ArgumentError(_PERIODIC_M4))
+    isempty(an.periodic) || throw(ArgumentError(_PERIODIC_UNSUPPORTED))
     covered = Set(Γ for bykey in values(bcmap) for (Γ, bs) in bykey if !isempty(bs))
     if any(c -> !all(x -> isequal(x, 0), c), an.conormal)
         for Γ in PDEBase.boundarypieces(disc.domain)
@@ -342,6 +343,9 @@ function _lower(pdesys, disc::FEMDiscretization)
     wf = weak_form(an; test_space = disc.test_space)
     steady = disc.time === nothing
     _check_terms(wf)
+    disc.test_space isa SUPG && any(term -> term.kind === :nonlinear, wf.volume) && throw(
+        ArgumentError("SUPG stabilises linear terms only, but the system has a nonlinear term; use test_space = Galerkin()")
+    )
     pvals = _parameter_values(sys, ctx)
     dirichlet = emit_dirichlet(an)
     t0, t1 = steady ? (0.0, 0.0) : v.intervals[v.time]
@@ -408,7 +412,7 @@ the Galerkin operators, with Dirichlet rows `u_d = g_d(t)` as algebraic equation
 `dirichlet = :eliminate`, restricted to the free dofs), a sparse
 analytic Jacobian (the nonlinear part `N` from the terms whose coefficients depend on the
 state, with its symbolic tangent) and the `FEMMetadata` as its `problem_type`, so `solve` returns a
-`PDETimeSeriesSolution`. Nothing calls `mtkcompile`; anything this milestone cannot
+`PDETimeSeriesSolution`. Nothing calls `mtkcompile`; anything it cannot
 discretize raises. Keywords are passed to the `DAEProblem` after `disc.kwargs`, so a keyword
 given here wins; the keywords the discretization sets (`iv`, `unknowns`, `du0`, `coordinate`,
 `name`, `parameters`) are rejected, and so are `tspan` (the `PDESystem`'s time domain), `u0` (its
@@ -506,14 +510,35 @@ SciMLBase.discretize(::ModelingToolkit.PDESystem, ::FEMDiscretization, arg, args
 SciMLBase.discretize(x, ::FEMDiscretization, args...; kwargs...) =
     throw(ArgumentError("FEMDiscretization discretizes a ModelingToolkit.PDESystem; got $(typeof(x))"))
 
-# `(sys, tspan)`, the shape PDEBase and MethodOfLines return.
-function SciMLBase.symbolic_discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
+"""
+    symbolic_discretize(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
+
+Return `(sys, tspan)`, the shape PDEBase and MethodOfLines return, for the discretization that
+`discretize(pdesys, disc; kwargs...)` builds: it runs the same code path, so it assembles the
+Galerkin operators, and returns the `DAEProblem`'s `prob.f.sys` and `prob.tspan`. `sys` is the
+completed `ModelingToolkit.System` of [`FiniteElementMethod.fem_system`](@ref), whose unknowns are
+the arrays of field values, with the operators as parameters and the `FEMMetadata` (the
+problem's `problem_type`) attached for rebuilding the solution; `tspan` is the time interval of
+`pdesys`. Keywords are passed to that problem construction as for `DAEProblem(pdesys, disc)`,
+so the reserved keywords raise the same `ArgumentError`. Further positional arguments raise an
+`ArgumentError`.
+
+A steady `disc` (no time variable) raises an `ArgumentError`: its `NonlinearProblem` is built
+from a numeric `NonlinearFunction` with no `System`, so there is no symbolic system describing
+it; call `discretize(pdesys, disc)` for the `NonlinearProblem`.
+"""
+function SciMLBase.symbolic_discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization, args...; kwargs...)
+    isempty(args) || throw(
+        ArgumentError(
+            "symbolic_discretize(pdesys, disc; kwargs...) takes no further positional arguments; got $(length(args))"
+        )
+    )
     disc.time === nothing && throw(
         ArgumentError(
             "a steady FEMDiscretization builds no symbolic System, so it has no symbolic_discretize; " *
                 "call discretize(pdesys, disc) for its NonlinearProblem"
         )
     )
-    prob = DAEProblem(pdesys, disc)
+    prob = DAEProblem(pdesys, disc; kwargs...)
     return prob.f.sys, prob.tspan
 end

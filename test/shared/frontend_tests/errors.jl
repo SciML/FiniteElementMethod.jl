@@ -77,13 +77,13 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         Ω = box()
         Γl, Γr = sides(Ω)
         @test_throws ArgumentError(
-            "periodic conditions need milestone M4 (Ferrite PeriodicDirichlet): u(t, Γ_left) ~ u(t, Γ_right)"
+            "periodic boundary conditions are not supported: u(t, Γ_left) ~ u(t, Γ_right)"
         ) lower([heat], [u(t, Γl) ~ u(t, Γr), ic], Ω)
     end
 
     @testset "reserved options" begin
         Ω = box()
-        @test_throws ArgumentError("codegen = :mtk lands in M3; use the default codegen = :numeric") FEMDiscretization(
+        @test_throws ArgumentError("codegen = :mtk is not supported; use the default codegen = :numeric") FEMDiscretization(
             Ω, t; codegen = :mtk
         )
         @test_throws ArgumentError("dirichlet must be :algebraic or :eliminate, got :condense") FEMDiscretization(
@@ -105,10 +105,6 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
             "the FEMDiscretization has no time variable, so it lowers to a NonlinearProblem, not a DAEProblem; " *
                 "call discretize(pdesys, disc) or NonlinearProblem(pdesys, disc)"
         ) DAEProblem(steady, FEMDiscretization(Ω))
-        @test_throws ArgumentError(
-            "a steady FEMDiscretization builds no symbolic System, so it has no symbolic_discretize; " *
-                "call discretize(pdesys, disc) for its NonlinearProblem"
-        ) SciMLBase.symbolic_discretize(steady, FEMDiscretization(Ω))
         @named transient = PDESystem([heat], [dirichlet(Ω); ic], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
         @test_throws ArgumentError(
             "the FEMDiscretization has the time variable t, so it lowers to a DAEProblem; " *
@@ -134,7 +130,7 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         Ω = box()
         td = Dt(u(t, x, y)) ~ Dx((1 + t) * Dx(u(t, x, y))) + Dy((1 + t) * Dy(u(t, x, y)))
         @test_throws ArgumentError(
-            "time-dependent coefficients in the mass or stiffness operator land in M3: equation 1 has " *
+            "time-dependent coefficients in the mass or stiffness operator are not supported: equation 1 has " *
                 "G₁*W₁ + G₂*W₂ + G₁*T*W₁ + G₂*T*W₂"
         ) lower([td], [dirichlet(Ω); ic], Ω)
     end
@@ -171,12 +167,12 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         )
     end
 
-    @testset "time must be the first argument" begin
+    @testset "time must be the first or the last argument" begin
         Ω = box()
-        eq = Dt(u(x, y, t)) ~ Dx(Dx(u(x, y, t))) + Dy(Dy(u(x, y, t)))
-        bcs = [u(x, y, 0) ~ 0]
-        @test_throws ArgumentError("time must be the first argument of u(x, y, t); time-last ordering lands later") lower(
-            [eq], bcs, Ω; dvs = [u(x, y, t)]
+        eq = Dt(u(x, t, y)) ~ Dx(Dx(u(x, t, y))) + Dy(Dy(u(x, t, y)))
+        bcs = [u(x, 0, y) ~ 0]
+        @test_throws ArgumentError("time must be the first or the last argument of u(x, t, y), as in u(t, x, y) or u(x, y, t)") lower(
+            [eq], bcs, Ω; dvs = [u(x, t, y)]
         )
     end
 
@@ -206,6 +202,20 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         div = Dt(u(t, x, y)) ~ Dx(opaque(x) * Dx(u(t, x, y))) + Dy(opaque(x) * Dy(u(t, x, y)))
         sol = solve(lower([div], [[u(t, Γ) ~ 1 for Γ in sides(Ω)]; ic], Ω), EXACT_ROWS)
         @test SciMLBase.successful_retcode(sol)
+    end
+
+    @testset "parameters" begin
+        Ω = box()
+        @parameters k
+        eq = Dt(u(t, x, y)) ~ k * (Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))))
+        system(ps...) = PDESystem([eq], [dirichlet(Ω); ic], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], ps...; name = :pdesys)
+        # An undeclared parameter is reported the same way whether `ps` is empty or left out.
+        for pdesys in (system([]), system())
+            @test occursin("unresolved symbols", errmsg(() -> discretize(pdesys, FEMDiscretization(Ω, t))))
+        end
+        @test_throws ArgumentError("parameter k needs a numeric value in the PDESystem, as k => value") discretize(
+            system([k]), FEMDiscretization(Ω, t)
+        )
     end
 
     @testset "a piece with no condition warns when its flux is not zero" begin

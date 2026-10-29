@@ -17,7 +17,10 @@ Without `t` the discretization is steady: the `PDESystem` must have no time vari
 gives a `PDENoTimeSolution`.
 
   - `spaces`: dependent variable (`u` or `u(t, x, y)`) `=>` `Ferrite.Interpolation`; the
-    default is `Lagrange{RefShape, 1}()` on the mesh's reference shape. Fields may have
+    default is `Lagrange{RefShape, 1}()` on the mesh's reference shape. The geometry is not a
+    choice here: cells are mapped with the geometric interpolation of the mesh's cell type, so a
+    mesh of quadratic cells (`QuadraticTriangle`, say, from a second-order Gmsh mesh) is mapped
+    isoparametrically. Fields may have
     different orders, such as the Taylor–Hood pair `Lagrange{RefTriangle, 2}()` for the
     velocity and `Lagrange{RefTriangle, 1}()` for the pressure.
   - `regions`: dependent variable `=>` `Region(Ω, name)`, a cell set of the mesh on which the
@@ -61,7 +64,7 @@ gives a `PDENoTimeSolution`.
     still returns full fields, with `g` at the prescribed nodes, through `sol[u]`,
     `sol(t, x, y)`, traces and `write_vtk`; only `sol.original_sol` and the array unknowns
     hold the free dofs alone. `:algebraic` is recommended.
-  - `codegen = :mtk` is reserved for a later milestone and raises; remaining keywords are
+  - `codegen = :mtk` is reserved and raises; remaining keywords are
     passed to the `DAEProblem` (or `NonlinearProblem`), where a keyword given at the
     `DAEProblem`/`NonlinearProblem`/`discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate`,
     `name` and `parameters` are set by the discretization and rejected, as are `tspan`, `u0`, `p`
@@ -131,7 +134,7 @@ function FEMDiscretization(
     )
     domain.mesh isa Ferrite.Grid ||
         throw(ArgumentError("FEMDiscretization needs a MeshDomain of a Ferrite.Grid, got a mesh of type $(typeof(domain.mesh))"))
-    codegen === :mtk && throw(ArgumentError("codegen = :mtk lands in M3; use the default codegen = :numeric"))
+    codegen === :mtk && throw(ArgumentError("codegen = :mtk is not supported; use the default codegen = :numeric"))
     codegen === :numeric || throw(ArgumentError("codegen must be :numeric, got $(repr(codegen))"))
     dirichlet in (:algebraic, :eliminate) ||
         throw(ArgumentError("dirichlet must be :algebraic or :eliminate, got $(repr(dirichlet))"))
