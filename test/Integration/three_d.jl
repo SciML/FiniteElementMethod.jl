@@ -2,7 +2,6 @@
 # solution u* = exp(-t) sin(πx) sin(πy) sin(πz), homogeneous Dirichlet on all six faces, on hexahedra and
 # tetrahedra in P1 and P2. The L2 error at the final time must converge at rate p + 1; the time integrator runs at
 # tight tolerances so that its error stays far below the spatial error.
-# Needs the PDEBase mesh-discretization layer, unreleased as of PDEBase 0.1.39.
 using FiniteElementMethod, Test
 using FiniteElementMethod: rectangle_grid
 using Ferrite: Ferrite, Hexahedron, Tetrahedron, RefHexahedron, RefTetrahedron, CellValues, CellIterator, QuadratureRule
@@ -49,17 +48,11 @@ function cube_heat_error(celltype, shape, order, nel)
     return cube_l2_error(sol.disc_data.space, sol.original_sol.u[end], shape, order, exact)
 end
 
-if FiniteElementMethod.MESH_PDEBASE
-    @testset "3D heat on the unit cube, $(celltype) P$(order)" for (celltype, shape, order, sizes) in (
-            (Hexahedron, RefHexahedron, 1, (4, 8, 16)), (Hexahedron, RefHexahedron, 2, (2, 4, 8)),
-            (Tetrahedron, RefTetrahedron, 1, (4, 8, 16)), (Tetrahedron, RefTetrahedron, 2, (2, 4, 8)),
-        )
-        errs = [cube_heat_error(celltype, shape, order, nel) for nel in sizes]
-        @info "3D heat $(celltype) P$(order): L2 errors $(errs), rates $(rates(errs))"
-        @test minimum(rates(errs)) ≥ order + 1 - 0.3
-    end
-else
-    @testset "three_d (skipped)" begin
-        @test_skip "the installed PDEBase lacks the mesh classifier, StrongForm boundary routing or pairing-ordered mesh coordinates (PDEBase#158)"
-    end
+@testset "3D heat on the unit cube, $(celltype) P$(order)" for (celltype, shape, order, sizes) in (
+        (Hexahedron, RefHexahedron, 1, (4, 8, 16)), (Hexahedron, RefHexahedron, 2, (2, 4, 8)),
+        (Tetrahedron, RefTetrahedron, 1, (4, 8, 16)), (Tetrahedron, RefTetrahedron, 2, (2, 4, 8)),
+    )
+    errs = [cube_heat_error(celltype, shape, order, nel) for nel in sizes]
+    @info "3D heat $(celltype) P$(order): L2 errors $(errs), rates $(rates(errs))"
+    @test minimum(rates(errs)) ≥ order + 1 - 0.3
 end
