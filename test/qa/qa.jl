@@ -21,7 +21,7 @@ run_qa(
     ),
     # The user API of a FEM model: PDEBase's mesh vocabulary and Ferrite's interpolations.
     reexports_allow = (
-        :MeshDomain, :boundarypiece, :boundarypieces, :NormalDerivative, :Lagrange,
+        :MeshDomain, :Region, :boundarypiece, :boundarypieces, :NormalDerivative, :Lagrange,
         :RefLine, :RefTriangle, :RefQuadrilateral, :RefTetrahedron, :RefHexahedron,
     ),
 )

@@ -67,13 +67,15 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
     _check_domains(pdesys, disc)
     dvs = PDEBase.depvars(v)
     ops = [_field_op(u) for u in dvs]
-    unknown = [k for k in keys(disc.spaces) if !any(op -> isequal(op, k), ops)]
-    isempty(unknown) || throw(
-        ArgumentError(
-            "`spaces` has keys that are not dependent variables of the system: " *
-                "$(join(sort(string.(unknown)), ", ")); the dependent variables are $(join(sort(string.(dvs)), ", "))"
+    for (kw, dict) in (("spaces", disc.spaces), ("regions", disc.regions))
+        unknown = [k for k in keys(dict) if !any(op -> isequal(op, k), ops)]
+        isempty(unknown) || throw(
+            ArgumentError(
+                "`$kw` has keys that are not dependent variables of the system: " *
+                    "$(join(sort(string.(unknown)), ", ")); the dependent variables are $(join(sort(string.(dvs)), ", "))"
+            )
         )
-    )
+    end
     t = v.time
     for u in dvs
         args = SymbolicUtils.arguments(unwrap(u))
@@ -130,6 +132,24 @@ function _paired(an, eqs, ctx, disc)
     )
 end
 
+# τ and b are compiled into the kernels as functions of the coordinates, time and hK only, so they cannot name a
+# parameter, whose value the kernels would not see.
+function _check_supg(test_space, an, ctx)
+    test = TestSlots(an.dim)
+    for e in eachindex(an.flux)
+        weight = test_weight(test_space, an, e, test)
+        weight === nothing && continue
+        τ, bW = weight
+        any(ex -> _depends(unwrap(Num(ex)), [ctx.params; an.slots.P]), (τ, bW)) && throw(
+            ArgumentError(
+                "SUPG: equation $e has τ = $τ and b·∇v = $bW, which reference parameters of the PDESystem; " *
+                    "τ and b must be numbers or expressions in the coordinates, time and hK, so write the parameter's value"
+            )
+        )
+    end
+    return nothing
+end
+
 function _check_linear(wf)
     for term in vcat(wf.volume, wf.facet)
         term.kind === :nonlinear &&
@@ -155,14 +175,38 @@ function _space(disc, ctx, analysis, dirichlet, pvals, t0)
     shape = Ferrite.getrefshape(Ferrite.getcelltype(grid))
     names = Symbol[nameof(op) for op in ctx.ops]
     ips = [get(disc.spaces, op, Ferrite.Lagrange{shape, 1}()) for op in ctx.ops]
-    allequal(ips) || throw(ArgumentError("fields with different interpolations land in M4; got $(join(ips, ", "))"))
-    Ferrite.getrefshape(first(ips)) == shape ||
-        throw(ArgumentError("the interpolation $(first(ips)) is not on the reference shape $shape of the mesh cells"))
+    for ip in ips
+        Ferrite.getrefshape(ip) == shape ||
+            throw(ArgumentError("the interpolation $ip is not on the reference shape $shape of the mesh cells"))
+    end
     bcs = [
         (names[bc.field], String(bc.piece.name), (x, t) -> g(x, t, pvals))
             for (bc, (_, _, g)) in zip(analysis.essential, dirichlet)
     ]
-    return FEMSpace(grid, names .=> ips; dirichlet = bcs, quadrature = disc.quadrature, t0), names, ips
+    regions = Dict(names[f] => String(disc.regions[op].name) for (f, op) in enumerate(ctx.ops) if haskey(disc.regions, op))
+    _check_region_pieces(grid, regions, names, analysis)
+    space = FEMSpace(
+        grid, names .=> ips; dirichlet = bcs, quadrature = disc.quadrature, t0, regions,
+        hessians = disc.test_space isa SUPG
+    )
+    return space, names, ips
+end
+
+# A condition on a field restricted to a region must lie on the region: Ferrite would otherwise drop the facets
+# outside it without a word.
+function _check_region_pieces(grid, regions, names, analysis)
+    conditions = [[(bc.field, bc.piece) for bc in analysis.essential]; [(bc.eq, bc.piece) for bc in analysis.natural]]
+    for (f, Γ) in conditions
+        haskey(regions, names[f]) || continue
+        cells = Ferrite.getcellset(grid, regions[names[f]])
+        all(fi -> fi[1] in cells, Ferrite.getfacetset(grid, String(Γ.name))) || throw(
+            ArgumentError(
+                "the condition on $(names[f]) on $Γ has facets outside the region :$(regions[names[f]]) of $(names[f]); " *
+                    "a field on a region takes conditions only on pieces whose facets belong to the region's cells"
+            )
+        )
+    end
+    return nothing
 end
 
 # Nodal coordinates of every dof; Lagrange interpolation of `x_d` gives them exactly.
@@ -196,48 +240,15 @@ function _dirichlet_values(space, dirichlet, coords, pvals, t0)
 end
 
 # Source-only assembly through m1's cell loop: the time-dependent load is re-evaluated at every
-# residual call, where assembling zero M and K blocks would dominate.
-struct SourceOp
-    F::Vector{Float64}
-    Fe::Vector{Float64}
-end
-
-_start_cell!(op::SourceOp, dofs) = (fill!(op.Fe, 0); nothing)
-_finish_cell!(op::SourceOp, dofs) = (Ferrite.assemble!(op.F, dofs, op.Fe); nothing)
-
-function _kernel!(op::SourceOp, k::KernelSpec, vals, xs, ranges::NTuple{NF}, p, t) where {NF}
-    rows = ranges[k.eq]
-    U0 = ntuple(_ -> 0.0, Val(NF))
-    for q in 1:Ferrite.getnquadpoints(vals)
-        dΩ = Ferrite.getdetJdV(vals, q)
-        X = Ferrite.spatial_coordinate(vals, q, xs)
-        G0 = _unit_gradient(Val(NF), 0, zero(X))
-        N = _normal(vals, q, X)
-        for i in 1:Ferrite.getnbasefunctions(vals)
-            V, W = Ferrite.shape_value(vals, q, i), Ferrite.shape_gradient(vals, q, i)
-            op.Fe[rows[i]] -= k.f(U0, G0, U0, V, W, X, t, N, p) * dΩ
-        end
-    end
-    return nothing
-end
-
-function _kernel!(op::SourceOp, blk::LinearBlock, vals, xs, ranges::NTuple{NF}, p, t) where {NF}
-    rows = ranges[blk.eq]
-    for q in 1:Ferrite.getnquadpoints(vals)
-        dΩ = Ferrite.getdetJdV(vals, q)
-        X = Ferrite.spatial_coordinate(vals, q, xs)
-        cF = _coeffs(blk.source, X, t, _normal(vals, q, X), p)
-        for i in 1:Ferrite.getnbasefunctions(vals)
-            op.Fe[rows[i]] -= _test_contract(cF, _test_basis(vals, q, i)) * dΩ
-        end
-    end
-    return nothing
-end
+# residual call, where assembling zero M and K blocks would dominate. A `LinearOp` without M and K
+# assemblers only scatters `Fe`.
+_finish_cell!(op::LinearOp{Nothing, Nothing}, dofs) = (Ferrite.assemble!(op.F, dofs, op.Fe); nothing)
 
 "Write `F = −∫source` of the `:source` kernels at time `t` into `F`."
-function assemble_sources!(F, ctx::AssemblyContext{NF}, kernels, p, t) where {NF}
+function assemble_sources!(F, ctx::AssemblyContext, kernels, p, t)
     fill!(F, 0)
-    op = SourceOp(F, zeros(NF * Ferrite.getnbasefunctions(ctx.cv)))
+    ne = _max_ndofs(ctx.dh)
+    op = LinearOp(nothing, nothing, F, zeros(ne, ne), zeros(ne, ne), zeros(ne))
     _assemble!(op, ctx, _split(ctx, kernels, (:source,))..., p, t)
     return F
 end
@@ -245,7 +256,9 @@ end
 # `reinit!` mutates CellValues and FacetValues, so each load evaluation gets its own copies and
 # concurrent solves of one problem's remakes share no mutable state.
 function _fresh_values(ctx::AssemblyContext{NF, DH, CV, FV}) where {NF, DH, CV, FV}
-    return AssemblyContext{NF, DH, CV, FV}(ctx.dh, ctx.fields, copy(ctx.cv), copy(ctx.fv), ctx.facetsets, ctx.facetcells)
+    return AssemblyContext{NF, DH, CV, FV}(
+        ctx.dh, ctx.fields, map(copy, ctx.cellvalues), map(copy, ctx.facetvalues), ctx.facetsets, ctx.facetcells
+    )
 end
 
 function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
@@ -257,7 +270,7 @@ function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
     static = Tuple(k for (k, td) in zip(kernels, timedep) if !td)
     dynamic = Tuple(k for (k, td) in zip(kernels, timedep) if td)
     pieces = Dict(bc.piece => space.pieces[bc.piece.name] for bc in wf.analysis.natural)
-    ctx = AssemblyContext(space.dh, space.fields, first(space.cellvalues), first(space.facetvalues), pieces)
+    ctx = AssemblyContext(space.dh, space.fields, space.cellvalues, space.facetvalues, pieces)
     n = Ferrite.ndofs(space.dh)
     M, K, F = copy(space.pattern), copy(space.pattern), zeros(n)
     assemble_linear!(M, K, F, ctx, static, pvals; t = t0)
@@ -320,7 +333,8 @@ function _lower(pdesys, disc::FEMDiscretization)
             Γ in covered || @warn "boundary piece $Γ has no condition, so it gets the natural zero-flux condition"
         end
     end
-    wf = weak_form(an)
+    disc.test_space isa SUPG && _check_supg(disc.test_space, an, ctx)
+    wf = weak_form(an; test_space = disc.test_space)
     _check_linear(wf)
     pvals = _parameter_values(sys, ctx)
     dirichlet = emit_dirichlet(an)

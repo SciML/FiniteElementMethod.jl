@@ -31,6 +31,9 @@ versions = ["lts", "1", "pre"]
 [Convergence]
 versions = ["lts", "1", "pre"]
 
+[Perf]
+versions = ["1"]
+
 # Opt-in heavy groups with their own test/<Group>/Project.toml (MethodOfLines, PDESystemLibrary).
 [MOLComparison]
 in_all = false
@@ -39,6 +42,3 @@ versions = ["lts", "1"]
 [Library]
 in_all = false
 versions = ["lts", "1"]
-
-[Perf]
-versions = ["1"]
