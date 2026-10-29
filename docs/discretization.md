@@ -7,7 +7,5 @@ shapes.
 ```@docs
 FEMDiscretization
 FiniteElementMethod.SciMLBase.DAEProblem(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
-FiniteElementMethod.AbstractTestSpace
-FiniteElementMethod.Galerkin
 FiniteElementMethod.assemble_sources!
 ```
