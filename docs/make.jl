@@ -7,7 +7,7 @@ include("pages.jl")
 showcase_page = joinpath(@__DIR__, "src", "showcase.md")
 include(joinpath(@__DIR__, "..", "examples", "showcase.jl"))
 mkpath(joinpath(@__DIR__, "src", "assets"))
-# invokelatest: record_showcase is defined by the include above, inside this same block.
+# invokelatest: record_showcase is defined by the include above.
 Base.invokelatest(record_showcase, joinpath(@__DIR__, "src", "assets", "showcase.gif"))
 cp(joinpath(@__DIR__, "showcase.md"), showcase_page; force = true)
 insert!(pages, 2, "Showcase" => "showcase.md")
