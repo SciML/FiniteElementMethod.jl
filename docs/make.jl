@@ -11,6 +11,10 @@ mkpath(joinpath(@__DIR__, "src", "assets"))
 Base.invokelatest(record_showcase, joinpath(@__DIR__, "src", "assets", "showcase.gif"))
 cp(joinpath(@__DIR__, "showcase.md"), showcase_page; force = true)
 insert!(pages, 2, "Showcase" => "showcase.md")
+# The benchmark page is rendered from benchmarks/results/*.toml at build time (benchmarks/render.jl).
+include(joinpath(@__DIR__, "..", "benchmarks", "render.jl"))
+write(joinpath(@__DIR__, "src", "benchmarks.md"), render(joinpath(@__DIR__, "..", "benchmarks", "results")))
+insert!(pages, length(pages), "Benchmarks" => "benchmarks.md")
 
 makedocs(
     sitename = "FiniteElementMethod.jl",
