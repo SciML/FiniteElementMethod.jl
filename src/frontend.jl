@@ -263,7 +263,10 @@ end
 
 function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
     kernels = emit_kernels(wf)
-    timedep = [term.kind === :source && term.timedep for term in vcat(wf.volume, wf.facet)]
+    # `emit_kernels` sums the terms sharing an equation, kind and piece, so a kernel is dynamic when any of its terms is.
+    terms = [[(t, nothing) for t in wf.volume]; [(t, t.piece) for t in wf.facet]]
+    dynamic_keys = Set((t.eq, t.kind, piece) for (t, piece) in terms if t.kind === :source && t.timedep)
+    timedep = [(eq, kind, piece) in dynamic_keys for (eq, kind, piece, _) in fused_terms(wf)]
     static = Tuple(k for (k, td) in zip(kernels, timedep) if !td)
     dynamic = Tuple(k for (k, td) in zip(kernels, timedep) if td)
     pieces = Dict(bc.piece => space.pieces[bc.piece.name] for bc in wf.analysis.natural)
