@@ -82,6 +82,17 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         @test sys isa ModelingToolkit.System
     end
 
+    @testset "PDESystem without parameters" begin
+        # Leaving out `ps` gives the system `NullParameters()`, which means no parameters.
+        Ω = MeshDomain(rectangle_grid(Triangle, (4, 4)))
+        domains = [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)]
+        @named pdesys = PDESystem([heat_eq], [dirichlet_all(Ω); ic], domains, [t, x, y], [u(t, x, y)])
+        @test pdesys.ps isa SciMLBase.NullParameters
+        sol = solve(discretize(pdesys, FEMDiscretization(Ω, t)), EXACT_ROWS; abstol = 1.0e-10, reltol = 1.0e-10)
+        @test SciMLBase.successful_retcode(sol)
+        @test nodal_error(sol, u(t, x, y), uexact) <= tol
+    end
+
     @testset "P1 quadrilaterals" begin
         Ω = MeshDomain(rectangle_grid(Quadrilateral, (3, 4)))
         sol, _ = fem_solve([heat_eq], [dirichlet_all(Ω); ic], Ω, (x, y), t, [u(t, x, y)])

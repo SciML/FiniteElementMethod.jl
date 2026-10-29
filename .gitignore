@@ -27,3 +27,7 @@ Manifest.toml
 # Copied from docs/ by docs/make.jl when the front end is available.
 docs/src/discretization.md
 docs/src/extension_contract.md
+
+# forge and Nelson session state
+.forge/
+.nelson/
