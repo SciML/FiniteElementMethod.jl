@@ -42,33 +42,98 @@ function assert_differentiated(ex, term = ex)
 end
 checked_derivative(ex, x) = assert_differentiated(Symbolics.derivative(ex, x), ex)
 
-# One scalar function per component, returned as a tuple: the array form of `build_function` allocates
-# and cannot build its output from `Vec` or tuple arguments.
-function compile_tangent(ex, s, slots)
-    parts = Tuple(compile(checked_derivative(ex, x), slots) for x in [s.U; s.G])
-    # Explicit arguments: a pass-through `args...` is not specialised and allocates.
-    return (U, G, Ud, V, W, X, T, N, P) -> map(part -> part(U, G, Ud, V, W, X, T, N, P), parts)
+"""
+    StructuralZero()
+
+An entry of a `coeffs` tuple that is zero for every argument. It is known from the tuple's type, so the driver's
+contractions drop it at compile time; arithmetic with numbers treats it as an exact zero.
+"""
+struct StructuralZero end
+Base.:+(::StructuralZero, x::Number) = x
+Base.:+(x::Number, ::StructuralZero) = x
+Base.:+(::StructuralZero, ::StructuralZero) = StructuralZero()
+Base.:-(x::Number, ::StructuralZero) = x
+Base.:*(::StructuralZero, ::Number) = StructuralZero()
+Base.:*(::Number, ::StructuralZero) = StructuralZero()
+Base.:*(::StructuralZero, ::StructuralZero) = StructuralZero()
+
+# A tuple-valued function of `slots`, allocation-free with `Vec` and tuple arguments. Constant entries are
+# compiled as `Float64`, constant zeros as `zero`.
+function compile_tuple(exs, slots; zero = 0.0)
+    entries = map(exs) do ex
+        x = Symbolics.unwrap(ex)
+        SU.isconst(x) || return x
+        value = SU.unwrap_const(x)
+        return iszero(value) ? zero : Float64(value)
+    end
+    return Symbolics.build_function(SU.Code.MakeTuple(entries), slots...; expression = Val(false))
 end
 
-function kernel(term, piece, wf::WeakForm)
+compile_tangent(ex, s, slots) = compile_tuple([checked_derivative(ex, x) for x in [s.U; s.G]], slots)
+
+"""
+    compile_coeffs(kind, ex, slots, test)
+
+The coefficient form of a `:mass`, `:bilinear` or `:source` integrand `ex` (see `KernelSpec`), or `nothing`, in
+which case the kernel keeps the per-shape-function `f`. It is `nothing` when
+- `kind` is `:nonlinear`: per quadrature point the coefficients cost more than calling `f` and `tangent` per test
+  function (measured on case (iii), 1.43× against 1.20× of hand-written);
+- `ex` is not the sum of its coefficients times the trial and test slots, e.g. a term with a part free of the
+  trial slots or of the test slots, or one nonlinear in them;
+- a coefficient depends on a trial or test slot, i.e. on `U`, `G`, `Ud`, `V` or `W`.
+Terms built by `weak_form` always have a coefficient form; the fallback serves hand-built integrands.
+"""
+function compile_coeffs(kind, ex, s, test)
+    kind === :nonlinear && return nothing
+    w = [test.V; test.W]
+    trial = kind === :mass ? s.Ud : [s.U; s.G]
+    first_order = [checked_derivative(ex, wi) for wi in w]
+    if kind === :source
+        exs = first_order
+        linear = sum(first_order .* w)
+    else
+        exs = [checked_derivative(d, si) for si in trial for d in first_order]
+        linear = sum(exs .* [si * wi for si in trial for wi in w])
+    end
+    isequal(Symbolics.expand(ex - linear), 0) || return nothing
+    any(e -> depends(e, [s.U; s.G; s.Ud; w]), exs) && return nothing
+    return compile_tuple(exs, (s.X, s.T, s.N, s.P); zero = StructuralZero())
+end
+
+# `f` is compiled only when the driver will call it: without `coeffs`, or for `:nonlinear` terms.
+function kernel(eq, kind, piece, integrand, wf::WeakForm; coeffs = true)
     slots = kernel_slots(wf)
-    tangent = term.kind === :nonlinear ? compile_tangent(term.integrand, wf.analysis.slots, slots) : nothing
-    f = compile(assert_differentiated(term.integrand), slots)
-    return KernelSpec(term.eq, term.kind, piece, f, tangent)
+    s = wf.analysis.slots
+    assert_differentiated(integrand)
+    c = coeffs ? compile_coeffs(kind, integrand, s, wf.test) : nothing
+    tangent = kind === :nonlinear ? compile_tangent(integrand, s, slots) : nothing
+    f = c === nothing ? compile(integrand, slots) : nothing
+    return KernelSpec(eq, kind, piece, f, tangent, c)
+end
+
+"The terms of `wf` summed per `(eq, kind, piece)`, volume first, in order of first appearance."
+function fused_terms(wf::WeakForm)
+    keyed = [[(term.eq, term.kind, nothing) => term.integrand for term in wf.volume]; [(term.eq, term.kind, term.piece) => term.integrand for term in wf.facet]]
+    keys = Tuple{Int, Symbol, Any}[]
+    sums = Dict{Tuple{Int, Symbol, Any}, Num}()
+    for (key, integrand) in keyed
+        haskey(sums, key) || push!(keys, key)
+        sums[key] = get(sums, key, Num(0)) + integrand
+    end
+    return [(key..., sums[key]) for key in keys]
 end
 
 """
-    emit_kernels(wf::WeakForm)
+    emit_kernels(wf::WeakForm; coeffs = true)
 
-One `KernelSpec` per volume and facet term of `wf`, as a tuple. Each `f(U, G, Ud, V, W, X, T, N, P)`
-returns the scalar integrand; a `:nonlinear` term's `tangent` takes the same arguments and returns the
-tuple `∂I/∂[U; G]` (length `nf + nf*dim`). Array slots accept `Vec`, tuples or vectors.
+One `KernelSpec` per equation, kind and piece of `wf` (the terms sharing them are summed), as a tuple. Linear
+kinds carry `coeffs`, the coefficient form the driver contracts with the shape functions, and then no `f`
+(see [`compile_coeffs`](@ref) for the exceptions). `:nonlinear` kernels carry `f(U, G, Ud, V, W, X, T, N, P)`,
+the scalar integrand, and `tangent`, with the same arguments, returning the tuple `∂I/∂[U; G]` (length
+`nf + nf*dim`). `coeffs = false` emits `f` for every kernel instead. Array slots accept `Vec`, tuples or vectors.
 """
-function emit_kernels(wf::WeakForm)
-    return (
-        map(term -> kernel(term, nothing, wf), wf.volume)...,
-        map(term -> kernel(term, term.piece, wf), wf.facet)...,
-    )
+function emit_kernels(wf::WeakForm; coeffs = true)
+    return Tuple(kernel(eq, kind, piece, integrand, wf; coeffs) for (eq, kind, piece, integrand) in fused_terms(wf))
 end
 
 """
