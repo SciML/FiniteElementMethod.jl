@@ -326,3 +326,60 @@ using .StrongFormSeam: analyse, BC
     @test relerr(A.M, Mr) ≤ 1.0e-14
     @test relerr(A.F, Fr) ≤ 1.0e-14
 end
+
+# The coefficient contraction against the per-shape-function `f` path (emit_kernels(wf; coeffs = false)) on the
+# same weak forms, including coefficients near 1e±8: the two paths order the floating-point operations differently.
+near(A, B) = norm(A - B) ≤ 1.0e-14 * norm(B)
+function both_paths(wf, fields, p; u = nothing)
+    grid = generate_grid(Triangle, (12, 12))
+    ip = Lagrange{RefTriangle, 1}()
+    dh = DofHandler(grid)
+    foreach(f -> add!(dh, f, ip), fields)
+    close!(dh)
+    cv, fv = CellValues(QuadratureRule{RefTriangle}(2), ip), FacetValues(FacetQuadratureRule{RefTriangle}(2), ip)
+    ctx = AssemblyContext(dh, fields, cv, fv, Dict(s => s for s in ("left", "right", "bottom", "top")))
+    fused, plain = emit_kernels(wf), emit_kernels(wf; coeffs = false)
+    A, B = assemble_linear(ctx, fused, p), assemble_linear(ctx, plain, p)
+    @test near(A.M, B.M) && near(A.K, B.K) && near(A.F, B.F)
+    @test norm(A.K) > 0
+    u === nothing && return nothing
+    v = u(ndofs(dh))
+    @test assemble_nonlinear(ctx, fused, v, p).r == assemble_nonlinear(ctx, plain, v, p).r
+    return nothing
+end
+
+@testset "coefficient contraction equals the f path" begin
+    @variables t x y k α β h Du Dw χ a b
+    @variables u(..) w(..)
+    Dx, Dy, Dt = Differential(x), Differential(y), Differential(t)
+    U, Wf = u(t, x, y), w(t, x, y)
+    sivs, right, top = [x, y], [1.0, 0.0], [0.0, 1.0]
+    scalar(eq, bcs; params = [k, α, β, h]) = weak_form(analyse([eq], bcs; depvars = [U], t, sivs, params))
+    heat = scalar(
+        Dt(U) ~ Dx(k * Dx(U)) + Dy(k * Dy(U)) + x * y + 1, [BC("right", Dx(U) ~ h, right), BC("top", k * Dy(U) + α * U ~ β, top)]
+    )
+    for p in (P_HEAT, [1.0e8, 1.0e-8, 1.0e8, 1.0e-8], [1.0e-8, 1.0e8, 1.0e-8, 1.0e8])
+        both_paths(heat, [:u], p)
+    end
+    axy = 1 + x^2 + y
+    iib = scalar(
+        Dt(U) ~ axy * (Dx(Dx(U)) + Dy(Dy(U))) - 0.7 * Dx(U) - 0.3 * Dy(U) - 2.5 * U + x * y + 1,
+        [BC("right", Dx(U) ~ h, right), BC("top", axy * Dy(U) + α * U ~ β, top)]
+    )
+    both_paths(iib, [:u], P_HEAT)
+    iii = scalar(0 ~ Dx((1 + U^2) * Dx(U)) + Dy((1 + U^2) * Dy(U)) + x * y + 1, [BC("right", Dx(U) ~ y + 1, right)]; params = [])
+    both_paths(iii, [:u], [0.0]; u = n -> randn(Xoshiro(4), n))
+    eqs = [
+        Dt(U) ~ Dx(Du * Dx(U) + χ * Dx(Wf)) + Dy(Du * Dy(U) + χ * Dy(Wf)) + a - U + U^2 * Wf,
+        Dt(Wf) ~ Dx(Dw * Dx(Wf)) + Dy(Dw * Dy(Wf)) + b - U^2 * Wf,
+    ]
+    bcs = [BC("right", Du * Dx(U) + χ * Dx(Wf) ~ 0.1, right), BC("right", Dx(Wf) ~ 0.2, right)]
+    two = weak_form(analyse(eqs, bcs; depvars = [U, Wf], t, sivs, params = [Du, Dw, χ, a, b]))
+    both_paths(two, [:u, :w], [1.0, 20.0, 0.3, 0.1, 0.9]; u = n -> rand(Xoshiro(5), n))
+    both_paths(two, [:u, :w], [1.0e8, 1.0e-8, 1.0e8, 1.0e-8, 1.0e8])
+end
+
+@testset "a kernel without f needs coeffs" begin
+    ks = (KernelSpec(1, :bilinear, nothing, nothing, nothing),)
+    @test_throws ArgumentError("bilinear kernel of equation 1 has no f: pass f, or coeffs for a linear kind") assemble_linear(heat_context(4), ks, P_HEAT)
+end
