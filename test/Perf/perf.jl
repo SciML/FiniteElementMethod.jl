@@ -9,7 +9,7 @@ using FiniteElementMethod: assemble_linear!, assemble_nonlinear!, LinearOp, Nonl
 const TIME_GATE = 3.0     # spec §6.6 item 1: within 3× of the hand-written loop
 const NRUNS = 10
 # Coverage instrumentation (Pkg.test(; coverage=true) in CI) slows the generated kernels about 15× and the hand-written
-# loop about 6×, so the ratio inflates (1.4 → 3.7 on the same box); the time gates only mean something uninstrumented.
+# loop about 6×, so the ratio inflates (1.4 → 3.7 on the same box); the time gates (1, 3 and 4) only mean something uninstrumented.
 const INSTRUMENTED = Base.JLOptions().code_coverage != 0
 
 best_time(f) = (f(); minimum(@elapsed(f()) for _ in 1:NRUNS))
@@ -248,6 +248,6 @@ const CONTRACTION_GATE = 1.0
         tf = best_time(() -> assemble_linear!(Mf, Kf, Ff, setup.ctx, fused, p))
         tp = best_time(() -> assemble_linear!(Mp, Kp, Fp, setup.ctx, plain, p))
         @info "$name P2 on 30×30" coeffs_ms = 1.0e3tf f_ms = 1.0e3tp ratio = tf / tp
-        @test tf / tp ≤ CONTRACTION_GATE
+        @test tf / tp ≤ CONTRACTION_GATE skip = INSTRUMENTED
     end
 end
