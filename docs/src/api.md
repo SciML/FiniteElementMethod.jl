@@ -89,19 +89,3 @@ FiniteElementMethod.update!
 ```@docs
 FiniteElementMethod.workload_chain
 ```
-
-## Fused operators and the reassembly cache
-
-```@docs
-FiniteElementMethod.fused_terms
-FiniteElementMethod.compile_coeffs
-FiniteElementMethod.StructuralZero
-FiniteElementMethod.LinearBlock
-FiniteElementMethod.assemble_linear!
-FiniteElementMethod.NonlinearOperator
-FiniteElementMethod.residual!
-FiniteElementMethod.jacobian!
-FiniteElementMethod.residual_jacobian!
-FiniteElementMethod.LinearCache
-FiniteElementMethod.update!
-```
