@@ -221,6 +221,19 @@ function _kernel!(op::SourceOp, k::KernelSpec, vals, xs, ranges::NTuple{NF}, p, 
     return nothing
 end
 
+function _kernel!(op::SourceOp, blk::LinearBlock, vals, xs, ranges::NTuple{NF}, p, t) where {NF}
+    rows = ranges[blk.eq]
+    for q in 1:Ferrite.getnquadpoints(vals)
+        dΩ = Ferrite.getdetJdV(vals, q)
+        X = Ferrite.spatial_coordinate(vals, q, xs)
+        cF = _coeffs(blk.source, X, t, _normal(vals, q, X), p)
+        for i in 1:Ferrite.getnbasefunctions(vals)
+            op.Fe[rows[i]] -= _test_contract(cF, _test_basis(vals, q, i)) * dΩ
+        end
+    end
+    return nothing
+end
+
 "Write `F = −∫source` of the `:source` kernels at time `t` into `F`."
 function assemble_sources!(F, ctx::AssemblyContext{NF}, kernels, p, t) where {NF}
     fill!(F, 0)
@@ -237,7 +250,10 @@ end
 
 function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
     kernels = emit_kernels(wf)
-    timedep = [term.kind === :source && term.timedep for term in vcat(wf.volume, wf.facet)]
+    # `emit_kernels` sums the terms sharing an equation, kind and piece, so a kernel is dynamic when any of its terms is.
+    terms = [[(t, nothing) for t in wf.volume]; [(t, t.piece) for t in wf.facet]]
+    dynamic_keys = Set((t.eq, t.kind, piece) for (t, piece) in terms if t.kind === :source && t.timedep)
+    timedep = [(eq, kind, piece) in dynamic_keys for (eq, kind, piece, _) in fused_terms(wf)]
     static = Tuple(k for (k, td) in zip(kernels, timedep) if !td)
     dynamic = Tuple(k for (k, td) in zip(kernels, timedep) if td)
     pieces = Dict(bc.piece => space.pieces[bc.piece.name] for bc in wf.analysis.natural)
