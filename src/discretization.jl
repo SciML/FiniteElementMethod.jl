@@ -17,7 +17,10 @@ Without `t` the discretization is steady: the `PDESystem` must have no time vari
 gives a `PDENoTimeSolution`.
 
   - `spaces`: dependent variable (`u` or `u(t, x, y)`) `=>` `Ferrite.Interpolation`; the
-    default is `Lagrange{RefShape, 1}()` on the mesh's reference shape. Fields may have
+    default is `Lagrange{RefShape, 1}()` on the mesh's reference shape. The geometry is not a
+    choice here: cells are mapped with the geometric interpolation of the mesh's cell type, so a
+    mesh of quadratic cells (`QuadraticTriangle`, say, from a second-order Gmsh mesh) is mapped
+    isoparametrically. Fields may have
     different orders, such as the Taylor–Hood pair `Lagrange{RefTriangle, 2}()` for the
     velocity and `Lagrange{RefTriangle, 1}()` for the pressure.
   - `regions`: dependent variable `=>` `Region(Ω, name)`, a cell set of the mesh on which the

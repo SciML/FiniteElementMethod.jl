@@ -1,4 +1,5 @@
-using SciMLTesting, FiniteElementMethod
+using SciMLTesting, FiniteElementMethod, Test
+using JET
 
 # `Ferrite.DofOrder.FieldWise` is Ferrite's documented renumbering API but is not declared `public`;
 # ForwardDiff documents `derivative`, and `Dual`, `Partials`, `value` and `partials` for custom rules, as its API

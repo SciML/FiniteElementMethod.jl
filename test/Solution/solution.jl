@@ -185,6 +185,20 @@ end
     @test sol[Differential(x)(U)] ≈ -ones(getnnodes(grid)) atol = 1.0e-10
     @test sol(0.3, 0.6; dv = Differential(x)(U)) ≈ -1 atol = 1.0e-12
     @test isnan(sol(1.5, 0.5; dv = U))
+    @test sol[U^2 + x] ≈ sol[U] .^ 2 .+ sol[x] atol = 1.0e-12
+    @test sol[2U + Differential(x)(U)] ≈ 1 .- 2 .* sol[x] atol = 1.0e-10
+    @test sol(0.3, 0.6; dv = U * y) ≈ 0.7 * 0.6 atol = 1.0e-12
+    @test sol(Γ; dv = U + y) ≈ 1 .+ sol[y][piece_nodes(sol, Γ)] atol = 1.0e-12
+    fixed = Differential(y)(u(0, y)) + 1
+    msg = ArgumentError("cannot evaluate the expression $fixed on this solution: $(u(0, y)) fixes arguments of u(x, y); write the dependent variable as u(x, y)")
+    @test_throws msg sol[fixed]
+    @test_throws msg sol(0.3, 0.6; dv = fixed)
+    bare = ArgumentError("$(u(0, y)) fixes arguments of u(x, y); write the dependent variable as u(x, y)")
+    for ex in (u(0, y), Differential(y)(u(0, y)))
+        @test_throws bare sol[ex]
+        @test_throws bare sol(0.3, 0.6; dv = ex)
+    end
+    @test_throws bare normal_flux(sol, u(0, y), Γ)
 end
 
 @testset "Points missed by Ferrite's nearest-node search" begin
