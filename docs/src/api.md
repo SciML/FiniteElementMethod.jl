@@ -65,6 +65,8 @@ FiniteElementMethod.assemble_linear
 FiniteElementMethod.assemble_nonlinear
 FiniteElementMethod._split
 FiniteElementMethod.assemble_linear!
+FiniteElementMethod.AbstractTestSpace
+FiniteElementMethod.Galerkin
 FiniteElementMethod.SUPG
 FiniteElementMethod.emit_strong
 FiniteElementMethod.compile_coeffs

@@ -86,8 +86,8 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
     t = v.time
     for u in dvs
         args = SymbolicUtils.arguments(unwrap(u))
-        t !== nothing && any(a -> isequal(a, t), args) && !isequal(first(args), t) &&
-            throw(ArgumentError("time must be the first argument of $u; time-last ordering lands later"))
+        t !== nothing && any(a -> isequal(a, t), args[2:(end - 1)]) &&
+            throw(ArgumentError("time must be the first or the last argument of $u, as in u(t, x, y) or u(x, y, t)"))
     end
     grid = disc.domain.mesh
     if !isconcretetype(Ferrite.getcelltype(grid))
@@ -385,9 +385,11 @@ as algebraic equations, the sparse Jacobian `K` and the `FEMMetadata` as its `pr
 so `solve` returns a `PDENoTimeSolution`; Newton solves it in one step. Nonlinear terms are
 rejected, as on the time-dependent path.
 
-The initial guess `u0` is zero on the free dofs and `g_d` on the Dirichlet dofs; a steady
-`PDESystem` has no initial conditions. To start Newton elsewhere, `remake(prob; u0)` with a
-dof vector (field `name` occupies `FiniteElementMethod.field_range(prob.problem_type.space, name)`).
+The initial guess `u0` is zero, with the Dirichlet data `g_d` wherever the problem's unknown
+vector holds Dirichlet dofs; a steady `PDESystem` has no initial conditions. To start Newton
+elsewhere, `remake(prob; u0)` with a vector laid out like `prob.u0`, the problem's unknown
+vector (with the default `dirichlet = :algebraic` it holds every dof, and field `name`
+occupies `FiniteElementMethod.field_range(prob.problem_type.space, name)`).
 Keywords are passed to the `NonlinearProblem` after `disc.kwargs`; the keywords
 `iv`, `unknowns`, `du0`, `coordinate` and `name` are rejected, as for the `DAEProblem`.
 """

@@ -8,8 +8,6 @@ shapes.
 FEMDiscretization
 FiniteElementMethod.SciMLBase.DAEProblem(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
 FiniteElementMethod.SciMLBase.NonlinearProblem(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
-FiniteElementMethod.AbstractTestSpace
-FiniteElementMethod.Galerkin
 FiniteElementMethod.assemble_sources!
 ```
 
@@ -37,7 +35,8 @@ sol(0.5, 0.5; dv = u(x, y))
 ```
 
 Nonlinear terms are rejected on the steady path, as on the time-dependent one. Newton starts
-from zero on the free dofs and the Dirichlet data on the prescribed dofs; another initial guess
-is a dof vector passed as `remake(prob; u0)`, where field `name` occupies
+from zero, with the Dirichlet data on any Dirichlet dofs the unknown vector holds; another
+initial guess is a vector laid out like `prob.u0`, passed as `remake(prob; u0)`. With the
+default `dirichlet = :algebraic` that vector holds every dof and field `name` occupies
 `FiniteElementMethod.field_range(prob.problem_type.space, name)`. Equations with no entry in
 `pairing` are tested with the remaining dependent variables in declared order.
