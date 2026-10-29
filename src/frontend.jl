@@ -353,7 +353,7 @@ function _lower(pdesys, disc::FEMDiscretization)
 end
 
 """
-    DAEProblem(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
+    discretize(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
 
 Discretize `pdesys` with `disc` and return the `DAEProblem` `M du + K u = F(t)` of the
 Galerkin operators, with Dirichlet rows `u_d = g_d(t)` as algebraic equations, a sparse
@@ -369,7 +369,7 @@ step-size changes and then rescale the Newton step, which leaves these rows off 
 solver tolerance; `DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0))` refreshes it on every step
 size change and holds `u(t, Γ) ~ g(t)` to round-off.
 """
-function SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
+function SciMLBase.discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
     _check_reserved(kwargs)
     parts = _lower(pdesys, disc)
     return numeric_dae_problem(
@@ -378,11 +378,11 @@ function SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscre
     )
 end
 
-SciMLBase.discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...) =
-    DAEProblem(pdesys, disc; kwargs...)
+SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...) =
+    SciMLBase.discretize(pdesys, disc; kwargs...)
 
 # `(sys, tspan)`, the shape PDEBase and MethodOfLines return.
 function SciMLBase.symbolic_discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
-    prob = DAEProblem(pdesys, disc)
+    prob = SciMLBase.discretize(pdesys, disc)
     return prob.f.sys, prob.tspan
 end

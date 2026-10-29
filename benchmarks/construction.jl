@@ -4,7 +4,7 @@
 # raises, because of the upstream blockers of spec §7.7. No number is recorded for it in that case.
 include(joinpath(@__DIR__, "common.jl"))
 using FiniteElementMethod, ModelingToolkit, DomainSets, Printf
-using SciMLBase: DAEProblem
+using SciMLBase: discretize
 using ModelingToolkit: t_nounits as t
 using Ferrite: Triangle
 
@@ -44,15 +44,15 @@ function run()
     for side in SIDES
         pdesys, Ω = heat_system(side)
         disc = FEMDiscretization(Ω, t)
-        first_call = @elapsed prob = DAEProblem(pdesys, disc)
+        first_call = @elapsed prob = discretize(pdesys, disc)
         n = length(prob.u0)
         cold === nothing && (cold = Dict("unknowns" => n, "seconds" => first_call))
-        warm = minimum(@elapsed(DAEProblem(pdesys, disc)) for _ in 1:NRUNS)
+        warm = minimum(@elapsed(discretize(pdesys, disc)) for _ in 1:NRUNS)
         mtk = mtk_status(Ω)
         row = Dict{String, Any}("unknowns" => n, "numeric_s" => warm)
         if mtk.available
             mdisc = FEMDiscretization(Ω, t; codegen = :mtk)
-            row["mtk_s"] = minimum(@elapsed(DAEProblem(pdesys, mdisc)) for _ in 1:NRUNS)
+            row["mtk_s"] = minimum(@elapsed(discretize(pdesys, mdisc)) for _ in 1:NRUNS)
         end
         push!(rows, row)
         @printf("N = %6d  numeric path: %.3f s (minimum of %d, after a first call of %.3f s)\n", n, warm, NRUNS, first_call)
@@ -61,7 +61,7 @@ function run()
     return write_results(
         "construction", Dict(
             "benchmark" => "(c) problem construction time, numeric path against ModelingToolkit codegen",
-            "description" => "DAEProblem(pdesys, FEMDiscretization(Ω, t)) for a P1 heat equation with Dirichlet conditions, minimum of $NRUNS calls after a first call",
+            "description" => "discretize(pdesys, FEMDiscretization(Ω, t)) for a P1 heat equation with Dirichlet conditions, minimum of $NRUNS calls after a first call",
             "rows" => rows,
             "cold_first_call" => cold,
             "mtk_codegen" => Dict(

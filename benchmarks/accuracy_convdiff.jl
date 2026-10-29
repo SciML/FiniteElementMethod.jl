@@ -41,7 +41,7 @@ function fem_error(n)
     eq = Dt(f(t, z)) ~ k * Dz(Dz(f(t, z))) + v * Dz(f(t, z))
     bcs = [f(t, lo) ~ 0.0, f(t, hi) ~ 1.0, f(0, z) ~ 0.0]
     @named pdesys = PDESystem([eq], bcs, [z ∈ Ω, t ∈ Interval(0.0, TEND)], [t, z], [f(t, z)], [k => K, v => V])
-    prob = DAEProblem(pdesys, FEMDiscretization(Ω, t))
+    prob = discretize(pdesys, FEMDiscretization(Ω, t))
     # A fresh W at every step keeps the algebraic Dirichlet rows exact (test/Frontend/api_example.jl).
     sol = solve(prob, DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0)); TOL...)
     SciMLBase.successful_retcode(sol) || error("FEM convdiff2 n = $n: $(sol.retcode)")

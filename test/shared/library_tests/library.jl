@@ -104,7 +104,7 @@ function nodal_errors(case, sys, exact)
     t = sys.ivs[1]
     return map(case.ns) do n
         Ω = mesh_domain(sys, n)
-        prob = DAEProblem(trace_system(sys, Ω, case.tend), FEMDiscretization(Ω, t; saveat = [case.tend]))
+        prob = discretize(trace_system(sys, Ω, case.tend), FEMDiscretization(Ω, t; saveat = [case.tend]))
         sol = solve(prob, EXACT_ROWS; abstol = 1.0e-11, reltol = 1.0e-9)
         @test SciMLBase.successful_retcode(sol)
         @test sol.t[end] == case.tend
@@ -126,7 +126,7 @@ end
             # L8 (new, spec §11.2 numbering continued): sph's initial condition sin(r)/r is NaN at
             # r = 0, a node of every mesh of [0, 1], and the front end rejects non-finite initial data.
             Ω = mesh_domain(sys, 16)
-            @test_throws "u(0, r) ~ sin(r) / r is not finite at the node coordinate (0.0,)" DAEProblem(
+            @test_throws "u(0, r) ~ sin(r) / r is not finite at the node coordinate (0.0,)" discretize(
                 trace_system(sys, Ω, case.tend), FEMDiscretization(Ω, sys.ivs[1])
             )
             @test_broken try

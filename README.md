@@ -35,7 +35,7 @@ bcs = [
 domains = [(x, y) ∈ Ω, t ∈ Interval(0.0, 6.0)]
 @named pdesys = PDESystem(eqs, bcs, domains, [t, x, y], [u(t, x, y)], [k => 0.2, α => 2.0])
 
-sol = solve(DAEProblem(pdesys, FEMDiscretization(Ω, t)), DFBDF())
+sol = solve(discretize(pdesys, FEMDiscretization(Ω, t)), DFBDF())
 sol(6.0, 1.0, 0.9; dv = u(t, x, y))                 # the temperature at any point, at any time
 ```
 

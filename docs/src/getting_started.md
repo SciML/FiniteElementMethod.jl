@@ -105,14 +105,14 @@ Line by line:
 
 ```julia
 disc = FEMDiscretization(Ω, t; spaces = Dict(u => Lagrange{RefTriangle, 1}()))
-prob = DAEProblem(pdesys, disc)
+prob = discretize(pdesys, disc)
 sol = solve(prob, DFBDF())
 ```
 
   - `FEMDiscretization(Ω, t; spaces)` chooses the finite-element space of each dependent
     variable, here continuous piecewise-linear Lagrange elements on triangles. `spaces` may be
     omitted; the default is linear Lagrange on the mesh's cell shape.
-  - `DAEProblem(pdesys, disc)` (or `discretize(pdesys, disc)`) assembles the mass matrix `M`,
+  - `discretize(pdesys, disc)` assembles the mass matrix `M`,
     the stiffness matrix `K` and the load `F(t)` with Ferrite and returns the `DAEProblem`
     `M du + K u = F(t)`, with one array unknown per field. The Dirichlet values are algebraic
     rows `u_d = g_d(t)`. Nothing calls `mtkcompile`, and anything outside the supported classes

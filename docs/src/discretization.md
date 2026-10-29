@@ -6,13 +6,13 @@
 
 ```@docs
 FEMDiscretization
-FiniteElementMethod.SciMLBase.DAEProblem(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
+FiniteElementMethod.SciMLBase.discretize(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
 FiniteElementMethod.AbstractTestSpace
 FiniteElementMethod.Galerkin
 FiniteElementMethod.assemble_sources!
 ```
 
-`discretize(pdesys, disc)` is `DAEProblem(pdesys, disc)`. `symbolic_discretize(pdesys, disc)`
+`discretize(pdesys, disc)` returns the `DAEProblem` of the discretization. `symbolic_discretize(pdesys, disc)`
 returns `(sys, tspan)`, where `sys` is the array-residual `System` attached to that problem
 (see [`FiniteElementMethod.fem_system`](@ref)): one block equation per field over the
 assembled operators, not scalar equations per node as MethodOfLines returns.

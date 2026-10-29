@@ -121,8 +121,7 @@ interface are not evidenced (see [Supported equation classes](@ref)).
 
 ## Validation
 
-Every condition is checked when the system is discretized, by `DAEProblem(pdesys, disc)` or
-`discretize(pdesys, disc)`, before a solver runs. An unsupported condition, operator or option
+Every condition is checked when the system is discretized, by `discretize(pdesys, disc)`, before a solver runs. An unsupported condition, operator or option
 is an error that names the problem; nothing falls back to `mtkcompile`.
 
 ## Restrictions

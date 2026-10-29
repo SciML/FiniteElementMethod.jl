@@ -10,7 +10,7 @@ PDEBase.contains_point(grid::Ferrite.Grid, x) = _contains_point(grid, x)
         codegen = :numeric, dirichlet = :algebraic, kwargs...)
 
 Finite-element discretization of a `PDESystem` whose spatial domain is the mesh domain `Ω`
-(of a `Ferrite.Grid`), with time variable `t`. `DAEProblem(pdesys, disc)` assembles the
+(of a `Ferrite.Grid`), with time variable `t`. `discretize(pdesys, disc)` assembles the
 Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknown per field.
 
   - `spaces`: dependent variable (`u` or `u(t, x, y)`) `=>` `Ferrite.Interpolation`; the
@@ -30,7 +30,7 @@ Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknow
     with no time derivative of its own, such as `0 ~ Dxx(v) + f`.
   - `codegen = :mtk` and `dirichlet = :eliminate` are reserved for later milestones and
     raise; remaining keywords are passed to the `DAEProblem`, where a keyword given at the
-    `DAEProblem`/`discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate` and `name`
+    `discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate` and `name`
     are set by the discretization and rejected.
 
 Pieces come from `boundarypiece.(Ω, names)`; on an analytic DomainSets box write
