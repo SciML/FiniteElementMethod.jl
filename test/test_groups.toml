@@ -7,6 +7,9 @@ versions = ["lts", "1", "pre"]
 [QA]
 versions = ["lts", "1"]
 
+[DAE]
+versions = ["lts", "1", "pre"]
+
 [Space]
 versions = ["lts", "1", "pre"]
 
