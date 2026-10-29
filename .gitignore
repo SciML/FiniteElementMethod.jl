@@ -31,3 +31,5 @@ Manifest.toml
 
 # Copied from docs/discretization.md by docs/make.jl when the front end is available.
 docs/src/discretization.md
+# Rendered from benchmarks/results by docs/make.jl.
+docs/src/benchmarks.md
