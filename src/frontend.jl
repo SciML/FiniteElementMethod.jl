@@ -86,8 +86,8 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
     t = v.time
     for u in dvs
         args = SymbolicUtils.arguments(unwrap(u))
-        t !== nothing && any(a -> isequal(a, t), args) && !isequal(first(args), t) &&
-            throw(ArgumentError("time must be the first argument of $u; time-last ordering lands later"))
+        t !== nothing && any(a -> isequal(a, t), args[2:(end - 1)]) &&
+            throw(ArgumentError("time must be the first or the last argument of $u, as in u(t, x, y) or u(x, y, t)"))
     end
     grid = disc.domain.mesh
     if !isconcretetype(Ferrite.getcelltype(grid))
@@ -157,7 +157,8 @@ function _check_terms(wf)
 end
 
 function _parameter_values(pdesys, ctx)
-    given = Dict{Any, Any}(unwrap(p.first) => p.second for p in pdesys.ps if p isa Pair)
+    ps = pdesys.ps isa SciMLBase.NullParameters ? () : pdesys.ps
+    given = Dict{Any, Any}(unwrap(p.first) => p.second for p in ps if p isa Pair)
     return map(ctx.params) do p
         haskey(given, p) && given[p] isa Number ||
             throw(ArgumentError("parameter $p needs a numeric value in the PDESystem, as $p => value"))
