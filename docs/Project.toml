@@ -1,11 +1,21 @@
 [deps]
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+DomainSets = "5b8099bc-c8ec-5219-889f-1d9e522a28bf"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+FerriteGmsh = "4f95f4f8-b27c-4ae5-9a39-ea55e634e36b"
 FiniteElementMethod = "e08948db-0ae8-498a-9b98-73fc7f237ce3"
+ModelingToolkit = "961ee093-0014-501f-94e3-6117800e7a78"
+OrdinaryDiffEqBDF = "6ad6398a-0878-4a85-9266-38940aa047c8"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [compat]
+CairoMakie = "0.15"
+DomainSets = "0.7, 0.8"
 Documenter = "1"
+FerriteGmsh = "1.5"
 FiniteElementMethod = "0.1"
+ModelingToolkit = "11"
+OrdinaryDiffEqBDF = "2.4"
 Printf = "1"
 TOML = "1"
