@@ -1,7 +1,11 @@
 [deps]
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 FiniteElementMethod = "e08948db-0ae8-498a-9b98-73fc7f237ce3"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [compat]
 Documenter = "1"
 FiniteElementMethod = "0.1"
+Printf = "1"
+TOML = "1"
