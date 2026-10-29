@@ -8,6 +8,9 @@ using FiniteElementMethod: NonlinearOperator, residual!, assemble_linear!, assem
 
 const TIME_GATE = 3.0     # spec §6.6 item 1: within 3× of the hand-written loop
 const NRUNS = 10
+# Coverage instrumentation (Pkg.test(; coverage=true) in CI) slows the generated kernels about 15× and the hand-written
+# loop about 6×, so the ratio inflates (1.4 → 3.7 on the same box); the time gates (1, 3 and 4) only mean something uninstrumented.
+const INSTRUMENTED = Base.JLOptions().code_coverage != 0
 
 best_time(f) = (f(); minimum(@elapsed(f()) for _ in 1:NRUNS))
 
@@ -155,7 +158,7 @@ const SMALL = mesh_setup(Triangle, 1, 20)
         th, tg = best_time(hand), best_time(generated)
         @info "case (i) on 100×100 P1" facets hand_ms = 1.0e3th generated_ms = 1.0e3tg ratio = tg / th
         check_operators((; K = Kg, M = Mg, F = Fg), Kh, Mh, Fh)
-        @test tg / th ≤ TIME_GATE
+        @test tg / th ≤ TIME_GATE skip = INSTRUMENTED
     end
 end
 
@@ -172,7 +175,7 @@ end
     @info "case (iii) r and J on 100×100 P1" hand_ms = 1.0e3th generated_ms = 1.0e3tg ratio = tg / th
     @test relerr(rg, rh) ≤ 1.0e-13
     @test relerr(Jg, Jh) ≤ 1.0e-13
-    @test tg / th ≤ TIME_GATE
+    @test tg / th ≤ TIME_GATE skip = INSTRUMENTED
 end
 
 @testset "gate 2: no per-cell allocation" begin
@@ -245,7 +248,7 @@ const CONTRACTION_GATE = 1.0
         tf = best_time(() -> assemble_linear!(Mf, Kf, Ff, setup.ctx, fused, p))
         tp = best_time(() -> assemble_linear!(Mp, Kp, Fp, setup.ctx, plain, p))
         @info "$name P2 on 30×30" coeffs_ms = 1.0e3tf f_ms = 1.0e3tp ratio = tf / tp
-        @test tf / tp ≤ CONTRACTION_GATE
+        @test tf / tp ≤ CONTRACTION_GATE skip = INSTRUMENTED
     end
 end
 
