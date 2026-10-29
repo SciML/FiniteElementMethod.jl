@@ -83,7 +83,18 @@ struct KernelSpec{F, T, C}
 end
 KernelSpec(eq, kind, piece, f, tangent) = KernelSpec(eq, kind, piece, f, tangent, nothing)
 
-addterms(ex) = SU.iscall(ex) && SU.operation(ex) === (+) ? reduce(vcat, addterms.(SU.arguments(ex))) : [ex]
+# `expand` leaves a quotient whole, so `(U·V + g·V) / r` (a Robin condition whose data has the
+# denominator `r`, as normals on a circle do) is split over its numerator's terms.
+function addterms(ex)
+    SU.iscall(ex) || return [ex]
+    op = SU.operation(ex)
+    op === (+) && return reduce(vcat, addterms.(SU.arguments(ex)))
+    if op === (/)
+        num, den = SU.arguments(ex)
+        return [term / den for term in addterms(num)]
+    end
+    return [ex]
+end
 
 function depends(ex, syms)
     vars = Set(Symbolics.get_variables(ex))
