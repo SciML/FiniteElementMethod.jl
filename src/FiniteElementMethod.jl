@@ -13,7 +13,7 @@ using DiffEqBase: BrownFullBasicInit
 using DomainSets: DomainSets
 using Ferrite: Ferrite
 using ForwardDiff: ForwardDiff
-using LinearAlgebra: mul!
+using LinearAlgebra: dot, mul!
 using ModelingToolkit: ModelingToolkit, @parameters, @variables, Differential, MTKParameters,
     ProblemTypeCtx, System, complete, getmetadata
 using NonlinearSolveFirstOrder: NewtonRaphson
@@ -23,6 +23,7 @@ using RuntimeGeneratedFunctions: RuntimeGeneratedFunctions
 using SciMLBase: SciMLBase, DAEFunction, DAEProblem
 using SciMLBase.SymbolicIndexingInterface: getp, variable_index
 using SparseArrays: SparseMatrixCSC, nonzeros, nzrange, rowvals
+using SymbolicUtils: SymbolicUtils
 using Symbolics: Symbolics, Num, @register_array_symbolic
 
 # Generated kernels are RuntimeGeneratedFunctions owned by this module, so they can be built in a precompile workload.
@@ -37,5 +38,8 @@ include("precompile.jl")
 include("mesh.jl")
 include("space.jl")
 include("numeric_dae.jl")
+include("solution.jl")
+
+export FieldInfo, FEMMetadata, piece_nodes, normal_flux, write_vtk
 
 end # module

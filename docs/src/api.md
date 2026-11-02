@@ -1,6 +1,7 @@
 # API
 
-These are the package's internals during development; none of them is exported yet.
+The solution interface exports `FieldInfo`, `FEMMetadata`, `piece_nodes`, `normal_flux` and
+`write_vtk`; everything else listed here is internal and may change during development.
 
 ```@autodocs
 Modules = [FiniteElementMethod]
