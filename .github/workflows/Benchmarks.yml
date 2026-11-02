@@ -1,0 +1,46 @@
+name: "Benchmarks"
+
+# Regenerates benchmarks/results/*.toml (spec §11.5 (a)-(c)) and proposes them in a pull request; the
+# documentation build renders the Benchmarks page from those files. Manual or weekly, never on every push:
+# the run takes tens of minutes and its timings come from a shared runner.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: benchmarks
+  cancel-in-progress: false
+
+jobs:
+  benchmarks:
+    name: "Run benchmarks"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1"
+      - uses: julia-actions/cache@v2
+      - name: "Instantiate the benchmark environment"
+        run: julia --project=benchmarks -e 'using Pkg; Pkg.instantiate()'
+      - name: "Run the benchmarks"
+        env:
+          BENCHMARK_ORIGIN: "GitHub Actions run ${{ github.run_id }} (${{ runner.os }}, shared runner)"
+        run: julia --project=benchmarks benchmarks/run_all.jl
+      - name: "Check that the results render"
+        run: julia benchmarks/render.jl benchmarks/results "${{ runner.temp }}/benchmarks.md"
+      - name: "Propose the new results"
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: benchmarks/results
+          add-paths: benchmarks/results/*.toml
+          commit-message: "Update benchmark results from run ${{ github.run_id }}"
+          title: "Update benchmark results"
+          body: "Results of the Benchmarks workflow, run ${{ github.run_id }}. The documentation renders them on the Benchmarks page."
+          delete-branch: true

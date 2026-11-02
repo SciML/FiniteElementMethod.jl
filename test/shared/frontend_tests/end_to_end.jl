@@ -188,6 +188,15 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         @test nodal_error(sol, u(t, x, y), (t_, x_, y_) -> (1 + x_ + 2y_) * (1 + t_^2)) <= 1.0e-6
     end
 
+    @testset "constant and time-dependent sources of one equation fuse into one reassembled kernel" begin
+        # u* = (1 + x + 2y)(1 + t + t²): the constant source comes first, so a stale flag would freeze the sum at t0.
+        Ω = MeshDomain(rectangle_grid(Triangle, (4, 4)))
+        eq = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + (1 + x + 2y) + 2t * (1 + x + 2y)
+        bcs = [[u(t, Γ) ~ (1 + x + 2y) * (1 + t + t^2) for Γ in pieces(Ω)]; ic]
+        sol, _ = fem_solve([eq], bcs, Ω, (x, y), t, [u(t, x, y)])
+        @test nodal_error(sol, u(t, x, y), (t_, x_, y_) -> (1 + x_ + 2y_) * (1 + t_ + t_^2)) <= 1.0e-6
+    end
+
     @testset "Dirichlet data defined only from the initial time on" begin
         # sqrt(t - 0.5) is undefined at t = 0, so the space must be initialised at t0 = 1.
         Ω = MeshDomain(rectangle_grid(Triangle, (2, 2)))
