@@ -1,4 +1,4 @@
-# The Extension contract page (docs/extension_contract.md) states the keyword sets, messages and types of the
+# The Extension contract page (docs/src/extension_contract.md) states the keyword sets, messages and types of the
 # front end; these tests keep the page and the code in step.
 using Test
 using FiniteElementMethod: FiniteElementMethod, FEMMetadata, rectangle_grid
@@ -9,7 +9,7 @@ include(joinpath(@__DIR__, "..", "frontend.jl"))
 using ModelingToolkit: t_nounits as t
 using PDEBase: PDEBase
 
-const PAGE = read(joinpath(@__DIR__, "..", "..", "..", "docs", "extension_contract.md"), String)
+const PAGE = read(joinpath(@__DIR__, "..", "..", "..", "docs", "src", "extension_contract.md"), String)
 
 message(f) = try
     f()
