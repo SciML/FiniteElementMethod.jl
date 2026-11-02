@@ -86,7 +86,7 @@ solver's solution and that metadata to the constructors FiniteElementMethod defi
 `PDETimeSeriesSolution(sol, md::FEMMetadata)` (with time) and
 `PDENoTimeSolution(sol, md::FEMMetadata)` (steady), so `solve` returns a solution indexed and
 called in the `PDESystem`'s variables, `sol[u(t, x, y)]` and `sol(t, x, y; dv)`; see
-[Solutions](@ref). The solver's own solution stays in `sol.original_sol`.
+[Solution shapes that differ from MethodOfLines](@ref). The solver's own solution stays in `sol.original_sol`.
 
 ## `symbolic_discretize`
 
