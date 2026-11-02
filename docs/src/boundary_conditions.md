@@ -26,7 +26,7 @@ rendering.
 Restrictions of this release:
 
   - Geometries are `Ferrite.Grid` meshes (1D, 2D and 3D cell shapes) wrapped as `MeshDomain(grid)`, with boundary pieces named by the grid's facet sets. Only 1D and 2D are evidenced; meshes with mixed cell types are rejected until M4.
-  - Coordinates are Cartesian and named by the `(x, y) ∈ Ω` pairing. Time must be the first argument of every dependent variable.
+  - Coordinates are Cartesian and named by the `(x, y) ∈ Ω` pairing. Time is the first or last argument of every dependent variable, never between spatial arguments.
   - Dirichlet data may depend on space, time and parameters but not on another field. Neumann and Robin conditions are written with `NormalDerivative(Γ)`, with any conormal coefficient written explicitly. Neumann and Robin data may depend on time; the Robin coefficient multiplying `u(t, Γ)` may depend only on space and parameters until M3.
   - Periodic conditions `u(t, Γa) ~ u(t, Γb)` are rejected until M4. Interface conditions between regions have no syntax; every field lives on the whole mesh.
   - Boundary pieces must be disjoint. A piece with no condition gets the natural zero-flux condition, with a warning when the operator has a flux.
@@ -138,6 +138,6 @@ is an error that names the problem; nothing falls back to `mtkcompile`.
 | A mesh with mixed cell types | error; lands in M4 |
 | Fields with different interpolations, such as P2 velocity and P1 pressure | error; lands in M4 |
 | A periodic condition `u(t, Γa) ~ u(t, Γb)` | error; lands in M4 |
-| A dependent variable whose first argument is not time, such as `u(x, y, t)` | error |
+| A time argument between spatial arguments, such as `u(x, t, y)` | error |
 | Two Dirichlet pieces of one field sharing nodes | the condition listed last wins |
 | A boundary piece with no condition | natural zero-flux condition, with a warning when the equations have a flux |
