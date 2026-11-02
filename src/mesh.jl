@@ -1,5 +1,4 @@
-# Ferrite implementations of the PDEBase mesh-domain interface (spec §3.4, §6.1). They act on a plain
-# `Ferrite.Grid` so that `PDEBase.meshdim(::MeshDomain)` and friends can forward to them later.
+# Ferrite implementations of the PDEBase mesh-domain interface (spec §3.4, §6.1).
 
 _meshdim(::Ferrite.Grid{dim}) where {dim} = dim
 

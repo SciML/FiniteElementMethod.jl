@@ -4,6 +4,8 @@ using FiniteElementMethod, Ferrite, LinearAlgebra, Random, Test
 using FiniteElementMethod: AssemblyContext, KernelSpec, assemble_linear, assemble_nonlinear
 
 relerr(A, B) = norm(A - B) / norm(B)
+# The DofHandler and the one CellValues/FacetValues pair all fields of `ctx` share.
+shared_values(ctx) = (; ctx.dh, cv = first(ctx.cellvalues), fv = first(ctx.facetvalues))
 
 function heat_context(n; neumann = "right", robin = "top", nfields = 1)
     grid = generate_grid(Triangle, (n, n))
@@ -35,7 +37,7 @@ end
 
 "Hand-written case (i) assembly, ported from scratch/dauntless/test_linear.jl `reference`."
 function heat_reference(ctx, p)
-    (; dh, cv, fv) = ctx
+    (; dh, cv, fv) = shared_values(ctx)
     grid = dh.grid
     k, α, β, h = p
     K, M = allocate_matrix(dh), allocate_matrix(dh)
@@ -170,7 +172,7 @@ end
 
 "Hand-written two-field blocks: K, M, F and the nonlinear residual r(u) at state `u`."
 function two_field_reference(ctx, p, u)
-    (; dh, cv, fv) = ctx
+    (; dh, cv, fv) = shared_values(ctx)
     Du, Dw, χ, a, b, c = p
     ru, rw = dof_range(dh, :u), dof_range(dh, :w)
     K, M = allocate_matrix(dh), allocate_matrix(dh)
@@ -262,7 +264,7 @@ end
 
 "Hand-written residual r_i = ∫(1+u²)∇u·∇φ − ∫fφ − ∮_right (1+u²) g φ (scratch/dauntless/test_nonlinear.jl)."
 function nonlinear_reference(ctx, u)
-    (; dh, cv, fv) = ctx
+    (; dh, cv, fv) = shared_values(ctx)
     r = zeros(ndofs(dh))
     n = getnbasefunctions(cv)
     re = zeros(n)
@@ -330,7 +332,7 @@ using .StrongFormSeam: analyse, BC
     wf = weak_form(analyse([eq], bcs; depvars = [U], t, sivs = [x, y], params = [k, α, β, h]))
     ks = emit_kernels(wf)
     @test length(ks) == 6
-    (; dh, cv, fv) = heat_context(20)   # pieces are keyed by the seam's facet-set names here
+    (; dh, cv, fv) = shared_values(heat_context(20))   # pieces are keyed by the seam's facet-set names here
     ctx = AssemblyContext(dh, [:u], cv, fv, Dict("right" => "right", "top" => "top"))
     A = assemble_linear(ctx, ks, P_HEAT)
     Kr, Mr, Fr = heat_reference(ctx, P_HEAT)
@@ -394,4 +396,44 @@ end
 @testset "a kernel without f needs coeffs" begin
     ks = (KernelSpec(1, :bilinear, nothing, nothing, nothing),)
     @test_throws ArgumentError("bilinear kernel of equation 1 has no f: pass f, or coeffs for a linear kind") assemble_linear(heat_context(4), ks, P_HEAT)
+end
+
+@testset "per-field values: NamedTuple, tuple or one shared object" begin
+    grid = generate_grid(Triangle, (3, 3))
+    ip1, ip2 = Lagrange{RefTriangle, 1}(), Lagrange{RefTriangle, 2}()
+    dh = DofHandler(grid)
+    add!(dh, :u, ip2)
+    add!(dh, :p, ip1)
+    close!(dh)
+    qr, fqr = QuadratureRule{RefTriangle}(4), FacetQuadratureRule{RefTriangle}(4)
+    cvu, cvp = CellValues(qr, ip2), CellValues(qr, ip1)
+    fvu, fvp = FacetValues(fqr, ip2), FacetValues(fqr, ip1)
+    byname = AssemblyContext(dh, [:u, :p], (p = cvp, u = cvu), (u = fvu, p = fvp))
+    @test byname.cellvalues.u === cvu && byname.cellvalues.p === cvp
+    @test AssemblyContext(dh, [:u, :p], (cvu, cvp), (fvu, fvp)).cellvalues == byname.cellvalues
+    @test_throws ArgumentError("field p has 3 dofs per cell, but its CellValues have 6 base functions") AssemblyContext(dh, [:u, :p], cvu, fvu)
+    @test_throws ArgumentError("no cell values given for field p; the cell values have keys (:u,)") AssemblyContext(dh, [:u, :p], (u = cvu,), (u = fvu, p = fvp))
+    @test_throws ArgumentError("1 facet values given for the 2 fields [:u, :p]") AssemblyContext(dh, [:u, :p], (cvu, cvp), (fvu,))
+    @test_throws ArgumentError("field q is not a field of the DofHandler, whose fields are [:u, :p]") AssemblyContext(dh, [:u, :q], (cvu, cvp), (fvu, fvp))
+    same = "all fields must share one rule: the same points, in the same order, with the same weights"
+    cvp_coarse = CellValues(QuadratureRule{RefTriangle}(2), ip1)
+    @test_throws ArgumentError("the CellValues of fields u and p use different quadrature rules; $same") AssemblyContext(dh, [:u, :p], (cvu, cvp_coarse), (fvu, fvp))
+    fvp_coarse = FacetValues(FacetQuadratureRule{RefTriangle}(2), ip1)
+    @test_throws ArgumentError("the FacetValues of fields u and p use different quadrature rules on local facet 1; $same") AssemblyContext(dh, [:u, :p], (cvu, cvp), (fvu, fvp_coarse))
+    @test_throws ArgumentError("field u has 6 dofs per cell, but its FacetValues have 3 base functions") AssemblyContext(dh, [:u, :p], (cvu, cvp), (fvp, fvp))
+end
+
+@testset "fields on one rule with reversed point order are rejected" begin
+    # The same points and weights in opposite order would pair test and trial functions at different points.
+    grid = generate_grid(Triangle, (3, 3))
+    ip = Lagrange{RefTriangle, 1}()
+    dh = DofHandler(grid)
+    add!(dh, :u, ip)
+    add!(dh, :w, ip)
+    close!(dh)
+    qr = QuadratureRule{RefTriangle}(2)
+    reversed = QuadratureRule{RefTriangle}(reverse(qr.weights), reverse(qr.points))
+    fv = FacetValues(FacetQuadratureRule{RefTriangle}(2), ip)
+    @test_throws ArgumentError("the CellValues of fields u and w use different quadrature rules; all fields must share one rule: the same points, in the same order, with the same weights") AssemblyContext(dh, [:u, :w], (CellValues(qr, ip), CellValues(reversed, ip)), fv)
+    @test AssemblyContext(dh, [:u, :w], (CellValues(qr, ip), CellValues(QuadratureRule{RefTriangle}(2), ip)), fv) isa AssemblyContext
 end

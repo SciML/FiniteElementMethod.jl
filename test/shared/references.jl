@@ -8,7 +8,7 @@
 # K = ∫ κ∇u·∇v + (β·∇u) v + c u v + ∮ a u v,  M = ∫ m u v,  F = ∫ f v + ∮ g v.
 
 using FiniteElementMethod: weak_form, emit_kernels, emit_dirichlet, AssemblyContext, assemble_linear,
-    assemble_nonlinear
+    assemble_nonlinear, Galerkin
 using Ferrite
 using LinearAlgebra
 using Random
@@ -46,37 +46,78 @@ function manufactured_bcs(U, ustar, sivs)
     return [dirichlet; neumann]
 end
 
-const SHAPES = Dict(Line => RefLine, Triangle => RefTriangle, Quadrilateral => RefQuadrilateral)
+const SHAPES = Dict(
+    Line => RefLine, Triangle => RefTriangle, Quadrilateral => RefQuadrilateral,
+    QuadraticTriangle => RefTriangle, QuadraticQuadrilateral => RefQuadrilateral,
+)
 const FACETSETS = Dict(1 => ("left", "right"), 2 => ("left", "right", "bottom", "top"))
 
-#     mesh_setup(celltype, order, nel; fields = [:u], corners = ())
+#     mesh_setup(celltype, order, nel; fields = [:u], corners = (), hessians = false)
 #
 # A Ferrite grid (`generate_grid`, so `[−1, 1]^dim` unless `corners` is given), a `DofHandler` with one Lagrange
 # field of `order` per name in `fields`, quadrature of order `2·order` (spec §5.6), and the `AssemblyContext` with
-# every facet set of the grid as a piece keyed by its own name.
-function mesh_setup(celltype, order, nel; fields = [:u], corners = ())
+# every facet set of the grid as a piece keyed by its own name. `hessians = true` builds the `CellValues` with shape
+# Hessians, which SUPG kernels need.
+function mesh_setup(celltype, order, nel; fields = [:u], corners = (), hessians = false)
     dim = celltype === Line ? 1 : 2
     grid = generate_grid(celltype, ntuple(_ -> nel, dim), corners...)
+    return grid_setup(grid, order, FACETSETS[dim]; fields, hessians)
+end
+
+#     grid_setup(grid, order, sets; fields = [:u], hessians = false)
+#
+# As `mesh_setup` for a given grid, with the facet sets `sets` as pieces. The values use the grid's own geometric
+# interpolation (spec §6.2), so a grid of quadratic cells is mapped isoparametrically.
+function grid_setup(grid, order, sets; fields = [:u], hessians = false)
+    celltype = getcelltype(grid)
+    dim = Ferrite.getspatialdim(grid)
     shape = SHAPES[celltype]
-    ip = Lagrange{shape, order}()
+    ip, ip_geo = Lagrange{shape, order}(), Ferrite.geometric_interpolation(celltype)
     dh = DofHandler(grid)
     for f in fields
         add!(dh, f, ip)
     end
     close!(dh)
-    cv = CellValues(QuadratureRule{shape}(2order), ip)
-    fv = FacetValues(FacetQuadratureRule{shape}(2order), ip)
-    pieces = Dict(s => s for s in FACETSETS[dim])
-    ctx = AssemblyContext(dh, fields, cv, fv, pieces)
+    cv = CellValues(QuadratureRule{shape}(2order), ip, ip_geo; update_hessians = hessians)
+    fv = FacetValues(FacetQuadratureRule{shape}(2order), ip, ip_geo)
+    ctx = AssemblyContext(dh, fields, cv, fv, Dict(s => s for s in sets))
     return (; grid, dh, cv, fv, ctx, fields, dim, order)
 end
 
-#     chain(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict())
+#     quarter_annulus(n; quadratic)
+#
+# The quarter annulus 1 ≤ r ≤ 2, 0 ≤ θ ≤ π/2 meshed by n × n cells of the (r, θ) rectangle, each split into two
+# triangles. Every node, mid-side nodes included, sits at its (r, θ) position, so with `quadratic = true`
+# (`QuadraticTriangle`) the edges on r = 1 and r = 2 are arcs of the circles; with `quadratic = false` the same
+# vertices make straight-sided `Triangle`s. Facet sets: `inner`, `outer`, `bottom` (y = 0) and `left` (x = 0).
+function quarter_annulus(n; quadratic)
+    m = 2n + 1
+    node(i, j) = i + 1 + j * m
+    nodes = [Node(Vec((1 + i / 2n) * cos(pi / 2 * j / 2n), (1 + i / 2n) * sin(pi / 2 * j / 2n))) for j in 0:(2n) for i in 0:(2n)]
+    cells = quadratic ? QuadraticTriangle[] : Triangle[]
+    for a in 0:(n - 1), b in 0:(n - 1)
+        i, j = 2a, 2b
+        # vertices, then mid-sides of edges 1-2, 2-3, 3-1 (Ferrite's QuadraticTriangle order)
+        lower = (node(i, j), node(i + 2, j), node(i + 2, j + 2), node(i + 1, j), node(i + 2, j + 1), node(i + 1, j + 1))
+        upper = (node(i, j), node(i + 2, j + 2), node(i, j + 2), node(i + 1, j + 1), node(i + 1, j + 2), node(i, j + 1))
+        for t in (lower, upper)
+            push!(cells, quadratic ? QuadraticTriangle(t) : Triangle(t[1:3]))
+        end
+    end
+    grid = Grid(cells, nodes)
+    addfacetset!(grid, "inner", X -> norm(X) ≈ 1)
+    addfacetset!(grid, "outer", X -> norm(X) ≈ 2)
+    addfacetset!(grid, "bottom", X -> abs(X[2]) < 1.0e-12)
+    addfacetset!(grid, "left", X -> abs(X[1]) < 1.0e-12)
+    return grid
+end
+
+#     chain(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict(), test_space = Galerkin())
 #
 # The whole M1 chain: `analyse` (the seam), `weak_form`, `emit_kernels` and `emit_dirichlet`.
-function chain(eqs, bcs; ibp = Dict(), kwargs...)
+function chain(eqs, bcs; ibp = Dict(), test_space = Galerkin(), kwargs...)
     an = analyse(eqs, bcs; ibp, kwargs...)
-    wf = weak_form(an)
+    wf = weak_form(an; test_space)
     return (; an, wf, kernels = emit_kernels(wf), dirichlet = emit_dirichlet(an))
 end
 
@@ -280,8 +321,9 @@ end
 # L2 error of a single-field `u` against `exact(X)` with quadrature of order `2·order + 2`.
 function l2_error(setup, u, exact)
     (; dh, order, grid) = setup
-    shape = SHAPES[getcelltype(grid)]
-    cv = CellValues(QuadratureRule{shape}(2order + 2), Lagrange{shape, order}())
+    celltype = getcelltype(grid)
+    shape = SHAPES[celltype]
+    cv = CellValues(QuadratureRule{shape}(2order + 2), Lagrange{shape, order}(), Ferrite.geometric_interpolation(celltype))
     err = 0.0
     for cell in CellIterator(dh)
         Ferrite.reinit!(cv, cell)

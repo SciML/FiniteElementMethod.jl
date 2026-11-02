@@ -18,8 +18,8 @@ struct NonlinearOperator{C <: AssemblyContext, V <: Tuple, G <: Tuple, JT}
     u_elem::Vector{Float64}
 end
 
-function NonlinearOperator(ctx::AssemblyContext{NF}, kernels; ch = nothing) where {NF}
-    ne = NF * Ferrite.getnbasefunctions(ctx.cv)
+function NonlinearOperator(ctx::AssemblyContext, kernels; ch = nothing)
+    ne = _max_ndofs(ctx.dh)
     volume, groups = _split(ctx, kernels, (:nonlinear,))
     r = zeros(Ferrite.ndofs(ctx.dh))
     return NonlinearOperator(ctx, volume, groups, r, allocate_pattern(ctx, ch), zeros(ne, ne), zeros(ne), zeros(ne))
