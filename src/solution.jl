@@ -249,11 +249,17 @@ Sorted global dof indices of `field` on the boundary piece `Γ` (a piece of the 
 facet-set name as `String` or `Symbol`): every dof whose basis function is nonzero on a facet of
 `Γ`, so for order 2 the mid-edge dofs as well as the vertices. `field` is the field name or its
 dependent variable. These are the rows a boundary term on `Γ` enters, and the trace of the field
-on `Γ` is determined by the values there.
+on `Γ` is determined by the values there. A field that lives in no cell next to `Γ` (a field on a
+region) has no dofs there, and the result is empty.
 """
 function facet_dofs(md::FEMMetadata, Γ, field)
-    ch = Ferrite.ConstraintHandler(_dh(md))
-    Ferrite.add!(ch, Ferrite.Dirichlet(_field_name(md, field), Ferrite.getfacetset(_grid(md), _facetset_name(md, Γ)), Returns(0.0)))
+    dh = _dh(md)
+    name = _field_name(md, field)
+    facets = Ferrite.getfacetset(_grid(md), _facetset_name(md, Γ))
+    # Ferrite throws when no facet of the set lies in a cell that holds the field.
+    any(fi -> name in dh.subdofhandlers[dh.cell_to_subdofhandler[fi[1]]].field_names, facets) || return Int[]
+    ch = Ferrite.ConstraintHandler(dh)
+    Ferrite.add!(ch, Ferrite.Dirichlet(name, facets, Returns(0.0)))
     Ferrite.close!(ch)
     return sort!(copy(ch.prescribed_dofs))
 end
@@ -291,7 +297,7 @@ function cell_dofs(md::FEMMetadata, field)
     length(dh.subdofhandlers) == 1 ||
         throw(ArgumentError("cell_dofs needs a discretization without regions; this one has $(length(dh.subdofhandlers)) subdomains"))
     r = Ferrite.dof_range(dh, name)
-    return reduce(hcat, (Ferrite.celldofs(dh, c)[r] for c in 1:Ferrite.getncells(_grid(md))))
+    return stack(c -> Ferrite.celldofs(dh, c)[r], 1:Ferrite.getncells(_grid(md)))
 end
 
 function _facet_normal_flux(md, f::FieldInfo, Γ, U)
