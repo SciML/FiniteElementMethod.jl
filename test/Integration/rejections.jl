@@ -46,18 +46,19 @@ end
 end
 
 @testset "rejected boundary conditions" begin
-    # Box-face conditions are analysed by PDEBase.
+    # Box-face conditions are analysed by PDEBase, which needs the chain's domain to read left and right as faces.
+    box = [(-1.0, 1.0), (-1.0, 1.0)]
     eq = [Dt(U) ~ Dx((2 + x) * Dx(U) + 0.4 * Dy(U)) + Dy(0.4 * Dx(U) + (1 + y^2) * Dy(U))]
     @test rejects(
         "is not a conormal condition for any equation's flux; write the conormal condition",
-        eq, [BC("right", Dx(U) ~ 1.0, [1.0, 0.0])]
+        eq, [BC("right", Dx(U) ~ 1.0, [1.0, 0.0])]; domain = box
     )
     @test rejects(
-        "Dirichlet data must be linear in one field", [Dt(U) ~ Dx(Dx(U))], [BC("left", U^2 ~ 1.0)]
+        "Dirichlet data must be linear in one field", [Dt(U) ~ Dx(Dx(U))], [BC("left", U^2 ~ 1.0)]; domain = box
     )
     # Spec m1: an essential condition coupling two fields.
     two_field = [Dt(U) ~ Dx(Dx(U)), Dt(Wf) ~ Dy(Dy(Wf))]
-    @test rejects("Dirichlet data depends on another field", two_field, [BC("left", U + Wf ~ 1)]; depvars = [U, Wf])
+    @test rejects("Dirichlet data depends on another field", two_field, [BC("left", U + Wf ~ 1)]; depvars = [U, Wf], domain = box)
 end
 
 @testset "rejections only PDEBase's analyse raises" begin

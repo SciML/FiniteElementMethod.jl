@@ -87,8 +87,11 @@ end
 #     analyse(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict(), periodic = [], domain = nothing, Ω = nothing)
 #
 # The seam's interface over PDEBase's analysis. `bcs` holds seam `BC`s and raw trace `Equation`s
-# (periodic pairs). `domain` gives each spatial variable's interval, `[−1, 1]` by default as generate_grid's. With
-# a `MeshDomain` `Ω` `bcs` are raw equations on its pieces.
+# (periodic pairs). `domain` gives each spatial variable's interval, and only with it are the facet sets
+# `left`, `right`, `bottom` and `top` read as box faces at its ends; without it a seam `BC` is analysed by the seam's
+# stage d on the mesh's own facets, so a grid that merely has a facet set called `left` is not taken for a box. Raw
+# trace equations take `[−1, 1]` (generate_grid's) when there is no `domain`. With a `MeshDomain` `Ω` `bcs` are raw
+# equations on its pieces.
 function analyse(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict(), periodic = [], domain = nothing, Ω = nothing)
     Ω === nothing || return mesh_analyse(eqs, bcs; Ω, depvars, t, sivs, params, ibp)
     SF = PDEBase.StrongForm
@@ -99,7 +102,7 @@ function analyse(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict(), periodic
     for bc in bcs
         if bc isa Symbolics.Equation
             push!(box, bc)
-        elseif haskey(BOX_FACES, bc.piece) && BOX_FACES[bc.piece][1] <= length(sivs)
+        elseif domain !== nothing && haskey(BOX_FACES, bc.piece) && BOX_FACES[bc.piece][1] <= length(sivs)
             d, side = BOX_FACES[bc.piece]
             endpoint = side === :lo ? intervals[d][1] : intervals[d][2]
             push!(box, on_face(bc.eq.lhs, depvars, sivs, d, endpoint) ~ on_face(bc.eq.rhs, depvars, sivs, d, endpoint))
