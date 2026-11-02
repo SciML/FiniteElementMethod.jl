@@ -16,7 +16,7 @@ how `FEMDiscretization` meets each clause.
 [`discretize(pdesys, disc; kwargs...)`](@ref SciMLBase.discretize(::ModelingToolkit.PDESystem, ::FEMDiscretization))
 accepts a `ModelingToolkit.PDESystem` on a `MeshDomain` and returns
 
-  - a [`DAEProblem`](@ref SciMLBase.DAEProblem(::ModelingToolkit.PDESystem, ::FEMDiscretization))
+  - a `DAEProblem`
     when `disc` has a time variable, `FEMDiscretization(Ω, t)`, for a DAE solver such as `DFBDF`;
   - a [`NonlinearProblem`](@ref SciMLBase.NonlinearProblem(::ModelingToolkit.PDESystem, ::FEMDiscretization))
     when it has none, `FEMDiscretization(Ω)`, for a nonlinear solver such as `NewtonRaphson`.

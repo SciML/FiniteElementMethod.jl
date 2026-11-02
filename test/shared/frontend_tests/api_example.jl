@@ -30,7 +30,7 @@ include(joinpath(@__DIR__, "..", "lshape.jl"))
     @named pdesys = PDESystem(eqs, bcs, domains, [t, x, y], [u(t, x, y)], [k => 2.0, α => 5.0])
 
     disc = FEMDiscretization(Ω, t; spaces = Dict(u => Lagrange{RefTriangle, 1}()))
-    tbuild = @elapsed prob = DAEProblem(pdesys, disc)
+    tbuild = @elapsed prob = discretize(pdesys, disc)
     tsolve = @elapsed sol = solve(prob, DFBDF())
     @info "API example" ndofs = length(prob.u0) tbuild tsolve
 

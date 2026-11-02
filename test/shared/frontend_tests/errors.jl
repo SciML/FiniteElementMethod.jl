@@ -1,5 +1,5 @@
 # Every M2 error path of the front end. Each is raised by `discretize` (which is
-# `DAEProblem(pdesys, disc)`) before any solver runs. Documented user-facing messages are matched
+# `discretize(pdesys, disc)`) before any solver runs. Documented user-facing messages are matched
 # exactly; errors raised inside PDEBase's analysis are matched by substring.
 using Test
 using FiniteElementMethod: FiniteElementMethod, rectangle_grid
