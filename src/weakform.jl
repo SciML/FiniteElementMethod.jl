@@ -145,7 +145,7 @@ cell, with the mass term tested by `v + τ b·∇v` too. `b` is the advection ve
 analysis as the coefficient of the equation's own gradient in its remainder, `b_d = ∂R/∂(∂_d u)`, which must be
 free of the state (otherwise pass `b`, a vector of numbers or expressions). `τ` is a number, an expression, or a
 function `τ(hK, b)` of the element size `hK` and `b`, e.g. `(hK, b) -> hK / (2 * sqrt(sum(abs2, b)))`.
-Boundary terms stay Galerkin. The stabilised terms need the Hessian slots `H` and `hK`, so the driver's
+An equation whose `b` is zero is tested with Galerkin. Boundary terms stay Galerkin. The stabilised terms need the Hessian slots `H` and `hK`, so the driver's
 `CellValues` must be built with `update_hessians = true`.
 """
 struct SUPG{T, B} <: AbstractTestSpace
@@ -160,6 +160,8 @@ SUPG(τ; b = nothing) = SUPG(τ, b)
 test_weight(::Galerkin, analysis, e, test) = nothing
 function test_weight(space::SUPG, analysis, e, test)
     b = map(fold, space.b === nothing ? advection(analysis, e) : space.b)
+    # An equation without advection (b = 0) has no streamline weight; it stays Galerkin, whatever τ(hK, 0) is.
+    all(bd -> isequal(bd, 0), b) && return nothing
     τ = space.τ isa Function ? space.τ(test.hK, b) : space.τ
     depends(Num(τ), [state_slots(analysis.slots); test.V; test.W]) &&
         throw(ArgumentError("SUPG: τ = $τ depends on the state or the test function"))
