@@ -1,7 +1,8 @@
 # Stage f (spec §5.1, §5.2): kernels evaluate their symbolic integrands, tangents match central
 # differences, every KernelSpec is concrete, and calls with the driver's slot types do not allocate.
+import FiniteElementMethod
 using FiniteElementMethod: weak_form, emit_kernels, emit_dirichlet, WeakForm, VolumeTerm, FacetTerm, TestSlots,
-    StructuralZero
+    StructuralZero, emit_strong
 using Ferrite: Vec
 using Symbolics
 using Test
@@ -179,4 +180,46 @@ end
     @test allunique(keys)
     @test Set(keys) == Set([(term.eq, term.kind, nothing) for term in wf.volume]) ∪ Set([(term.eq, term.kind, term.piece) for term in wf.facet])
     @test length(wf.facet) > length(filter(kernel -> kernel.piece !== nothing, kernels))
+end
+
+@testset "generated functions are RuntimeGeneratedFunctions owned by FiniteElementMethod" begin
+    # The cache tag is the second type parameter of a RuntimeGeneratedFunction.
+    owner(g) = parentmodule(typeof(g).parameters[2])
+    functions = [g for k in emit_kernels(weak_form(two_field())) for g in (k.f, k.tangent, k.coeffs) if g !== nothing]
+    @test !isempty(functions)
+    @test all(g -> owner(g) === FiniteElementMethod, functions)
+    _, _, g = only(emit_dirichlet(case_i()))
+    @test owner(g) === FiniteElementMethod
+end
+
+@testset "expression form of case $name round-trips" for (name, case) in CASES
+    wf = weak_form(case())
+    compiled, generated = emit_kernels(wf), emit_kernels(wf; expression = Val(true))
+    @test length(generated) == length(compiled)
+    for (k, e) in zip(compiled, generated)
+        @test (e.eq, e.kind, e.piece) == (k.eq, k.kind, k.piece)
+        args = random_args(wf.analysis)
+        for (g, ex, call_args) in ((k.f, e.f, args), (k.tangent, e.tangent, args), (k.coeffs, e.coeffs, args[6:9]))
+            @test (g === nothing) == (ex === nothing)
+            g === nothing && continue
+            @test ex isa Expr
+            evaluated = Core.eval(@__MODULE__, ex)
+            @test isequal(Base.invokelatest(evaluated, call_args...), g(call_args...))
+        end
+    end
+end
+
+@testset "collocation: the strong residual of case (iii) vanishes at the exact solution" begin
+    # spec §10.1 collocation row; scratch/dauntless/test_testspace.jl (a)
+    ustar = exp(x) * sin(y) / 2
+    r = only(emit_strong(case_iii()))
+    D = (Dx, Dy)
+    fields = [ustar; [expand_derivatives(D[d](ustar)) for d in 1:2]; [expand_derivatives(D[e](D[d](ustar))) for d in 1:2 for e in 1:2]]
+    values = [Symbolics.build_function(f, x, y; expression = Val(false)) for f in fields]
+    worst = maximum(1:200) do _
+        X = (rand(), rand())
+        v = [g(X...) for g in values]
+        abs(r((v[1],), (v[2], v[3]), (0.0,), Tuple(v[4:7]), X, 0.0, [0.0]))
+    end
+    @test worst ≤ 1.0e-13
 end
