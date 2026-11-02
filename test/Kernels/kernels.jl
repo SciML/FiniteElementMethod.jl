@@ -2,7 +2,7 @@
 # differences, every KernelSpec is concrete, and calls with the driver's slot types do not allocate.
 import FiniteElementMethod
 using FiniteElementMethod: weak_form, emit_kernels, emit_dirichlet, WeakForm, VolumeTerm, FacetTerm, TestSlots,
-    StructuralZero
+    StructuralZero, emit_strong
 using Ferrite: Vec
 using Symbolics
 using Test
@@ -207,4 +207,19 @@ end
             @test isequal(Base.invokelatest(evaluated, call_args...), g(call_args...))
         end
     end
+end
+
+@testset "collocation: the strong residual of case (iii) vanishes at the exact solution" begin
+    # spec §10.1 collocation row; scratch/dauntless/test_testspace.jl (a)
+    ustar = exp(x) * sin(y) / 2
+    r = only(emit_strong(case_iii()))
+    D = (Dx, Dy)
+    fields = [ustar; [expand_derivatives(D[d](ustar)) for d in 1:2]; [expand_derivatives(D[e](D[d](ustar))) for d in 1:2 for e in 1:2]]
+    values = [Symbolics.build_function(f, x, y; expression = Val(false)) for f in fields]
+    worst = maximum(1:200) do _
+        X = (rand(), rand())
+        v = [g(X...) for g in values]
+        abs(r((v[1],), (v[2], v[3]), (0.0,), Tuple(v[4:7]), X, 0.0, [0.0]))
+    end
+    @test worst ≤ 1.0e-13
 end

@@ -47,6 +47,11 @@ function FEMMetadata(space, time, x̄, fields, pieces, pdesys; u0 = Float64[])
     )
 end
 
+function Base.show(io::IO, md::FEMMetadata{hasTime}) where {hasTime}
+    names = join((f.name for f in md.fields), ", ")
+    return print(io, "FEMMetadata(fields = [", names, "], ndofs = ", Ferrite.ndofs(md.space.dh), ", hasTime = ", hasTime === Val(true), ")")
+end
+
 const FEMTimeSolution = SciMLBase.PDETimeSeriesSolution{T, N, S, <:FEMMetadata} where {T, N, S}
 const FEMSteadySolution = SciMLBase.PDENoTimeSolution{T, N, S, <:FEMMetadata} where {T, N, S}
 const FEMSolution = Union{FEMTimeSolution, FEMSteadySolution}
@@ -102,6 +107,15 @@ _dh(md::FEMMetadata) = md.space.dh
 _grid(md::FEMMetadata) = _dh(md).grid
 # Ferrite's FE values default to linear geometry, which breaks on quadratic cells.
 _geometry(md::FEMMetadata) = Ferrite.geometric_interpolation(Ferrite.getcelltype(_grid(md)))
+# Local dofs of field `name` in `cell`, `nothing` where the field has no dofs (outside its region).
+function _cell_range(dh, cell, name)
+    sdh = dh.cell_to_subdofhandler[cell]
+    sdh == 0 && return nothing
+    names = dh.subdofhandlers[sdh].field_names
+    return name in names ? Ferrite.dof_range(dh.subdofhandlers[sdh], name) : nothing
+end
+# The cells where field `name` has dofs.
+_field_cells(dh, name) = sort!([c for sdh in dh.subdofhandlers if name in sdh.field_names for c in sdh.cellset])
 _vertex_coordinates(md, d) = [Ferrite.get_node_coordinate(n)[d] for n in Ferrite.getnodes(_grid(md))]
 
 function _wrap_parts(sol, md::FEMMetadata, states)
@@ -211,9 +225,10 @@ end
 function _facet_normal_flux(md, f::FieldInfo, Γ, U)
     dh = _dh(md)
     grid = _grid(md)
-    r = Ferrite.dof_range(dh, f.name)
     fv = Ferrite.FacetValues(Ferrite.FacetQuadratureRule{Ferrite.getrefshape(f.ip)}(2), f.ip, _geometry(md))
     return map(_sorted_facets(md, Γ)) do fi
+        r = _cell_range(dh, fi[1], f.name)
+        r === nothing && return convert(eltype(U), NaN)
         Ferrite.reinit!(fv, Ferrite.getcoordinates(grid, fi[1]), fi[2])
         u_cell = U[Ferrite.celldofs(dh, fi[1])[r]]
         flux = zero(eltype(U))
@@ -246,7 +261,7 @@ end
 # p-degree tests.
 function _gradient_projector(md, f::FieldInfo)
     qr = Ferrite.QuadratureRule{Ferrite.getrefshape(f.ip)}(2 * _order(f.ip))
-    proj = Ferrite.L2Projector(f.ip, _grid(md); qr_lhs = qr)
+    proj = Ferrite.L2Projector(f.ip, _grid(md); qr_lhs = qr, set = _field_cells(_dh(md), f.name))
     return (; proj, qr, cv = Ferrite.CellValues(qr, f.ip, _geometry(md)))
 end
 
@@ -254,11 +269,10 @@ end
 function _nodal_gradient(md, f::FieldInfo, d, U, projector)
     (; proj, qr, cv) = projector
     dh = _dh(md)
-    r = Ferrite.dof_range(dh, f.name)
     qpvals = [zeros(eltype(U), Ferrite.getnquadpoints(cv)) for _ in 1:Ferrite.getncells(_grid(md))]
-    for cell in Ferrite.CellIterator(dh)
+    for cell in Ferrite.CellIterator(dh, _field_cells(dh, f.name))
         Ferrite.reinit!(cv, cell)
-        u_cell = U[Ferrite.celldofs(cell)[r]]
+        u_cell = U[Ferrite.celldofs(cell)[_cell_range(dh, Ferrite.cellid(cell), f.name)]]
         for q in 1:Ferrite.getnquadpoints(cv)
             qpvals[Ferrite.cellid(cell)][q] = Ferrite.function_gradient(cv, q, u_cell)[d]
         end
@@ -293,7 +307,7 @@ function _key_error(A, sym)
             "$sym is not a key of this solution. Index with an independent variable $(A.ivs), " *
                 "a dependent variable $(A.dvs), a trace u(t, Γ) on a boundary piece, or a first " *
                 "spatial derivative such as Differential(x)(u(t, x, y)); higher derivatives are not " *
-                "accepted. Facet normal fluxes come from normal_flux(sol, dv, Γ), and the dof " *
+                "accepted. Facet normal fluxes come from sol[Dn_Γ(u(t, Γ))] or normal_flux(sol, dv, Γ), and the dof " *
                 "coefficients from sol.original_sol[<array unknown>]."
         )
     )
@@ -309,6 +323,13 @@ function Base.getindex(A::FEMSolution, sym::Num)
     if g !== nothing
         projector = _gradient_projector(md, g[1])
         return _stack(A, [_nodal_gradient(md, g..., U, projector) for U in _states(A)])
+    end
+    if SymbolicUtils.iscall(s) && _is_normal_derivative(SymbolicUtils.operation(s))
+        trace = Symbolics.unwrap(only(SymbolicUtils.arguments(s)))
+        f = _fieldinfo(md, trace)
+        Γ = _piece_arg(trace)
+        (f === nothing || !isequal(Γ, SymbolicUtils.operation(s).piece)) && _key_error(A, sym)
+        return normal_flux(A, f.dv, Γ)
     end
     f = _fieldinfo(md, s)
     f === nothing && _key_error(A, sym)
@@ -329,11 +350,12 @@ _axis(a) = a isa AbstractVector ? collect(a) : [a]
 
 function _point_gradient(ph, md, f, d, U)
     dh = _dh(md)
-    r = Ferrite.dof_range(dh, f.name)
     pv = Ferrite.PointValues(f.ip, _geometry(md))
     out = fill(convert(eltype(U), NaN), length(ph.cells))
     for (i, loc) in enumerate(Ferrite.PointIterator(ph))
         loc === nothing && continue
+        r = _cell_range(dh, Ferrite.cellid(loc), f.name)
+        r === nothing && continue
         Ferrite.reinit!(pv, loc)
         out[i] = Ferrite.function_gradient(pv, 1, U[Ferrite.celldofs(dh, Ferrite.cellid(loc))[r]])[d]
     end
