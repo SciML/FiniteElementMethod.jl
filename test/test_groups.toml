@@ -1,13 +1,16 @@
 [Core]
 versions = ["lts", "1", "pre"]
 
+[Solution]
+versions = ["lts", "1", "pre"]
+
 [QA]
 versions = ["lts", "1"]
 
-[DAE]
+[Space]
 versions = ["lts", "1", "pre"]
 
-[Space]
+[DAE]
 versions = ["lts", "1", "pre"]
 
 [WeakForm]
@@ -19,8 +22,23 @@ versions = ["lts", "1", "pre"]
 [Assembly]
 versions = ["lts", "1", "pre"]
 
+[Frontend]
+versions = ["lts", "1", "pre"]
+
 [Integration]
+versions = ["lts", "1", "pre"]
+
+[Convergence]
 versions = ["lts", "1", "pre"]
 
 [Perf]
 versions = ["1"]
+
+# Opt-in heavy groups with their own test/<Group>/Project.toml (MethodOfLines, PDESystemLibrary).
+[MOLComparison]
+in_all = false
+versions = ["lts", "1"]
+
+[Library]
+in_all = false
+versions = ["lts", "1"]

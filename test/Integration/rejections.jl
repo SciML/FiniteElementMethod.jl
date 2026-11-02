@@ -97,6 +97,7 @@ end
     Ω = mesh_domain(setup; names = [:left, :right, :bottom, :top, :inlet])
     inlet = PDEBase.boundarypiece(Ω, :inlet)
     c = run_chain([Dt(U) ~ Dx(Dx(U)) + Dy(Dy(U))], [PDEBase.NormalDerivative(inlet)(u(t, inlet)) ~ 1.0]; Ω)
-    @test_throws "no facet set is given for piece inlet" assemble_linear(setup.ctx, c.kernels, [0.0])
-    @test_throws "no facet set named" AssemblyContext(setup.dh, [:u], setup.cv, setup.fv, Dict("inlet" => "inlet"))
+    # FEM-owned errors: exact type and message.
+    @test_throws ArgumentError("no facet set is given for piece inlet: add it to the pieces of the AssemblyContext") assemble_linear(setup.ctx, c.kernels, [0.0])
+    @test_throws ArgumentError("piece inlet: the grid has no facet set named \"inlet\"") AssemblyContext(setup.dh, [:u], setup.cv, setup.fv, Dict("inlet" => "inlet"))
 end

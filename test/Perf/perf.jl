@@ -3,7 +3,7 @@
 # Timings are the minimum of several runs after warm-up, and the gates are ratios, so a busy box slows both sides.
 include(joinpath(@__DIR__, "..", "shared", "references.jl"))
 using AllocCheck: check_allocs
-using FiniteElementMethod: assemble_linear!, assemble_nonlinear!, LinearOp, NonlinearOp, _split, _kernels!,
+using FiniteElementMethod: NonlinearOperator, residual!, assemble_linear!, assemble_nonlinear!, LinearOp, NonlinearOp, _split, _kernels!,
     _facet_groups!, _start_cell!
 
 const TIME_GATE = 3.0     # spec §6.6 item 1: within 3× of the hand-written loop
@@ -201,7 +201,7 @@ end
     # reports although they only grow on the first cell.
     ctx = SETUP.ctx
     M, K, F = operators(SETUP)
-    ne = getnbasefunctions(ctx.cv)
+    ne = getnbasefunctions(ctx.cellvalues.u)
     xs = getcoordinates(first(CellIterator(SETUP.dh)))
     ranges = (dof_range(SETUP.dh, :u),)
     lop = LinearOp(start_assemble(M), start_assemble(K), F, zeros(ne, ne), zeros(ne, ne), zeros(ne))
@@ -213,8 +213,9 @@ end
         volume, groups = _split(ctx, kernels, kinds)
         counts = zeros(Int, length(groups))
         fi = FacetIndex(1, 1)
-        @test isempty(check_allocs(_kernels!, map(typeof, (op, volume, ctx.cv, xs, ranges, PV, 0.0))))
-        @test isempty(check_allocs(_facet_groups!, map(typeof, (op, groups, counts, 1, fi, ctx.fv, xs, ranges, PV, 0.0))))
+        cvs, fvs = values(ctx.cellvalues), values(ctx.facetvalues)
+        @test isempty(check_allocs(_kernels!, map(typeof, (op, volume, cvs, xs, ranges, PV, 0.0))))
+        @test isempty(check_allocs(_facet_groups!, map(typeof, (op, groups, counts, 1, fi, fvs, fvs, xs, ranges, PV, 0.0))))
         @test isempty(check_allocs(_start_cell!, map(typeof, (op, celldofs(first(CellIterator(SETUP.dh)))))))
     end
 end
@@ -250,4 +251,53 @@ const CONTRACTION_GATE = 1.0
         @info "$name P2 on 30×30" coeffs_ms = 1.0e3tf f_ms = 1.0e3tp ratio = tf / tp
         @test tf / tp ≤ CONTRACTION_GATE skip = INSTRUMENTED
     end
+end
+
+# Kernels no other testset generates, so their first calls compile the driver for new kernel types.
+function first_call_kernels()
+    linear = chain(
+        [Dt(U) ~ Dx(k * Dx(U)) + Dy(k * Dy(U)) + x^2 + 2], BC[]; depvars = [U], t, sivs = [x, y], params = [k, α, β, h]
+    ).kernels
+    nonlinear = chain(
+        [0 ~ Dx((2 + U^2) * Dx(U)) + Dy((2 + U^2) * Dy(U)) + 1], BC[]; depvars = [U], t, sivs = [x, y]
+    ).kernels
+    return linear, nonlinear
+end
+
+@testset "first call against warm time, assemble_linear! and residual!" begin
+    linear, nonlinear = first_call_kernels()
+    M, K, F = operators(SETUP)
+    op = NonlinearOperator(SETUP.ctx, nonlinear)
+    u, r = rand(Xoshiro(2), ndofs(SETUP.dh)), zeros(ndofs(SETUP.dh))
+    assemble() = assemble_linear!(M, K, F, SETUP.ctx, linear, PV)
+    residual() = residual!(r, op, u, P0, 0.0)
+    first_linear, first_residual = @elapsed(assemble()), @elapsed(residual())
+    warm_linear, warm_residual = best_time(assemble), best_time(residual)
+    @info "first call against warm on 100×100 P1 (s)" first_linear warm_linear first_residual warm_residual
+    @test first_linear ≤ 60.0 && first_residual ≤ 60.0      # loose: catches a codegen blow-up, not drift
+end
+
+# Time to first assembly in a fresh process, after `using FiniteElementMethod`, for kernels the precompile
+# workload did not generate (`workload_chain` with another `k` on another grid). Both modes set PrecompileTools'
+# `precompile_workload` preference explicitly in a temporary environment placed FIRST on the load path: preferences
+# from earlier environments take precedence, so a value in the active project's LocalPreferences.toml cannot
+# override either mode. The two values precompile separate caches.
+function time_to_first_assembly(; workload::Bool)
+    script = """
+    using FiniteElementMethod
+    print(@elapsed FiniteElementMethod.workload_chain(3.7; nel = 4))
+    """
+    return mktempdir() do dir
+        write(joinpath(dir, "Project.toml"), "[extras]\nFiniteElementMethod = \"e08948db-0ae8-498a-9b98-73fc7f237ce3\"\n")
+        write(joinpath(dir, "LocalPreferences.toml"), "[FiniteElementMethod]\nprecompile_workload = $workload\n")
+        cmd = `$(Base.julia_cmd()) --startup-file=no --project=$(Base.active_project()) -e $script`
+        return parse(Float64, readchomp(addenv(cmd, "JULIA_LOAD_PATH" => "$dir:@:@stdlib")))
+    end
+end
+
+@testset "cold latency: time to first assembly with and without the precompile workload" begin
+    with, without = time_to_first_assembly(; workload = true), time_to_first_assembly(; workload = false)
+    @info "time to first assembly in a fresh process (s)" with without ratio = with / without
+    @test with ≤ 0.5 * without        # measured 0.51 s against 14.4 s (0.04); slack for a busy box
+    @test with ≤ 10.0
 end
