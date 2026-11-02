@@ -84,7 +84,7 @@ through `PDEBase.StrongForm.pair_equations`.
 Parameters are substituted by the values given in the `PDESystem` when the operators are
 assembled, and are parameters of the problem at those values. The operators are not
 reassembled for new values: after `remake(prob; p = [k => 3.0])` the solve throws an
-`ArgumentError` naming `k`; build a new problem with `DAEProblem(pdesys, disc)` instead.
+`ArgumentError` naming `k`; build a new problem with `discretize(pdesys, disc)` instead.
 """
 struct FEMDiscretization{T} <: PDEBase.AbstractMeshDiscretization
     domain::PDEBase.MeshDomain

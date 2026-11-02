@@ -458,7 +458,7 @@ function assembled_parameter_check(sys, parameters)
         for (q, a, c) in zip(syms, assembled, current)
             isequal(a, c) || throw(
                 ArgumentError(
-                    "parameter $q was $a when the operators were assembled but is $c in this problem; operators are not reassembled for new parameter values, so build a new problem with DAEProblem(pdesys, disc)"
+                    "parameter $q was $a when the operators were assembled but is $c in this problem; operators are not reassembled for new parameter values, so build a new problem with discretize(pdesys, disc)"
                 )
             )
         end
