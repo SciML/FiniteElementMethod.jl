@@ -77,25 +77,20 @@ end
 
 @testset "(i) on mesh pieces: NormalDerivative with the symbolic normal" begin
     # The same conditions as (i), written on the pieces of a MeshDomain over the grid's facet sets with
-    # NormalDerivative, so PDEBase matches them against k∇u·N with the symbolic normal N. Needs MeshDomain pieces and
-    # NormalDerivative slotting (PDEBase#154, the M0 stack); broken without them, and on the seam path.
-    if PDEBASE_MESH
-        Ω = mesh_domain(SETUP)
-        left, right, top = (PDEBase.boundarypiece(Ω, name) for name in (:left, :right, :top))
-        Dn(piece) = PDEBase.NormalDerivative(piece)
-        c = chain(
-            [Dt(U) ~ Dx(k * Dx(U)) + Dy(k * Dy(U)) + x * y + 1],
-            [u(t, left) ~ 0.1 * y, Dn(right)(u(t, right)) ~ h, k * Dn(top)(u(t, top)) + α * u(t, top) ~ β];
-            depvars = [U], t, sivs = [x, y], params = PARAMS, Ω
-        )
-        @test [b.piece for b in c.an.natural] == ["right", "top"]
-        check_linear(
-            SETUP, c; block = (e, b, X) -> (; zero_block(2)..., κ = iso(PV[1]), m = 1.0),
-            facets = [("right", 1, 1, X -> 0.0, X -> PV[1] * PV[4]), ROBIN_REF]
-        )
-    else
-        @test_broken PDEBASE_MESH
-    end
+    # NormalDerivative, so PDEBase matches them against k∇u·N with the symbolic normal N.
+    Ω = mesh_domain(SETUP)
+    left, right, top = (PDEBase.boundarypiece(Ω, name) for name in (:left, :right, :top))
+    Dn(piece) = PDEBase.NormalDerivative(piece)
+    c = chain(
+        [Dt(U) ~ Dx(k * Dx(U)) + Dy(k * Dy(U)) + x * y + 1],
+        [u(t, left) ~ 0.1 * y, Dn(right)(u(t, right)) ~ h, k * Dn(top)(u(t, top)) + α * u(t, top) ~ β];
+        depvars = [U], t, sivs = [x, y], params = PARAMS, Ω
+    )
+    @test [b.piece for b in c.an.natural] == ["right", "top"]
+    check_linear(
+        SETUP, c; block = (e, b, X) -> (; zero_block(2)..., κ = iso(PV[1]), m = 1.0),
+        facets = [("right", 1, 1, X -> 0.0, X -> PV[1] * PV[4]), ROBIN_REF]
+    )
 end
 
 @testset "(ii) variable isotropic diffusion k = 1 + x²y" begin
@@ -162,7 +157,7 @@ end
 
 @testset "Dirichlet: constant and time-dependent, at two times" begin
     c = scalar_chain(Dt(U) ~ Dx(Dx(U)) + Dy(Dy(U)), [BC("left", U ~ k), BC("bottom", U ~ sin(t) * x + h)])
-    # Both paths emit conditions in input order; the corner dof both pieces share takes the value of the Dirichlet
+    # PDEBase emits conditions in input order; the corner dof both pieces share takes the value of the Dirichlet
     # the handler applies last, so the reference uses the same order.
     ref = [("left", :u, (X, t) -> PV[1]), ("bottom", :u, (X, t) -> sin(t) * X[1] + PV[4])]
     @test [(piece, field) for (piece, field, _) in c.dirichlet] == [("left", 1), ("bottom", 1)]
@@ -233,10 +228,9 @@ end
     check_operators(Aw, Kw, Mw, Fw; tol = TOL)
     @test norm(Aw.K - Aw.K') ≤ TOL * norm(Aw.K)
     @test norm(Ap.K - Ap.K') > 1.0e-2 * norm(Ap.K)
-    # Spec §5.1: ProductRule warns exactly once when it generates a correction term, Weighted never. The warning
-    # belongs to PDEBase's analyse; the seam does not emit it, so the first check is broken on the seam path.
+    # Spec §5.1: ProductRule warns exactly once when it generates a correction term, Weighted never.
     warnings(f) = count(log -> log.level == Base.CoreLogging.Warn, first(Test.collect_test_logs(f)))
-    @test_pdebase warnings(() -> chain([eq], bcs; depvars = [Ur], t, sivs = [r], domain, ibp = Dict(1 => ProductRule()))) == 1
+    @test warnings(() -> chain([eq], bcs; depvars = [Ur], t, sivs = [r], domain, ibp = Dict(1 => ProductRule()))) == 1
     @test warnings(() -> chain([eq], bcs; depvars = [Ur], t, sivs = [r], domain, ibp = Dict(1 => Weighted(r^2)))) == 0
 end
 
@@ -257,11 +251,11 @@ end
     @test isequal(facet_terms(paired.wf), facet_terms(plain.wf))
     A, B = (assemble_linear(SETUP.ctx, c.kernels, PV) for c in (paired, plain))
     @test A.K == B.K && A.M == B.M && A.F == B.F
-    # The same pairing written as a trace equation, classified by PDEBase's stage d (seam path: broken).
+    # The same pairing written as a trace equation, classified by PDEBase's stage d.
     function traced()
         c = chain([eq], [bcs; u(t, -1.0, y) ~ u(t, 1.0, y)]; depvars = [U], t, sivs = [x, y], params = PARAMS)
         return fields(c.wf.analysis.periodic) == [("left", "right", 1, 2.0)] &&
             isequal(terms(c.wf), terms(plain.wf)) && isequal(facet_terms(c.wf), facet_terms(plain.wf))
     end
-    @test_pdebase PDEBASE_PATH && traced()
+    @test traced()
 end
