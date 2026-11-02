@@ -76,13 +76,15 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
     _check_domains(pdesys, disc)
     dvs = PDEBase.depvars(v)
     ops = [_field_op(u) for u in dvs]
-    unknown = [k for k in keys(disc.spaces) if !any(op -> isequal(op, k), ops)]
-    isempty(unknown) || throw(
-        ArgumentError(
-            "`spaces` has keys that are not dependent variables of the system: " *
-                "$(join(sort(string.(unknown)), ", ")); the dependent variables are $(join(sort(string.(dvs)), ", "))"
+    for (kw, dict) in (("spaces", disc.spaces), ("regions", disc.regions))
+        unknown = [k for k in keys(dict) if !any(op -> isequal(op, k), ops)]
+        isempty(unknown) || throw(
+            ArgumentError(
+                "`$kw` has keys that are not dependent variables of the system: " *
+                    "$(join(sort(string.(unknown)), ", ")); the dependent variables are $(join(sort(string.(dvs)), ", "))"
+            )
         )
-    )
+    end
     t = v.time
     for u in dvs
         args = SymbolicUtils.arguments(unwrap(u))
@@ -147,6 +149,24 @@ function _paired(an, eqs, ctx, disc)
     )
 end
 
+# τ and b are compiled into the kernels as functions of the coordinates, time and hK only, so they cannot name a
+# parameter, whose value the kernels would not see.
+function _check_supg(test_space, an, ctx)
+    test = TestSlots(an.dim)
+    for e in eachindex(an.flux)
+        weight = test_weight(test_space, an, e, test)
+        weight === nothing && continue
+        τ, bW = weight
+        any(ex -> _depends(unwrap(Num(ex)), [ctx.params; an.slots.P]), (τ, bW)) && throw(
+            ArgumentError(
+                "SUPG: equation $e has τ = $τ and b·∇v = $bW, which reference parameters of the PDESystem; " *
+                    "τ and b must be numbers or expressions in the coordinates, time and hK, so write the parameter's value"
+            )
+        )
+    end
+    return nothing
+end
+
 function _check_linear(wf)
     for term in vcat(wf.volume, wf.facet)
         term.kind === :nonlinear &&
@@ -173,14 +193,38 @@ function _space(disc, ctx, analysis, dirichlet, pvals, t0)
     shape = Ferrite.getrefshape(Ferrite.getcelltype(grid))
     names = Symbol[nameof(op) for op in ctx.ops]
     ips = [get(disc.spaces, op, Ferrite.Lagrange{shape, 1}()) for op in ctx.ops]
-    allequal(ips) || throw(ArgumentError("fields with different interpolations land in M4; got $(join(ips, ", "))"))
-    Ferrite.getrefshape(first(ips)) == shape ||
-        throw(ArgumentError("the interpolation $(first(ips)) is not on the reference shape $shape of the mesh cells"))
+    for ip in ips
+        Ferrite.getrefshape(ip) == shape ||
+            throw(ArgumentError("the interpolation $ip is not on the reference shape $shape of the mesh cells"))
+    end
     bcs = [
         (names[bc.field], String(bc.piece.name), (x, t) -> g(x, t, pvals))
             for (bc, (_, _, g)) in zip(analysis.essential, dirichlet)
     ]
-    return FEMSpace(grid, names .=> ips; dirichlet = bcs, quadrature = disc.quadrature, t0), names, ips
+    regions = Dict(names[f] => String(disc.regions[op].name) for (f, op) in enumerate(ctx.ops) if haskey(disc.regions, op))
+    _check_region_pieces(grid, regions, names, analysis)
+    space = FEMSpace(
+        grid, names .=> ips; dirichlet = bcs, quadrature = disc.quadrature, t0, regions,
+        hessians = disc.test_space isa SUPG
+    )
+    return space, names, ips
+end
+
+# A condition on a field restricted to a region must lie on the region: Ferrite would otherwise drop the facets
+# outside it without a word.
+function _check_region_pieces(grid, regions, names, analysis)
+    conditions = [[(bc.field, bc.piece) for bc in analysis.essential]; [(bc.eq, bc.piece) for bc in analysis.natural]]
+    for (f, Γ) in conditions
+        haskey(regions, names[f]) || continue
+        cells = Ferrite.getcellset(grid, regions[names[f]])
+        all(fi -> fi[1] in cells, Ferrite.getfacetset(grid, String(Γ.name))) || throw(
+            ArgumentError(
+                "the condition on $(names[f]) on $Γ has facets outside the region :$(regions[names[f]]) of $(names[f]); " *
+                    "a field on a region takes conditions only on pieces whose facets belong to the region's cells"
+            )
+        )
+    end
+    return nothing
 end
 
 # Nodal coordinates of every dof; Lagrange interpolation of `x_d` gives them exactly.
@@ -237,7 +281,10 @@ end
 
 function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
     kernels = emit_kernels(wf)
-    timedep = [term.kind === :source && term.timedep for term in vcat(wf.volume, wf.facet)]
+    # `emit_kernels` sums the terms sharing an equation, kind and piece, so a kernel is dynamic when any of its terms is.
+    terms = [[(t, nothing) for t in wf.volume]; [(t, t.piece) for t in wf.facet]]
+    dynamic_keys = Set((t.eq, t.kind, piece) for (t, piece) in terms if t.kind === :source && t.timedep)
+    timedep = [(eq, kind, piece) in dynamic_keys for (eq, kind, piece, _) in fused_terms(wf)]
     static = Tuple(k for (k, td) in zip(kernels, timedep) if !td)
     dynamic = Tuple(k for (k, td) in zip(kernels, timedep) if td)
     pieces = Dict(bc.piece => space.pieces[bc.piece.name] for bc in wf.analysis.natural)
@@ -303,7 +350,8 @@ function _lower(pdesys, disc::FEMDiscretization)
             Γ in covered || @warn "boundary piece $Γ has no condition, so it gets the natural zero-flux condition"
         end
     end
-    wf = weak_form(an)
+    disc.test_space isa SUPG && _check_supg(disc.test_space, an, ctx)
+    wf = weak_form(an; test_space = disc.test_space)
     steady = disc.time === nothing
     _check_linear(wf)
     pvals = _parameter_values(sys, ctx)
@@ -358,15 +406,16 @@ function _steady_problem(parts; kwargs...)
 end
 
 """
-    DAEProblem(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
+    discretize(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
 
 Discretize `pdesys` with `disc` and return the `DAEProblem` `M du + K u = F(t)` of the
 Galerkin operators, with Dirichlet rows `u_d = g_d(t)` as algebraic equations (or, with
 `dirichlet = :eliminate`, restricted to the free dofs), a sparse
 analytic Jacobian and the `FEMMetadata` as its `problem_type`, so `solve` returns a
 `PDETimeSeriesSolution`. Nothing calls `mtkcompile`; anything this milestone cannot
-discretize raises. Keywords are passed to the `DAEProblem` after `disc.kwargs`, so a keyword
-given here wins; the keywords the discretization sets (`iv`, `unknowns`, `du0`, `coordinate`,
+discretize raises. A `disc` without a time variable lowers instead to the steady
+`NonlinearProblem` documented under `NonlinearProblem(pdesys, disc)`. Keywords are passed to
+the `DAEProblem` after `disc.kwargs`, so a keyword given here wins; the keywords the discretization sets (`iv`, `unknowns`, `du0`, `coordinate`,
 `name`) are rejected.
 
 The Dirichlet rows are linear with identity Jacobian rows, so a Newton step with a current
@@ -375,20 +424,24 @@ step-size changes and then rescale the Newton step, which leaves these rows off 
 solver tolerance; `DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0))` refreshes it on every step
 size change and holds `u(t, Γ) ~ g(t)` to round-off.
 """
-function SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
+function SciMLBase.discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
     _check_reserved(kwargs)
-    disc.time === nothing && throw(
-        ArgumentError(
-            "the FEMDiscretization has no time variable, so it lowers to a NonlinearProblem, not a DAEProblem; " *
-                "call discretize(pdesys, disc) or NonlinearProblem(pdesys, disc)"
-        )
-    )
     parts = _lower(pdesys, disc)
+    disc.time === nothing && return _steady_problem(parts; disc.kwargs..., kwargs...)
     return numeric_dae_problem(
         parts.ops, parts.u0, parts.tspan, parts.md;
         iv = parts.iv, unknowns = parts.unknowns, name = parts.name, disc.kwargs..., kwargs...
     )
 end
+
+SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...) =
+    disc.time === nothing ?
+    throw(
+        ArgumentError(
+            "the FEMDiscretization has no time variable, so it lowers to a NonlinearProblem, not a DAEProblem; " *
+                "call discretize(pdesys, disc) or NonlinearProblem(pdesys, disc)"
+        )
+    ) : SciMLBase.discretize(pdesys, disc; kwargs...)
 
 """
     NonlinearProblem(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
@@ -408,18 +461,14 @@ Keywords are passed to the `NonlinearProblem` after `disc.kwargs`; the keywords
 `iv`, `unknowns`, `du0`, `coordinate` and `name` are rejected, as for the `DAEProblem`.
 """
 function SciMLBase.NonlinearProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
-    _check_reserved(kwargs)
     disc.time === nothing || throw(
         ArgumentError(
             "the FEMDiscretization has the time variable $(disc.time), so it lowers to a DAEProblem; " *
                 "for a steady problem write FEMDiscretization(Ω) without a time variable"
         )
     )
-    return _steady_problem(_lower(pdesys, disc); disc.kwargs..., kwargs...)
+    return SciMLBase.discretize(pdesys, disc; kwargs...)
 end
-
-SciMLBase.discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...) =
-    disc.time === nothing ? NonlinearProblem(pdesys, disc; kwargs...) : DAEProblem(pdesys, disc; kwargs...)
 
 # `(sys, tspan)`, the shape PDEBase and MethodOfLines return.
 function SciMLBase.symbolic_discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
@@ -429,6 +478,6 @@ function SciMLBase.symbolic_discretize(pdesys::ModelingToolkit.PDESystem, disc::
                 "call discretize(pdesys, disc) for its NonlinearProblem"
         )
     )
-    prob = DAEProblem(pdesys, disc)
+    prob = SciMLBase.discretize(pdesys, disc)
     return prob.f.sys, prob.tspan
 end
