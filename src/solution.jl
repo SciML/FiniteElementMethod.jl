@@ -225,7 +225,10 @@ end
 function _facet_normal_flux(md, f::FieldInfo, Γ, U)
     dh = _dh(md)
     grid = _grid(md)
-    fv = Ferrite.FacetValues(Ferrite.FacetQuadratureRule{Ferrite.getrefshape(f.ip)}(2), f.ip, _geometry(md))
+    geometry = _geometry(md)
+    # The order grows with both interpolations: on a curved facet the integrand is rational in the facet coordinate.
+    order = 2 * (_order(f.ip) + _order(geometry))
+    fv = Ferrite.FacetValues(Ferrite.FacetQuadratureRule{Ferrite.getrefshape(f.ip)}(order), f.ip, geometry)
     return map(_sorted_facets(md, Γ)) do fi
         r = _cell_range(dh, fi[1], f.name)
         r === nothing && return convert(eltype(U), NaN)
