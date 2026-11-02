@@ -1,8 +1,7 @@
 # API
 
 These are the internal building blocks of the Ferrite backend. The PDESystem front end is
-documented on the Discretization page, which is built when the installed PDEBase has the
-mesh-discretization layer.
+documented on the Discretization page.
 
 ## Meshes
 
@@ -65,8 +64,6 @@ FiniteElementMethod.assemble_linear
 FiniteElementMethod.assemble_nonlinear
 FiniteElementMethod._split
 FiniteElementMethod.assemble_linear!
-FiniteElementMethod.AbstractTestSpace
-FiniteElementMethod.Galerkin
 FiniteElementMethod.SUPG
 FiniteElementMethod.emit_strong
 FiniteElementMethod.compile_coeffs

@@ -28,7 +28,7 @@ function fem_solve(
     )
     domains = [coords ∈ Ω, t ∈ Interval(tspan...)]
     @named pdesys = PDESystem(eqs, bcs, domains, [t, coords...], dvs, ps)
-    prob = DAEProblem(pdesys, FEMDiscretization(Ω, t; disc_kwargs...))
+    prob = discretize(pdesys, FEMDiscretization(Ω, t; disc_kwargs...))
     return solve(prob, alg; solve_kwargs...), prob
 end
 
