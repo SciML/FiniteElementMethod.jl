@@ -60,18 +60,28 @@ struct WeakForm{A}
 end
 
 """
-    KernelSpec(eq, kind, piece, f, tangent)
+    KernelSpec(eq, kind, piece, f, tangent, coeffs = nothing)
 
 Quadrature-point kernel `f(U, G, Ud, V, W, X, T, N, P)` of equation `eq`; `piece` is `nothing` for volume
 kernels and `tangent` is `nothing` unless `kind === :nonlinear`.
+
+`coeffs`, for the linear kinds, lets the driver contract coefficients with the shape functions once per quadrature
+point instead of calling `f` per test and trial function; `f` may then be `nothing`. Called as
+`coeffs(X, T, N, P)`, it returns a tuple indexed by `(s - 1) * (1 + dim) + w` for the test slots `w` in `[V; W]`:
+- `:source`: `∂I/∂w` (one trial "slot");
+- `:bilinear`: `∂²I/∂s∂w` for the trial slots `s` in `[U; G]`;
+- `:mass`: `∂²I/∂s∂w` for the trial slots `s` in `Ud`.
+Entries may be `StructuralZero()`, which the driver drops at compile time.
 """
-struct KernelSpec{F, T}
+struct KernelSpec{F, T, C}
     eq::Int
     kind::Symbol
     piece::Any
     f::F
     tangent::T
+    coeffs::C
 end
+KernelSpec(eq, kind, piece, f, tangent) = KernelSpec(eq, kind, piece, f, tangent, nothing)
 
 addterms(ex) = SU.iscall(ex) && SU.operation(ex) === (+) ? reduce(vcat, addterms.(SU.arguments(ex))) : [ex]
 

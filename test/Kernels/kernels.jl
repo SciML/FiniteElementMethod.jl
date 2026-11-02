@@ -1,6 +1,7 @@
 # Stage f (spec §5.1, §5.2): kernels evaluate their symbolic integrands, tangents match central
 # differences, every KernelSpec is concrete, and calls with the driver's slot types do not allocate.
-using FiniteElementMethod: weak_form, emit_kernels, emit_dirichlet, WeakForm, VolumeTerm, FacetTerm, TestSlots
+using FiniteElementMethod: weak_form, emit_kernels, emit_dirichlet, WeakForm, VolumeTerm, FacetTerm, TestSlots,
+    StructuralZero
 using Ferrite: Vec
 using Symbolics
 using Test
@@ -30,6 +31,12 @@ function case_iii()
     bcs = [BC("left", U ~ ustar), BC("right", Dx(U) ~ expand_derivatives(Dx(ustar)), RIGHT)]
     return analyse([eq], bcs; depvars = [U], t, sivs = [x, y])
 end
+function case_iib()
+    axy = 1 + x^2 + y
+    eq = Dt(U) ~ axy * (Dx(Dx(U)) + Dy(Dy(U))) - 0.7 * Dx(U) - 0.3 * Dy(U) - 2.5 * U + x * y + 1
+    bcs = [BC("left", U ~ 0.1 * y), BC("right", Dx(U) ~ h, RIGHT), BC("top", axy * Dy(U) + α * U ~ β, TOP)]
+    return analyse([eq], bcs; depvars = [U], t, sivs = [x, y], params = [k, α, β, h])
+end
 function two_field()
     eqs = [
         Dt(U) ~ Dx(Du * Dx(U) + χ * Dx(Wf)) + Dy(Du * Dy(U) + χ * Dy(Wf)) + a - U + U^2 * Wf,
@@ -57,11 +64,17 @@ function symbolic_value(ex, wf, args)
     return Float64(Symbolics.value(substitute(ex, vals; fold = Val(true))))
 end
 setslot(args, i, j, δ) = Base.setindex(args, Base.setindex(args[i], args[i][j] + δ, j), i)
-allocations(f, args) = (f(args...); @allocated f(args...))
+# One typed barrier for every arity: the call is specialised on `F` and the argument types, so `@allocated`
+# sees no boxing of the arguments (needed on Julia 1.10).
+function measure_alloc(f::F, args::Vararg{Any, N}) where {F, N}
+    f(args...)
+    return @allocated f(args...)
+end
+allocations(f, args) = measure_alloc(f, args...)
 
 @testset "kernels of case $name" for (name, case) in CASES
     wf = weak_form(case())
-    kernels = emit_kernels(wf)
+    kernels = emit_kernels(wf; coeffs = false)
     @test kernels isa Tuple && isconcretetype(typeof(kernels))
     @test length(kernels) == length(wf.volume) + length(wf.facet)
     @test all(kernel -> isconcretetype(typeof(kernel)), kernels)
@@ -90,7 +103,7 @@ end
 @testset "kernels accept plain vectors for array slots" begin
     wf = weak_form(two_field())
     args = random_args(wf.analysis)
-    for kernel in emit_kernels(wf)
+    for kernel in emit_kernels(wf; coeffs = false)
         vecargs = map(a -> a isa Number ? a : collect(a), args)
         @test kernel.f(vecargs...) ≈ kernel.f(args...)
         kernel.tangent === nothing || @test collect(kernel.tangent(vecargs...)) ≈ collect(kernel.tangent(args...))
@@ -122,4 +135,48 @@ end
     @test_throws "register the derivative for opaque" emit_kernels(WeakForm((; slots = s), test, [stray], FacetTerm[]))
     compound = VolumeTerm(1, :bilinear, Differential(s.U[1])(s.U[1] * opaque(s.U[1])) * test.V, false, false)
     @test_throws "register the derivative for opaque" emit_kernels(WeakForm((; slots = s), test, [compound], FacetTerm[]))
+end
+
+# The coefficient form (KernelSpec docstring): with w = [V; W] and trial slots s ([U; G] for :bilinear, Ud for
+# :mass, none for :source), I = Σ c[(s - 1) * (1 + dim) + w] · s · w.
+function from_coeffs(kernel, args)
+    U, G, Ud, V, W, X, T, N, P = args
+    c = kernel.coeffs(X, T, N, P)
+    w = (V, Tuple(W)...)
+    trial = kernel.kind === :source ? (1.0,) : kernel.kind === :mass ? Ud : (U..., G...)
+    return sum(number(c[(s - 1) * length(w) + j]) * trial[s] * w[j] for s in eachindex(trial) for j in eachindex(w))
+end
+number(x) = x isa StructuralZero ? 0.0 : x
+
+@testset "coefficient form of case $name" for (name, case) in (CASES..., "(ii-b)" => case_iib)
+    wf = weak_form(case())
+    kernels = emit_kernels(wf)
+    # every linear kernel of these cases is contracted, so a change that sends one to the `f` path fails here
+    @test all(kernels) do kernel
+        kernel.kind === :nonlinear ? (kernel.coeffs === nothing && kernel.f !== nothing) :
+            (kernel.coeffs !== nothing && kernel.f === nothing)
+    end
+    plain = emit_kernels(wf; coeffs = false)
+    for (kernel, reference) in zip(kernels, plain)
+        kernel.coeffs === nothing && continue
+        args = random_args(wf.analysis)
+        X, T, N, P = args[6:9]
+        @test isapprox(from_coeffs(kernel, args), reference.f(args...); rtol = 1.0e-12)
+        @test (@inferred kernel.coeffs(X, T, N, P)) isa Tuple
+        @test measure_alloc(kernel.coeffs, X, T, N, P) == 0
+    end
+end
+
+@testset "one kernel per equation, kind and piece" begin
+    # two natural conditions of equation 1 on `right` are summed into one facet kernel per kind
+    an = analyse(
+        [Dt(U) ~ Dx(k * Dx(U)) + Dy(k * Dy(U))], [BC("right", Dx(U) ~ h, RIGHT), BC("right", Dx(U) + α * U ~ β, RIGHT)];
+        depvars = [U], t, sivs = [x, y], params = [k, α, β, h]
+    )
+    wf = weak_form(an)
+    kernels = emit_kernels(wf)
+    keys = [(kernel.eq, kernel.kind, kernel.piece) for kernel in kernels]
+    @test allunique(keys)
+    @test Set(keys) == Set([(term.eq, term.kind, nothing) for term in wf.volume]) ∪ Set([(term.eq, term.kind, term.piece) for term in wf.facet])
+    @test length(wf.facet) > length(filter(kernel -> kernel.piece !== nothing, kernels))
 end
