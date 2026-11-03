@@ -44,6 +44,9 @@ FiniteElementMethod.FEMInterpolant
 piece_nodes
 normal_flux
 write_vtk
+facet_dofs
+dof_coordinates
+cell_dofs
 ```
 
 ## Weak form, kernels and assembly

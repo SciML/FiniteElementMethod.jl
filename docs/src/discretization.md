@@ -12,6 +12,7 @@ FiniteElementMethod.AbstractTestSpace
 FiniteElementMethod.Galerkin
 FiniteElementMethod.SciMLBase.symbolic_discretize(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
 FiniteElementMethod.assemble_sources!
+FiniteElementMethod.operators
 ```
 
 `discretize(pdesys, disc)` returns the `DAEProblem` of the discretization (the `NonlinearProblem` of a steady one, see [Steady problems](@ref)). `symbolic_discretize(pdesys, disc)`
