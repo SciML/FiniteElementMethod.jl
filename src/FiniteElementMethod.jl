@@ -13,7 +13,7 @@ using DiffEqBase: BrownFullBasicInit
 using DomainSets: DomainSets
 using Ferrite: Ferrite, Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexahedron
 using ForwardDiff: ForwardDiff
-using LinearAlgebra: dot, mul!
+using LinearAlgebra: dot, mul!, norm
 using ModelingToolkit: ModelingToolkit, @parameters, @variables, Differential, MTKParameters,
     ProblemTypeCtx, System, complete, getmetadata
 using NonlinearSolveFirstOrder: NewtonRaphson
@@ -46,7 +46,7 @@ using PDEBase: StrongForm, MeshDomain, Region, boundarypiece, boundarypieces, No
 include("discretization.jl")
 include("frontend.jl")
 _is_normal_derivative(op) = op isa NormalDerivative
-export FEMDiscretization, Galerkin, SUPG
+export FEMDiscretization, Galerkin, SUPG, add_boundary_pieces!
 export MeshDomain, Region, boundarypiece, boundarypieces, NormalDerivative
 
 include("precompile.jl")
