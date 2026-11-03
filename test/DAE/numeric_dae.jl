@@ -234,6 +234,29 @@ heat_operators(fe; kw...) = FEMOperators(fe.M, fe.K, fe.F, [:u => 1:length(fe.F)
         @test FiniteElementMethod.dirichlet_rates(ops.load, 0.0) == zeros(length(fe.prescribed))
     end
 
+    @testset "default du0 needs Dual-compatible boundary data (FEMSpace callback)" begin
+        P1 = Lagrange{RefTriangle, 1}()
+        space = FiniteElementMethod.FEMSpace(
+            FiniteElementMethod.rectangle_grid(Triangle, (4, 4)), [:u => P1];
+            dirichlet = [(:u, :left, (x, t) -> sin(t))]
+        )
+        pd = FiniteElementMethod.prescribed_dofs(space)
+        n = ndofs(space)
+        Id = copy(space.pattern)
+        nonzeros(Id) .= 0
+        foreach(i -> Id[i, i] = 1, 1:n)
+        opss = FEMOperators(
+            Id, Id, zeros(n), [:u => 1:n]; prescribed = pd,
+            dirichlet_values = (out, t) -> FiniteElementMethod.dirichlet_values!(out, space, t)
+        )
+        @test_throws "pass `du0` explicitly" numeric_dae_problem(opss, zeros(n), (0.0, 1.0))
+        du0 = zeros(n)
+        du0[pd] .= 1.0
+        sol = solve(numeric_dae_problem(opss, zeros(n), (0.0, 1.0); du0), DFBDF(); tol...)
+        @test SciMLBase.successful_retcode(sol)
+        @test sol.u[end][pd] ≈ fill(sin(1.0), length(pd)) atol = 1.0e-8
+    end
+
     @testset "discretization metadata becomes problem_type" begin
         md = TestMetadata(Ref{Any}(nothing))
         prob = numeric_dae_problem(ops, zeros(N), (0.0, 1.0), md)
