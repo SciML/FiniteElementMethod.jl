@@ -1,7 +1,7 @@
 # Advection-diffusion with a constant velocity through the full interface, in 1D and 2D with P2 elements,
 # against manufactured solutions: a source term f is chosen so that a known u solves the equation.
 # docs/src/equation_classes.md lists convection-diffusion at moderate cell Peclet number as a Tier 1 class
-# (supported, VERIFIED); only pure advection and advection-dominated problems are Tier 2 (need SUPG, M4),
+# (supported, VERIFIED); only pure advection and advection-dominated problems are Tier 2 (they need SUPG, see `supg.jl`),
 # so every case here keeps the cell Peclet number below one.
 using FiniteElementMethod, ModelingToolkit, DomainSets, OrdinaryDiffEqBDF, Test
 using Ferrite: generate_grid, Line, Triangle, Quadrilateral, Vec

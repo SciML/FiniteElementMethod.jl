@@ -1,10 +1,6 @@
 # Reaction-diffusion through the full interface: a linear reaction term, a linearly coupled two-field
-# system, and the documented rejection of a nonlinear reaction.
-# docs/src/equation_classes.md lists second-order parabolic equations "scalar or coupled multi-field" as
-# Tier 1 (VERIFIED, two-field reaction-diffusion to 1.9e-16). It also lists nonlinear sources `f(u)` as
-# Tier 1 in the design, but states that this release rejects state-dependent coefficients with an error
-# naming milestone M3, so the nonlinear case below asserts that rejection.
-using FiniteElementMethod, ModelingToolkit, DomainSets, OrdinaryDiffEqBDF, Test
+# system and a nonlinear (logistic) reaction term, which is a state-dependent source solved with Newton steps.
+using FiniteElementMethod, ModelingToolkit, DomainSets, OrdinaryDiffEqBDF, Symbolics, Test
 using Ferrite: generate_grid, Line, Triangle, Quadrilateral, Vec
 using ModelingToolkit: t_nounits as t
 include(joinpath(@__DIR__, "..", "shared", "interface_helpers.jl"))
@@ -89,12 +85,23 @@ end
     @test l2_error(sol, v(t, x), x_ -> v_exact(1.0, x_), 1.0, sample_points(40)) < 1.0e-7
 end
 
-# PDE:    u_t = u_xx + u_yy + u (1 - u) (a nonlinear, logistic reaction)
-# Shows:  state-dependent sources are named in the error rather than silently linearised (M3).
-@testset "a nonlinear reaction term is rejected naming milestone M3" begin
-    Ω = unit_square(Triangle, 2)
-    eq = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + u(t, x, y) * (1 - u(t, x, y))
-    bcs = [[u(t, Γ) ~ 0 for Γ in sides(Ω)]; u(0, x, y) ~ 0]
-    @named pdesys = PDESystem([eq], bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
-    @test_throws "nonlinear terms land in M3" discretize(pdesys, FEMDiscretization(Ω, t))
+# PDE:    u_t = u_xx + u (1 - u) + f (a nonlinear, logistic reaction: the Fisher-KPP equation with a source)
+# Domain: x in (0, 1), t in (0, 0.2), meshes of 2, 4, 8 and 16 line cells, P2
+# BCs:    u(t, 0) = u(t, 1) = 0; IC u(0, x) = sin(pi x)
+# Exact:  u = exp(-t) sin(pi x); the source f = u_t - u_xx - u (1 - u) is built symbolically from it
+# Shows:  a state-dependent reaction is solved with Newton steps inside the time integration, at the optimal rate 3.
+@testset "P2 elements on a line converge at rate 3 for the logistic reaction-diffusion equation" begin
+    exact = exp(-t) * sin(pi * x)
+    source = expand_derivatives(Dt(exact) - Dx(Dx(exact)) - exact * (1 - exact))
+    ns = (2, 4, 8, 16)
+    errors = map(ns) do n
+        Ω = MeshDomain(generate_grid(Line, (n,), Vec(0.0), Vec(1.0)))
+        left, right = boundarypiece.(Ω, (:left, :right))
+        eq = Dt(u(t, x)) ~ Dx(Dx(u(t, x))) + u(t, x) * (1 - u(t, x)) + source
+        @named pdesys = PDESystem([eq], [u(t, left) ~ 0, u(t, right) ~ 0, u(0, x) ~ sin(pi * x)], [(x,) ∈ Ω, t ∈ Interval(0.0, 0.2)], [t, x], [u(t, x)], [])
+        disc = FEMDiscretization(Ω, t; spaces = Dict(u => Lagrange{RefLine, 2}()))
+        sol = solve(discretize(pdesys, disc), DFBDF(); abstol = 1.0e-11, reltol = 1.0e-11)
+        l2_error(sol, u(t, x), x_ -> exp(-0.2) * sin(pi * x_), 0.2, sample_points(200))
+    end
+    @test all(observed_rate(errors, 1 ./ ns) .> 2.8)
 end

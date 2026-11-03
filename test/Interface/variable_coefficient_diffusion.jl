@@ -1,9 +1,9 @@
 # Diffusion with a space-dependent diffusivity a(x), in the two forms the front end accepts: divergence
 # form Dx(a Dx(u)) and non-divergence form a Dxx(u), with manufactured solutions and sources.
 # docs/src/equation_classes.md, Tier 1: "Second-order parabolic equations in divergence or non-divergence
-# form" (VERIFIED, non-divergence `a(x,y) Δu` at rates 1.96 to 2.01). Coefficients that depend on time or on
-# the solution are rejected (M3), and discontinuous coefficients across interfaces are "not evidenced",
-# so a(x) here is smooth and depends on space only.
+# form" (VERIFIED, non-divergence `a(x,y) Δu` at rates 1.96 to 2.01). Coefficients that depend on the solution
+# are covered in `nonlinear.jl`, those that depend on time are rejected (`rejections.jl`), and discontinuous
+# coefficients across interfaces are "not evidenced", so a(x) here is smooth and depends on space only.
 using FiniteElementMethod, ModelingToolkit, DomainSets, OrdinaryDiffEqBDF, Test
 using Ferrite: generate_grid, Line, Triangle, Quadrilateral, Vec
 using ModelingToolkit: t_nounits as t
