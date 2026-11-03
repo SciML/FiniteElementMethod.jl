@@ -97,4 +97,35 @@ with these differences.
   - [`write_vtk`](@ref)`(sol, base)` writes one `.vtu` file per saved time and a ParaView
     collection `base.pvd`.
 
+## Observed expressions
+
+`sol[expr]` evaluates an expression in the dependent variables, their first spatial
+derivatives, the independent variables and the parameters of the `PDESystem`, for example
+`sol[u(t, x, y)^2 + k * v(t, x, y)]`, `sol[2u(t, x, y)]` or `sol[x^2 + y]`. It has the shape of
+`sol[u(t, x, y)]`, `nt × nnodes` (a vector for a steady solution), even when the expression
+names only coordinates. `sol(t, xs, ys; dv = expr)` and `sol(t, Γ; dv = expr)` evaluate it at
+points or on a boundary piece, with the shapes of a field, and `NaN` outside the mesh.
+
+The time axis follows the expression's dependent variables, as for a field: an expression in
+time-last variables, `sol[u(x, y, t)^2]`, is `nnodes × nt` and is called as
+`sol(xs, ys, t; dv = expr)`. An expression with no dependent variable follows the system's
+variables. An expression that mixes time-first and time-last variables, or names none in a
+system that mixes them, throws an `ArgumentError`: evaluate the parts separately.
+
+  - The expression is compiled once with `build_function` and broadcast over the vertex values
+    of its leaves; nothing is substituted per vertex. A first derivative such as
+    `Differential(x)(u(t, x, y))` uses the same values as `sol[Differential(x)(u(t, x, y))]`.
+  - A parameter takes the value given in the `PDESystem`, as `k => 2.0`; the front end has
+    assembled the operators with that value, so `remake` with a new one does not change it.
+  - An expression that cannot be evaluated throws an `ArgumentError` beginning
+    "cannot evaluate the expression … on this solution:", which names a variable that is not
+    of the system, a trace `u(t, Γ)` (index the trace on its own, or pass `Γ` to the call
+    instead), a derivative that is not a first spatial derivative, or a dependent variable at
+    fixed arguments such as `u(t, 0, y)`.
+  - A dependent variable at fixed arguments, such as `u(t, 0, y)` or `u(0, x, y)`, is rejected
+    wherever a dependent variable is accepted (`sol[…]`, `dv`, derivatives, [`normal_flux`](@ref))
+    with the `ArgumentError` "u(t, 0, y) fixes arguments of u(t, x, y); write the dependent
+    variable as u(t, x, y)"; a mesh has no coordinate lines to restrict to. A trace keeps time
+    and replaces the coordinates by one piece, `u(t, Γ)` or `u(Γ, t)`.
+
 The docstrings are on the [API](@ref "API") page.

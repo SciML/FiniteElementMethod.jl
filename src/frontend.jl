@@ -346,6 +346,9 @@ function _lower(pdesys, disc::FEMDiscretization)
     wf = weak_form(an; test_space = disc.test_space)
     steady = disc.time === nothing
     _check_terms(wf)
+    disc.test_space isa SUPG && any(term -> term.kind === :nonlinear, wf.volume) && throw(
+        ArgumentError("SUPG stabilises linear terms only, but the system has a nonlinear term; use test_space = Galerkin()")
+    )
     pvals = _parameter_values(sys, ctx)
     dirichlet = emit_dirichlet(an)
     t0, t1 = steady ? (0.0, 0.0) : v.intervals[v.time]
