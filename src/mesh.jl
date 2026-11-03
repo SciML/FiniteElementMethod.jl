@@ -201,13 +201,14 @@ group, or any grid whose cells are facets of `grid`. Afterwards `boundarypiece(M
 piece, exactly as for any other facet set; `grid` is modified, as by `Ferrite.addfacetset!`, and returns.
 
 A submesh cell is matched to a facet of `grid` through the nodes: each node of the submesh is the node of `grid`
-within `atol` of it (by coordinates, since the two grids number their nodes independently; the default `atol`
+within `atol > 0` of it (by coordinates, since the two grids number their nodes independently; the default `atol`
 is `1e-8` times the larger of `1` and the largest extent of `grid`), and the cell is the facet whose corner
 nodes are those of the cell. Nothing is added, for any of the pieces, if a node has no node of `grid` within
 `atol`, a cell matches no facet of `grid`, a cell matches an interior facet (shared by two cells) or `name` is
 already a facet set of `grid`; each is an `ArgumentError` that says which.
 """
 function add_boundary_pieces!(grid::Ferrite.Grid, pieces::Pair...; atol = nothing)
+    atol === nothing || atol > 0 || throw(ArgumentError("atol must be positive, got $atol"))
     names = [String(first(p)) for p in pieces]
     allunique(names) || throw(ArgumentError("boundary piece names must be unique; got $(Symbol.(names))"))
     for name in names

@@ -115,6 +115,7 @@ end
         @test occursin("must have dimension 1", msg)
         msg = errmsg(() -> add_boundary_pieces!(grid(), :face => face(1, 0.0, 2)))
         @test occursin("has 3-dimensional coordinates", msg)
+        @test_throws ArgumentError("atol must be positive, got 0.0") add_boundary_pieces!(grid(), :bottom => segment((0.0, 0.0), (1.0, 0.0), 4); atol = 0.0)
         # A looser tolerance admits a segment that is off by less than it.
         g = grid()
         add_boundary_pieces!(g, :bottom => segment((0.0, 1.0e-4), (1.0, 1.0e-4), 4); atol = 1.0e-3)
