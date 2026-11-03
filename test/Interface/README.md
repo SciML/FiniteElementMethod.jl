@@ -50,6 +50,14 @@ boundary pieces are `boundarypiece.(Ω, (:left, :right, :bottom, :top))` in 2D a
 | `solution_access.jl` | `sol(t, x, y; dv)` points, grids, outside the mesh | heat | 2 | P2 | Dirichlet |
 | `solution_access.jl` | derivative and trace keys | heat | 2 | P2 | Dirichlet |
 | `solution_access.jl` | parameter values set the diffusivity | heat | 2 | P2 | Dirichlet |
+| `heat_3d.jl` | eigenmode decay on hexahedra and tetrahedra | heat | 3 | P1, P2 | zero Dirichlet |
+| `heat_3d.jl` | exact reproduction by P2 | heat | 3 | P2 | time-dependent Dirichlet |
+| `heat_3d.jl` | P1 hexahedra rate 2, P2 tetrahedra rate 3 | heat | 3 | P1, P2 | zero Dirichlet |
+| `element_order.jl` | line P1, P2 rates 2 and 3 | heat | 1 | P1, P2 | zero Dirichlet |
+| `element_order.jl` | triangle and quadrilateral P1, P2, P3 rates 2, 3, 4 | heat | 2 | P1, P2, P3 | zero Dirichlet |
+| `solver_choices.jl` | DFBDF, DABDF2, DImplicitEuler, DFBDF order 2 | heat | 1 | P2 | constant Dirichlet |
+| `solver_choices.jl` | tolerances and `saveat` | heat | 1 | P2 | constant and time-dependent Dirichlet |
+| `solver_choices.jl` | ODE solver refused for the DAE problem | heat | 1 | P2 | time-dependent Dirichlet |
 | `rejections.jl` | rejected boundary conditions, equations, options, domains, shared facets | heat | 1 to 2 | | |
 
 ## Not covered on this branch
