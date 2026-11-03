@@ -59,9 +59,9 @@ boundary pieces are `boundarypiece.(Ω, (:left, :right, :bottom, :top))` in 2D a
 | `solver_choices.jl` | tolerances and `saveat` | heat | 1 | P2 | constant and time-dependent Dirichlet |
 | `solver_choices.jl` | ODE solver refused for the DAE problem | heat | 1 | P2 | time-dependent Dirichlet |
 | `advection_diffusion.jl` | exact reproduction with constant velocity | advection-diffusion with source | 1 | P2 | time-dependent Dirichlet |
-| `advection_diffusion.jl` | P2 convergence rate 3 with manufactured source | advection-diffusion with source | 1 | P2 | zero Dirichlet |
+| `advection_diffusion.jl` | P2 convergence rate 3 with manufactured source on a line | advection-diffusion with source | 1 | P2 | zero Dirichlet |
 | `advection_diffusion.jl` | exact reproduction with velocity vector on triangles and quadrilaterals | advection-diffusion with source | 2 | P2 | time-dependent Dirichlet |
-| `advection_diffusion.jl` | P2 convergence rate 3 with manufactured source | advection-diffusion with source | 2 | P2 | zero Dirichlet |
+| `advection_diffusion.jl` | P2 convergence rate 3 with manufactured source on triangles | advection-diffusion with source | 2 | P2 | zero Dirichlet |
 | `reaction_diffusion.jl` | linear reaction with source on triangles and quadrilaterals | reaction-diffusion | 2 | P2 | zero Dirichlet |
 | `reaction_diffusion.jl` | decay reaction, P2 convergence rate 3 | reaction-diffusion | 1 | P2 | zero Dirichlet |
 | `reaction_diffusion.jl` | two linearly coupled fields, exact | coupled reaction-diffusion | 1 | P2 | time-dependent Dirichlet |
