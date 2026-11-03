@@ -10,6 +10,7 @@ FiniteElementMethod.SciMLBase.discretize(::FiniteElementMethod.ModelingToolkit.P
 FiniteElementMethod.SciMLBase.NonlinearProblem(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
 FiniteElementMethod.AbstractTestSpace
 FiniteElementMethod.Galerkin
+FiniteElementMethod.SciMLBase.symbolic_discretize(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
 FiniteElementMethod.assemble_sources!
 ```
 

@@ -505,14 +505,35 @@ function SciMLBase.NonlinearProblem(pdesys::ModelingToolkit.PDESystem, disc::FEM
     return SciMLBase.discretize(pdesys, disc; kwargs...)
 end
 
-# `(sys, tspan)`, the shape PDEBase and MethodOfLines return.
-function SciMLBase.symbolic_discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
+"""
+    symbolic_discretize(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
+
+Return `(sys, tspan)`, the shape PDEBase and MethodOfLines return, for the discretization that
+`discretize(pdesys, disc; kwargs...)` builds: it runs the same code path, so it assembles the
+Galerkin operators, and returns the `DAEProblem`'s `prob.f.sys` and `prob.tspan`. `sys` is the
+completed `ModelingToolkit.System` of [`FiniteElementMethod.fem_system`](@ref), whose unknowns are
+the arrays of field values, with the operators as parameters and the `FEMMetadata` (the
+problem's `problem_type`) attached for rebuilding the solution; `tspan` is the time interval of
+`pdesys`. Keywords are passed to that problem construction as for `discretize`,
+so the reserved keywords raise the same `ArgumentError`. Further positional arguments raise an
+`ArgumentError`.
+
+A steady `disc` (no time variable) raises an `ArgumentError`: its `NonlinearProblem` is built
+from a numeric `NonlinearFunction` with no `System`, so there is no symbolic system describing
+it; call `discretize(pdesys, disc)` for the `NonlinearProblem`.
+"""
+function SciMLBase.symbolic_discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization, args...; kwargs...)
+    isempty(args) || throw(
+        ArgumentError(
+            "symbolic_discretize(pdesys, disc; kwargs...) takes no further positional arguments; got $(length(args))"
+        )
+    )
     disc.time === nothing && throw(
         ArgumentError(
             "a steady FEMDiscretization builds no symbolic System, so it has no symbolic_discretize; " *
                 "call discretize(pdesys, disc) for its NonlinearProblem"
         )
     )
-    prob = SciMLBase.discretize(pdesys, disc)
+    prob = SciMLBase.discretize(pdesys, disc; kwargs...)
     return prob.f.sys, prob.tspan
 end
