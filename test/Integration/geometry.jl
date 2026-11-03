@@ -33,7 +33,7 @@ end
         BC("inner", U ~ on_arc(1)), BC("outer", U ~ on_arc(2)), BC("left", U ~ ustar),
         BC("bottom", -Dy(U) ~ -expand_derivatives(Dy(ustar)), [0.0, -1.0]),
     ]
-    c = chain([0 ~ Dx(Dx(U)) + Dy(Dy(U)) + f], bcs; depvars = [U], t, sivs = [x, y])
+    c = chain([0 ~ Dx(Dx(U)) + Dy(Dy(U)) + f], bcs; depvars = [U], t, sivs = [x, y], domain = [(0.0, 2.0), (0.0, 2.0)])
     @test any(term -> term.piece == "bottom", c.wf.facet)
     exact = numeric(ustar, [x, y])
     sizes = (2, 4, 8, 16)
