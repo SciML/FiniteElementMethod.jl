@@ -64,10 +64,16 @@ end
     dirichlet_rates(F::FEMLoad, t)
 
 `g'(t)` on the prescribed dofs: zero for constant data, `ForwardDiff` through the callback otherwise.
+Throws an `ArgumentError` when the callback does not accept `Dual` numbers.
 """
 function dirichlet_rates(F::FEMLoad, t)
     F.values isa Union{Number, AbstractVector} && return zeros(length(F.prescribed))
-    return ForwardDiff.derivative(τ -> dirichlet_values!(zeros(typeof(τ), length(F.prescribed)), F, τ), float(t))
+    try
+        return ForwardDiff.derivative(τ -> dirichlet_values!(zeros(typeof(τ), length(F.prescribed)), F, τ), float(t))
+    catch err
+        err isa MethodError || rethrow()
+        throw(ArgumentError("the default du0 differentiates the Dirichlet data with ForwardDiff, which needs boundary data that accept `Dual` numbers (a `FEMSpace` boundary callback stores into Float64); pass `du0` explicitly"))
+    end
 end
 
 fem_apply(op::FEMOp, rows::UnitRange{Int}, cols::UnitRange{Int}, x::AbstractVector) = view(op.A, rows, cols) * x
@@ -262,6 +268,8 @@ end
 `M_ff du_f = (F(t0) - K u0 - M_fd g'(t0))_f` on the differential rows. Throws an
 `ArgumentError` when a non-prescribed algebraic variable has a nonzero column in `M`: its
 `du` is then not zero, cannot be found without index reduction, and must be passed as `du0`.
+The zero on a non-prescribed algebraic row is by contract: the residual does not define the derivative of an
+algebraic variable, and the solution and its dense output do not depend on it.
 """
 function consistent_du0(ops::FEMOperators, u0, t0)
     dd = ops.differential_vars

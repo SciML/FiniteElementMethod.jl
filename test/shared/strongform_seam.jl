@@ -152,7 +152,7 @@ hasD(ex) = iscall(ex) && (operation(ex) isa Differential || any(hasD, arguments(
 # derivative rule whose argument state reaches (spec §5.1 as clarified by PDEBase: opaque functions of the
 # coordinates are fine). The strong residual is converted with `strict = false`, since it keeps `∂(opaque(x))`
 # of a divergence-form coefficient that the weak form never needs.
-function to_slots(ex, s::StateSlots, depvars, sivs, t, params; strict = true)
+function to_slots(ex, s, depvars, sivs, t, params; strict = true)
     dim = length(sivs)
     rules1 = Dict()
     rules2 = Dict()
@@ -187,7 +187,7 @@ function to_slots(ex, s::StateSlots, depvars, sivs, t, params; strict = true)
 end
 
 "Stage d: the boundary flux Φ substituted for `G·N` when `B = 0` is proportional to the conormal, else `nothing`."
-function match_flux(Φ, B, s::StateSlots)
+function match_flux(Φ, B, s)
     g = s.G
     aΦ = [Symbolics.derivative(Φ, gi) for gi in g]
     aB = [Symbolics.derivative(B, gi) for gi in g]
@@ -225,6 +225,16 @@ function analyse(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict(), periodic
         push!(remainder, sum((P(r) for r in R); init = Num(0)))
         push!(conormal, [Symbolics.derivative(sum(G .* s.N), gi) for gi in s.G])
     end
+    essential, natural = boundary_conditions(bcs, flux, s; depvars, t, sivs, params)
+    return StrongFormAnalysis(s, nf, dim, strong, mass, flux, remainder, conormal, essential, natural, collect(Any, periodic))
+end
+
+# Stage d alone: essential data and matched natural fluxes of `bcs` against the per-equation `flux`, both in the
+# slots `s` (any object with the `StateSlots` fields, such as PDEBase's). The Integration chain uses it on top of
+# PDEBase.StrongForm.analyse, which does not analyse boundary conditions yet.
+function boundary_conditions(bcs, flux, s; depvars, t, sivs, params = [])
+    nf, dim = length(depvars), length(sivs)
+    P(ex) = to_slots(ex, s, depvars, sivs, t, params)
     essential, natural = EssentialBC[], NaturalBC[]
     for bc in bcs
         B = P(unwrap(bc.eq.lhs - bc.eq.rhs))
@@ -242,7 +252,7 @@ function analyse(eqs, bcs; depvars, t, sivs, params = [], ibp = Dict(), periodic
         Φ = match_flux(substitute(sum(flux[e] .* s.N), nsub), substitute(B, nsub), s)
         push!(natural, NaturalBC(bc.piece, e, Φ))
     end
-    return StrongFormAnalysis(s, nf, dim, strong, mass, flux, remainder, conormal, essential, natural, collect(Any, periodic))
+    return essential, natural
 end
 
 end
