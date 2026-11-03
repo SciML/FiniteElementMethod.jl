@@ -7,7 +7,7 @@ on a mesh, derives the Galerkin weak form, assembles it with
 
 !!! warning
     This package is under construction. Linear time-dependent problems with Galerkin testing
-    are supported, with one or more fields; steady problems, nonlinear terms, periodic
+    are supported, with one or more fields; nonlinear terms, periodic
     conditions and other test spaces raise an error. [Boundary conditions and limitations](@ref)
     lists every restriction.
 

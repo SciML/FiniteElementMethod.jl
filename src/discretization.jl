@@ -12,6 +12,9 @@ PDEBase.contains_point(grid::Ferrite.Grid, x) = _contains_point(grid, x)
 Finite-element discretization of a `PDESystem` whose spatial domain is the mesh domain `Ω`
 (of a `Ferrite.Grid`), with time variable `t`. `discretize(pdesys, disc)` assembles the
 Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknown per field.
+Without `t` the discretization is steady: the `PDESystem` must have no time variable, and
+`discretize` (or `NonlinearProblem(pdesys, disc)`) returns a `NonlinearProblem` whose `solve`
+gives a `PDENoTimeSolution`.
 
   - `spaces`: dependent variable (`u` or `u(t, x, y)`) `=>` `Ferrite.Interpolation`; the
     default is `Lagrange{RefShape, 1}()` on the mesh's reference shape. Fields may have
@@ -27,10 +30,11 @@ Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknow
     stabilisation of every equation; linear terms only, and `τ` cannot reference parameters.
   - `ibp`: equation (or its index) `=>` `PDEBase.StrongForm` integration-by-parts policy.
   - `pairing`: equation `=>` dependent variable it is tested with, needed for an equation
-    with no time derivative of its own, such as `0 ~ Dxx(v) + f`.
+    with no time derivative of its own, such as `0 ~ Dxx(v) + f`. In a steady system the
+    equations not named here take the remaining dependent variables in declared order.
   - `codegen = :mtk` and `dirichlet = :eliminate` are reserved for later milestones and
-    raise; remaining keywords are passed to the `DAEProblem`, where a keyword given at the
-    `discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate` and `name`
+    raise; remaining keywords are passed to the `DAEProblem` (or `NonlinearProblem`), where a
+    keyword given at the `discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate` and `name`
     are set by the discretization and rejected.
 
 Pieces come from `boundarypiece.(Ω, names)`; on an analytic DomainSets box write
@@ -134,6 +138,6 @@ PDEBase.supported_conditions(::FEMDiscretization) = PDEBase.SupportedConditions(
       - Boundary pieces must be disjoint. A piece with no condition gets the natural zero-flux condition, with a warning when the operator has a flux.
       - Where two Dirichlet pieces of one field meet, the condition listed last in the `PDESystem` wins.
       - Every field with a time derivative needs an initial condition, linear in that one field and finite at every node.
-      - Steady problems, `dirichlet = :eliminate`, fields with different interpolations and test spaces other than `Galerkin()` are rejected until M4. Nonlinear operators, time-dependent mass or stiffness coefficients and `codegen = :mtk` are rejected until M3.
+      - `dirichlet = :eliminate`, fields with different interpolations and test spaces other than `Galerkin()` are rejected until M4. Nonlinear operators, time-dependent mass or stiffness coefficients and `codegen = :mtk` are rejected until M3.
     """
 )

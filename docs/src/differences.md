@@ -34,9 +34,8 @@ piece `Γ`, a facet set of the mesh obtained from `boundarypiece(Ω, :name)`.
     `u(t, 0, y)`. Every other argument is unchanged.
   - **`u(Γ)` is an error on a time-dependent problem.** The message shows the form to write:
     `u(Γ_left): trace is missing the time argument; write u(t, Γ_left)`. `u(Γ)` is the trace
-    only on a steady problem whose dependent variables have no time argument, such as `u(x, y)`.
-    Steady problems are not discretized yet (see [Restrictions](@ref)), so in practice every
-    trace is `u(t, Γ)`.
+    only on a steady problem whose dependent variables have no time argument, such as `u(x, y)`
+    (see [Steady problems](@ref)).
   - **`Dn_Γ(u(t, Γ))` is the trace of the normal derivative**, where `Dn_Γ = NormalDerivative(Γ)`:
     differentiate along the outward unit normal of `Γ`, then evaluate on `Γ`. This is the
     reading of MethodOfLines' `Dx(u(t, 0, y))`. Write a conormal coefficient explicitly, as in
