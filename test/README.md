@@ -55,3 +55,12 @@ Every code path needs an end-to-end test: a `PDESystem` is discretized, solved, 
 with an exact or manufactured solution (or with MethodOfLines.jl) in a MOL-style group, not only
 a unit test of the internals. The mediator keeps a checklist of code paths and their covering
 tests in `.forge/branch-coverage.md`; update it when you add a path or a test.
+
+## The strong-form analysis behind the Integration group
+
+The Integration group runs its chains through PDEBase: `test/shared/references.jl` adapts `PDEBase.StrongForm.analyse`
+to the seam's interface, so the volume terms and every boundary condition (box faces, and the pieces of a
+`MeshDomain` written with `NormalDerivative`) come from PDEBase. PDEBase numbers fields in the declared order and
+emits conditions in input order. `test/shared/strongform_seam.jl` is the test-only stand-in the Assembly, Kernels
+and WeakForm groups still use directly; the Integration adapter calls its `boundary_conditions` stage only for
+seam `BC`s on facet sets that are not box faces.
