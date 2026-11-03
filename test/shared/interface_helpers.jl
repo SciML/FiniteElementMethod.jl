@@ -17,8 +17,18 @@ The L2 distance at time `t` between the field `dv` of the solution `sol` and the
 [`sample_points`](@ref)). Each sample carries the volume `prod(step.(points))` of its cell, so the
 midpoint rule approximates the integral over the domain the points cover.
 """
-function l2_error(sol, dv, exact, t, points...)
-    computed = sol(t, collect.(points)...; dv)
+function l2_error(sol, dv, exact, t::Real, points...)
+    return l2_distance(sol(t, collect.(points)...; dv), exact, points)
+end
+
+"""
+    l2_error(sol, dv, exact, points...)
+
+The same for a steady solution, which is called without a time: `sol(xs...; dv)`.
+"""
+l2_error(sol, dv, exact, points::AbstractRange...) = l2_distance(sol(collect.(points)...; dv), exact, points)
+
+function l2_distance(computed, exact, points)
     expected = [exact(x...) for x in Iterators.product(points...)]
     cell_volume = prod(step.(points))
     return sqrt(sum(abs2, computed .- expected) * cell_volume)

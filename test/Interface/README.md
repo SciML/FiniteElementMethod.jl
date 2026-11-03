@@ -65,7 +65,7 @@ boundary pieces are `boundarypiece.(Ω, (:left, :right, :bottom, :top))` in 2D a
 | `reaction_diffusion.jl` | linear reaction with source on triangles and quadrilaterals | reaction-diffusion | 2 | P2 | zero Dirichlet |
 | `reaction_diffusion.jl` | decay reaction, P2 convergence rate 3 | reaction-diffusion | 1 | P2 | zero Dirichlet |
 | `reaction_diffusion.jl` | two linearly coupled fields, exact | coupled reaction-diffusion | 1 | P2 | time-dependent Dirichlet |
-| `reaction_diffusion.jl` | nonlinear reaction rejected (M3) | logistic reaction-diffusion | 2 | P1 | zero Dirichlet |
+| `reaction_diffusion.jl` | logistic reaction, manufactured source, rate 3 | nonlinear reaction-diffusion | 1 | P2 | zero Dirichlet |
 | `variable_coefficient_diffusion.jl` | `Dx(a Dx(u))`, rate 3 | divergence-form diffusion | 1 | P2 | zero Dirichlet |
 | `variable_coefficient_diffusion.jl` | `a Dxx(u)`, rate 3 | non-divergence-form diffusion | 1 | P2 | zero Dirichlet |
 | `variable_coefficient_diffusion.jl` | `Dx(a Dx(u)) + Dy(a Dy(u))`, rate 3, triangles and quadrilaterals | divergence-form diffusion | 2 | P2 | zero Dirichlet |
@@ -86,8 +86,27 @@ boundary pieces are `boundarypiece.(Ω, (:left, :right, :bottom, :top))` in 2D a
 | `parameters.jl` | `D`, `A`, `g` from `ps` for three parameter sets | heat with source | 2 | P2 | Dirichlet with parameter |
 | `parameters.jl` | Neumann flux `q` from `ps` | heat | 2 | P2 | Dirichlet and Neumann with parameter |
 | `parameters.jl` | `D` and reaction rate `λ` from `ps` | heat with decay | 2 | P2 | zero Dirichlet |
-| `rejections.jl` | rejected boundary conditions, equations, options, domains, shared facets | heat | 1 to 2 | | |
+| `steady.jl` | steady Poisson on a line, rates 2 and 3 | Poisson, no time variable | 1 | P1, P2 | constant Dirichlet |
+| `steady.jl` | steady Poisson with Dirichlet and Neumann sides, rates 2 and 3 | Poisson | 2 | P1, P2 | Dirichlet and Neumann |
+| `steady.jl` | steady nonlinear diffusion `k(u) = 1 + u^2`, rate 3 | nonlinear diffusion, Newton | 2 | P2 | zero Dirichlet |
+| `time_last_variables.jl` | `u(x, y, t)` and `u(t, x, y)` give the same solution, time axis last | heat | 2 | P2 | zero Dirichlet |
+| `time_last_variables.jl` | time-last traces, Dirichlet and Neumann data, exact | heat with time-dependent source | 2 | P2 | Dirichlet and Neumann |
+| `observed_expressions.jl` | `sol[expr]` and `sol(t, x, y; dv = expr)` | heat with parameter `D` | 2 | P2 | Dirichlet |
+| `eliminate.jl` | `dirichlet = :eliminate` against `:algebraic` | heat | 2 | P2 | space-dependent Dirichlet, constant in time |
+| `eliminate.jl` | `dirichlet = :eliminate` on a steady problem | Laplace | 2 | P1 | Dirichlet |
+| `nonlinear.jl` | viscous Burgers `u u_x`, rate 3 | Burgers with source | 1 | P2 | zero Dirichlet |
+| `nonlinear.jl` | nonlinear diffusion `k(u) = 1 + u^2`, rate 3 | nonlinear diffusion with source | 2 | P2 | zero Dirichlet |
+| `multifield_spaces.jl` | P2 and P1 fields in one system, rates 3 and 2 | two coupled heat fields | 2 | P2, P1 | Dirichlet |
+| `multifield_spaces.jl` | a field restricted to a region reads NaN outside it | two heat fields, one on a half | 2 | P2 | Dirichlet; natural on the region's other sides |
+| `supg.jl` | Galerkin oscillates, SUPG with the optimal `τ` is nodally exact | convection-diffusion boundary layer | 1 | P1 | Dirichlet |
+| `supg.jl` | constant `τ` with explicit velocity, and `τ(hK, b)` | convection-diffusion boundary layer | 1 | P1 | Dirichlet |
+| `navier_stokes.jl` | Kovasznay flow, Taylor-Hood, rates 3 and 2 | steady incompressible Navier-Stokes | 2 | P2/P1 | Dirichlet velocity, Dirichlet pressure on one side |
+| `metadata_and_operators.jl` | `facet_dofs`, `dof_coordinates`, `cell_dofs` | heat | 2 | P1, P2 | zero Dirichlet |
+| `metadata_and_operators.jl` | `operators` gives the matrices for a hand-made steady solve | heat at its steady state | 2 | P2 | Dirichlet |
+| `rejections.jl` | rejected boundary conditions, equations, options, domains, shared facets, SUPG with a nonlinear term, observed expressions, `operators` | heat and others | 1 to 2 | | |
 
-## Not covered on this branch
+## Not covered
 
-Steady problems, time-last variables, observed expressions, SUPG and Navier-Stokes are not on `master`.
+The DFG cylinder (Navier-Stokes, about 149 000 unknowns) is the `NavierStokes` group. Periodic conditions, `codegen = :mtk`,
+time-dependent coefficients in the mass or stiffness operator, third-order and second-order-in-time equations are
+rejected, and `rejections.jl` asserts the messages.
