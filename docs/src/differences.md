@@ -34,9 +34,8 @@ piece `Γ`, a facet set of the mesh obtained from `boundarypiece(Ω, :name)`.
     `u(t, 0, y)`. Every other argument is unchanged.
   - **`u(Γ)` is an error on a time-dependent problem.** The message shows the form to write:
     `u(Γ_left): trace is missing the time argument; write u(t, Γ_left)`. `u(Γ)` is the trace
-    only on a steady problem whose dependent variables have no time argument, such as `u(x, y)`.
-    Steady problems are not discretized yet (see [Restrictions](@ref)), so in practice every
-    trace is `u(t, Γ)`.
+    only on a steady problem whose dependent variables have no time argument, such as `u(x, y)`
+    (see [Steady problems](@ref)).
   - **`Dn_Γ(u(t, Γ))` is the trace of the normal derivative**, where `Dn_Γ = NormalDerivative(Γ)`:
     differentiate along the outward unit normal of `Γ`, then evaluate on `Γ`. This is the
     reading of MethodOfLines' `Dx(u(t, 0, y))`. Write a conormal coefficient explicitly, as in
@@ -63,9 +62,17 @@ with these differences.
     linear cells the nodes are the vertices. Tensor-grid plotting calls such as
     `heatmap(sol[x], sol[y], …)` fail with a shape error; resample with
     `sol(t, xs, ys; dv = u(t, x, y))` instead, which gives the tensor product of `xs` and `ys`.
-  - **`sol[u(t, x, y)]` is `nt × nnodes`**, and column `i` pairs with `(sol[x][i], sol[y][i])`.
-    It is the field evaluated at the mesh nodes, so for a P2 field the edge dofs are not
-    included. `sol[u(t, x, y), k, :]` is the row at `t_k`.
+  - **`sol[u(t, x, y)]` is `nt × nnodes`** (`nnodes × nt` for `u(x, y, t)`), and node `i`
+    pairs with `(sol[x][i], sol[y][i])`. It is the field evaluated at the mesh nodes, so for a
+    P2 field the edge dofs are not included. `sol[u(t, x, y), k, :]` is the row at `t_k`.
+  - **The time axis goes first or last according to the declared argument order of each
+    dependent variable**, as in MethodOfLines. For a time-last `u(x, y, t)` every array keyed
+    by that field is transposed, `nnodes × nt` (the trace `sol[u(Γ, t)]`, the gradient
+    `sol[Differential(x)(u(x, y, t))]` and `normal_flux` too), and calls take the time last:
+    `sol(x, y, t; dv)`, `sol(Γ, t; dv)`, `sol(pts, t; dv)`. With vector arguments
+    `sol(xs, ys, ts; dv)` is `length(xs) × length(ys) × length(ts)`. Fields of one system may
+    differ; `sol(args...)` without `dv` then throws, because the position of the time argument
+    is ambiguous. Time between two spatial arguments, `u(x, t, y)`, is rejected by `discretize`.
   - **The raw dof coefficients are in `sol.original_sol`**, the solution of the `DAEProblem`;
     `sol.original_sol.u[k]` is the dof vector at `t_k`.
   - **Points outside the mesh return `NaN`** by default, which a non-convex mesh needs, since
@@ -89,5 +96,36 @@ with these differences.
     equal it on a given mesh.
   - [`write_vtk`](@ref)`(sol, base)` writes one `.vtu` file per saved time and a ParaView
     collection `base.pvd`.
+
+## Observed expressions
+
+`sol[expr]` evaluates an expression in the dependent variables, their first spatial
+derivatives, the independent variables and the parameters of the `PDESystem`, for example
+`sol[u(t, x, y)^2 + k * v(t, x, y)]`, `sol[2u(t, x, y)]` or `sol[x^2 + y]`. It has the shape of
+`sol[u(t, x, y)]`, `nt × nnodes` (a vector for a steady solution), even when the expression
+names only coordinates. `sol(t, xs, ys; dv = expr)` and `sol(t, Γ; dv = expr)` evaluate it at
+points or on a boundary piece, with the shapes of a field, and `NaN` outside the mesh.
+
+The time axis follows the expression's dependent variables, as for a field: an expression in
+time-last variables, `sol[u(x, y, t)^2]`, is `nnodes × nt` and is called as
+`sol(xs, ys, t; dv = expr)`. An expression with no dependent variable follows the system's
+variables. An expression that mixes time-first and time-last variables, or names none in a
+system that mixes them, throws an `ArgumentError`: evaluate the parts separately.
+
+  - The expression is compiled once with `build_function` and broadcast over the vertex values
+    of its leaves; nothing is substituted per vertex. A first derivative such as
+    `Differential(x)(u(t, x, y))` uses the same values as `sol[Differential(x)(u(t, x, y))]`.
+  - A parameter takes the value given in the `PDESystem`, as `k => 2.0`; the front end has
+    assembled the operators with that value, so `remake` with a new one does not change it.
+  - An expression that cannot be evaluated throws an `ArgumentError` beginning
+    "cannot evaluate the expression … on this solution:", which names a variable that is not
+    of the system, a trace `u(t, Γ)` (index the trace on its own, or pass `Γ` to the call
+    instead), a derivative that is not a first spatial derivative, or a dependent variable at
+    fixed arguments such as `u(t, 0, y)`.
+  - A dependent variable at fixed arguments, such as `u(t, 0, y)` or `u(0, x, y)`, is rejected
+    wherever a dependent variable is accepted (`sol[…]`, `dv`, derivatives, [`normal_flux`](@ref))
+    with the `ArgumentError` "u(t, 0, y) fixes arguments of u(t, x, y); write the dependent
+    variable as u(t, x, y)"; a mesh has no coordinate lines to restrict to. A trace keeps time
+    and replaces the coordinates by one piece, `u(t, Γ)` or `u(Γ, t)`.
 
 The docstrings are on the [API](@ref "API") page.

@@ -3,6 +3,7 @@ using OrdinaryDiffEqBDF: DFBDF
 using FiniteElementMethod: FEMMetadata, piece_nodes, normal_flux, write_vtk
 
 include(joinpath(@__DIR__, "..", "shared", "heat.jl"))
+include(joinpath(@__DIR__, "..", "shared", "references.jl"))
 
 const P1 = Lagrange{RefTriangle, 1}()
 const P2 = Lagrange{RefTriangle, 2}()
@@ -185,6 +186,20 @@ end
     @test sol[Differential(x)(U)] ≈ -ones(getnnodes(grid)) atol = 1.0e-10
     @test sol(0.3, 0.6; dv = Differential(x)(U)) ≈ -1 atol = 1.0e-12
     @test isnan(sol(1.5, 0.5; dv = U))
+    @test sol[U^2 + x] ≈ sol[U] .^ 2 .+ sol[x] atol = 1.0e-12
+    @test sol[2U + Differential(x)(U)] ≈ 1 .- 2 .* sol[x] atol = 1.0e-10
+    @test sol(0.3, 0.6; dv = U * y) ≈ 0.7 * 0.6 atol = 1.0e-12
+    @test sol(Γ; dv = U + y) ≈ 1 .+ sol[y][piece_nodes(sol, Γ)] atol = 1.0e-12
+    fixed = Differential(y)(u(0, y)) + 1
+    msg = ArgumentError("cannot evaluate the expression $fixed on this solution: $(u(0, y)) fixes arguments of u(x, y); write the dependent variable as u(x, y)")
+    @test_throws msg sol[fixed]
+    @test_throws msg sol(0.3, 0.6; dv = fixed)
+    bare = ArgumentError("$(u(0, y)) fixes arguments of u(x, y); write the dependent variable as u(x, y)")
+    for ex in (u(0, y), Differential(y)(u(0, y)))
+        @test_throws bare sol[ex]
+        @test_throws bare sol(0.3, 0.6; dv = ex)
+    end
+    @test_throws bare normal_flux(sol, u(0, y), Γ)
 end
 
 @testset "Points missed by Ferrite's nearest-node search" begin
@@ -351,5 +366,42 @@ end
         @test sol(p[1], p[2]; dv = Differential(y)(u(x, y))) ≈ dgy(p) atol = 1.0e-12
         # Inlet facets span y ∈ [0, 1/3], [1/3, 2/3], [2/3, 1]; -∂u/∂x is linear in y, so the facet mean is its midpoint value.
         @test normal_flux(sol, u(x, y), Γ) ≈ [-dgx(Vec(0.0, ym)) for ym in (1 / 6, 1 / 2, 5 / 6)] atol = 1.0e-12
+    end
+end
+
+# A fixed low facet quadrature order was exact only for straight facets up to P4.
+@testset "Facet-mean flux at high order and on curved facets" begin
+    # u = x y⁴ is in P5; the inlet normal is -x, so the mean of -∂u/∂x = -y⁴ over [a, b] is -(b⁵ - a⁵) / (5 (b - a)).
+    grid = with_inlet(square_grid(3))
+    dh = DofHandler(grid)
+    add!(dh, :u, Lagrange{RefTriangle, 5}())
+    close!(dh)
+    U = zeros(ndofs(dh))
+    apply_analytical!(U, dh, :u, p -> p[1] * p[2]^4)
+    sol, syms = steady_from_dofs(dh, (; u = Lagrange{RefTriangle, 5}()), U)
+    exact = [-((k / 3)^5 - ((k - 1) / 3)^5) / (5 / 3) for k in 1:3]
+    @test normal_flux(sol, syms.u(syms.x, syms.y), syms.Γ) ≈ exact rtol = 1.0e-12
+
+    # Quadratic cells with P2 and P4 fields: the facet-mean flux on the outer arc against a high-order reference.
+    grid = quarter_annulus(3; quadratic = true)
+    for p in (2, 4)
+        ip = Lagrange{RefTriangle, p}()
+        dh = DofHandler(grid)
+        add!(dh, :u, ip)
+        close!(dh)
+        U = zeros(ndofs(dh))
+        apply_analytical!(U, dh, :u, X -> X[1]^2 + X[2]^2)
+        sol, syms = steady_from_dofs(dh, (; u = ip), U)
+        sol.disc_data.pieces[syms.Γ] = "outer"
+        fv = FacetValues(FacetQuadratureRule{RefTriangle}(14), ip, geometric_interpolation(QuadraticTriangle))
+        reference = map(sort!(collect(getfacetset(grid, "outer")); by = fi -> (fi[1], fi[2]))) do (c, f)
+            Ferrite.reinit!(fv, getcoordinates(grid, c), f)
+            u_cell = U[celldofs(dh, c)]
+            q = 1:getnquadpoints(fv)
+            sum(q) do i
+                (function_gradient(fv, i, u_cell) ⋅ getnormal(fv, i)) * getdetJdV(fv, i)
+            end / sum(i -> getdetJdV(fv, i), q)
+        end
+        @test normal_flux(sol, syms.u(syms.x, syms.y), syms.Γ) ≈ reference rtol = 1.0e-10
     end
 end
