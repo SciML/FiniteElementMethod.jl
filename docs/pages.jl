@@ -5,5 +5,6 @@ pages = [
     "Supported equation classes" => "equation_classes.md",
     "Boundary conditions and limitations" => "boundary_conditions.md",
     "Discretization" => "discretization.md",
+    "Navier–Stokes example" => "navier_stokes.md",
     "API" => "api.md",
 ]
