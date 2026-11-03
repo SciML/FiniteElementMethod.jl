@@ -43,6 +43,8 @@ end
         md = ops.metadata
         @test sort(ops.prescribed) == sort([facet_dofs(md, left, u); facet_dofs(md, right, u)])
         @test maximum(abs, ops.K * ones(size(ops.K, 1))) < 1.0e-12
+        # `u0` holds every dof, with the Dirichlet values on the prescribed ones.
+        @test length(ops.u0) == size(ops.K, 1)
         @test ops.u0[facet_dofs(md, left, u)] ≈ fill(2.0, 4)
         # Off the Dirichlet rows the operators are those of the DAEProblem.
         prob = DAEProblem(pdesys, disc)
