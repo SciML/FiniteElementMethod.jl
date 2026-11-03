@@ -294,8 +294,8 @@ throws, since its fields do not live on every cell.
 function cell_dofs(md::FEMMetadata, field)
     name = _field_name(md, field)
     dh = _dh(md)
-    length(dh.subdofhandlers) == 1 ||
-        throw(ArgumentError("cell_dofs needs a discretization without regions; this one has $(length(dh.subdofhandlers)) subdomains"))
+    (length(dh.subdofhandlers) == 1 && length(only(dh.subdofhandlers).cellset) == Ferrite.getncells(_grid(md))) ||
+        throw(ArgumentError("cell_dofs needs a discretization without regions; this one has regions covering $(length(dh.subdofhandlers)) subdomains, not the whole mesh"))
     r = Ferrite.dof_range(dh, name)
     return stack(c -> Ferrite.celldofs(dh, c)[r], 1:Ferrite.getncells(_grid(md)))
 end

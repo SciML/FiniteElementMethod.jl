@@ -88,6 +88,13 @@ end
         @test length(facet_dofs(md, :left, u)) == 5
     end
 
+    @testset "cell_dofs rejects a single region that covers only part of the mesh" begin
+        grid = rectangle_grid(Triangle, (4, 4))
+        addcellset!(grid, "left_half", X -> X[1] <= 0.5 + 1.0e-12)
+        md = heat_metadata(MeshDomain(grid); regions = Dict(u => Region(MeshDomain(grid), :left_half)))
+        @test occursin("regions", errmsg(() -> cell_dofs(md, u)))
+    end
+
     @testset "rejections" begin
         md = heat_metadata(MeshDomain(rectangle_grid(Quadrilateral, (2, 2))))
         @test occursin("not a facet set", errmsg(() -> facet_dofs(md, "nope", u)))
