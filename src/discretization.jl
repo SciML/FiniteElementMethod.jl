@@ -19,7 +19,10 @@ gives a `PDENoTimeSolution`.
   - `spaces`: dependent variable (`u` or `u(t, x, y)`) `=>` `Ferrite.Interpolation`; the
     default is `Lagrange{RefShape, 1}()` on the mesh's reference shape. Fields may have
     different orders, such as the Taylor–Hood pair `Lagrange{RefTriangle, 2}()` for the
-    velocity and `Lagrange{RefTriangle, 1}()` for the pressure.
+    velocity and `Lagrange{RefTriangle, 1}()` for the pressure. The geometry is not a choice here:
+    cells are mapped with the geometric interpolation of the mesh's cell type, so a mesh of
+    quadratic cells (`QuadraticTriangle`, say, from a second-order Gmsh mesh) is mapped
+    isoparametrically.
   - `regions`: dependent variable `=>` `Region(Ω, name)`, a cell set of the mesh on which the
     field lives (a `Ferrite.SubDofHandler`); elsewhere it has no dofs, its equation is not
     assembled, it enters other equations as zero and the solution reads `NaN`. Its
@@ -35,7 +38,8 @@ gives a `PDENoTimeSolution`.
   - `dirichlet`: how Dirichlet conditions enter the DAE (spec §7.3). The default `:algebraic`
     keeps every dof as an unknown and makes each prescribed row the algebraic equation
     `u_d = g_d(t)`. `:eliminate` removes the prescribed dofs: the unknowns are the free dofs
-    `fr`, the operators are `M[fr, fr]` and `K[fr, fr]` and the load is `F[fr] - K[fr, cd] g`.
+    `fr`, the operators are `M[fr, fr]` and `K[fr, fr]` and the load is `F[fr] - K[fr, cd] g`;
+    nonlinear terms are evaluated at the full state with `u_cd = g` and keep their rows `fr`.
     It needs Dirichlet data that are constant in time (they may vary in space); data that
     depend on time raise `ArgumentError("dirichlet = :eliminate needs Dirichlet data that are
     constant in time, but the condition on boundary piece <name> depends on time; use the default
@@ -48,8 +52,8 @@ gives a `PDENoTimeSolution`.
     hold the free dofs alone. `:algebraic` is recommended.
   - `codegen = :mtk` is reserved for a later milestone and raises; remaining keywords are
     passed to the `DAEProblem` (or `NonlinearProblem`), where a keyword given at the
-    `discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate` and `name` are set by the
-    discretization and rejected.
+    `discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate`, `name` and `parameters` are set
+    by the discretization and rejected.
 
 Pieces come from `boundarypiece.(Ω, names)`; on an analytic DomainSets box write
 `boundarypiece.(Ref(rect), names)`, since DomainSets types do not broadcast as scalars.
@@ -63,7 +67,9 @@ Fields are numbered in one order throughout (`DofHandler` blocks, array unknowns
 through `PDEBase.StrongForm.pair_equations`.
 
 Parameters are substituted by the values given in the `PDESystem` when the operators are
-assembled, so `remake` with new parameter values does not reassemble them.
+assembled, and are parameters of the problem at those values. The operators are not
+reassembled for new values: after `remake(prob; p = [k => 3.0])` the solve throws an
+`ArgumentError` naming `k`; build a new problem with `DAEProblem(pdesys, disc)` instead.
 """
 struct FEMDiscretization{T} <: PDEBase.AbstractMeshDiscretization
     domain::PDEBase.MeshDomain
@@ -80,7 +86,7 @@ struct FEMDiscretization{T} <: PDEBase.AbstractMeshDiscretization
 end
 
 # Keywords of `numeric_dae_problem` that the front end sets itself.
-const _RESERVED_KWARGS = (:iv, :unknowns, :du0, :coordinate, :name)
+const _RESERVED_KWARGS = (:iv, :unknowns, :du0, :coordinate, :name, :parameters)
 
 function _check_reserved(kwargs)
     for k in keys(kwargs)
@@ -151,6 +157,6 @@ PDEBase.supported_conditions(::FEMDiscretization) = PDEBase.SupportedConditions(
       - Boundary pieces must be disjoint. A piece with no condition gets the natural zero-flux condition, with a warning when the operator has a flux.
       - Where two Dirichlet pieces of one field meet, the condition listed last in the `PDESystem` wins.
       - Every field with a time derivative needs an initial condition, linear in that one field and finite at every node.
-      - Fields with different interpolations and test spaces other than `Galerkin()` are rejected until M4. Nonlinear operators, time-dependent mass or stiffness coefficients and `codegen = :mtk` are rejected until M3.
+      - Fields with different interpolations and test spaces other than `Galerkin()` are rejected until M4. Time-dependent mass or stiffness coefficients and `codegen = :mtk` are rejected until M3.
     """
 )

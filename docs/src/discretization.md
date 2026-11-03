@@ -99,27 +99,48 @@ with them. Limits: linear terms only, `τ` and `b` must be numbers or expression
 coordinates, time and `hK` (not parameters of the `PDESystem`), and boundary terms stay
 Galerkin.
 
-## Dirichlet conditions
+## Curved meshes
 
-`dirichlet = :algebraic` (the default) keeps every dof as an unknown and makes each prescribed
-row the algebraic equation `u_d = g_d(t)`, so it accepts Dirichlet data of any time dependence.
-`dirichlet = :eliminate` removes the prescribed dofs instead: the `DAEProblem` has only the free
-dofs as unknowns, with `M[fr, fr]`, `K[fr, fr]` and the load `F[fr] - K[fr, cd] g`. It needs
-Dirichlet data that are constant in time, though they may vary in space; time-dependent data
-raise an `ArgumentError` naming the boundary piece. The solution is the same either way:
-`sol[u]`, `sol(t, x, y)`, traces `sol[u(t, Γ)]`, `normal_flux` and `write_vtk` all return the
-full field with `g` at the prescribed nodes. Only `sol.original_sol` and the array unknowns
-hold the free dofs alone.
+The geometry of every cell comes from the mesh: the space, the assembly (facet normals
+included) and the solution interface map each cell with the geometric interpolation of its
+Ferrite cell type. A second-order mesh therefore gives curved cells with no option to set.
+To keep P2 at its full rate on a curved domain, mesh it at order 2 so the mid-side nodes lie
+on the true boundary:
 
 ```julia
-disc = FEMDiscretization(Ω, t; dirichlet = :eliminate)
+using FerriteGmsh, Gmsh
+
+Gmsh.initialize()
+gmsh.option.setNumber("Mesh.MeshSizeMax", 0.05)
+outer, inner = gmsh.model.occ.addCircle(0, 0, 0, 1.0), gmsh.model.occ.addCircle(0, 0, 0, 0.5)
+surface = gmsh.model.occ.addPlaneSurface([gmsh.model.occ.addCurveLoop([outer]), gmsh.model.occ.addCurveLoop([inner])])
+gmsh.model.occ.synchronize()
+gmsh.model.addPhysicalGroup(1, [inner], -1, "inner")
+gmsh.model.addPhysicalGroup(1, [outer], -1, "outer")
+gmsh.model.addPhysicalGroup(2, [surface], -1, "domain")
+gmsh.model.mesh.generate(2)
+gmsh.model.mesh.setOrder(2)         # QuadraticTriangle cells, mid-side nodes on the circles
+grid = FerriteGmsh.togrid()
+Gmsh.finalize()
+
+Ω = MeshDomain(grid)
+Γi, Γo = boundarypiece.(Ω, (:inner, :outer))
+disc = FEMDiscretization(Ω, t; spaces = Dict(u => Lagrange{RefTriangle, 2}()))
 ```
+
+Conditions on the curved pieces are written as on any other piece, with `NormalDerivative(Γ)`
+the derivative along the outward normal of the curved facets. With straight-sided cells
+(`setOrder(1)`) the boundary is a polygon and P2 drops from L2 rate 3 to 2 once boundary data
+or normals of the true curve enter; `test/shared/frontend_tests/curved.jl` measures both on
+this annulus. Use a mesh generator that does not leave nodes outside every cell, such as the
+centre point of Gmsh's built-in-kernel circle arcs: `sol[u]` is `NaN` at such nodes.
 
 ## Steady problems
 
 A `PDESystem` with no time variable, discretized by a `FEMDiscretization` built without one,
-lowers to a `NonlinearProblem` `K u - F = 0`, which Newton solves in one step. Dirichlet rows
-are the algebraic equations `u_d - g_d = 0`, the Jacobian `K` is sparse, and `solve` returns a
+lowers to a `NonlinearProblem` `K u + N(u) - F = 0`, where `N` holds the terms whose
+coefficients depend on the state; without them Newton solves it in one step. Dirichlet rows
+are the algebraic equations `u_d - g_d = 0`, the Jacobian `K + ∂N/∂u` is sparse, and `solve` returns a
 `PDENoTimeSolution` with the same interface as a transient solution, without the time argument:
 `sol[u(x, y)]`, `sol(x, y; dv)`, traces `sol[u(Γ)]`, derivatives such as `sol[Dx(u(x, y))]`,
 `normal_flux` and `write_vtk` (one `.vtu` file). Traces are written `u(Γ)`, since the dependent
@@ -138,9 +159,25 @@ sol = solve(prob, NewtonRaphson())
 sol(0.5, 0.5; dv = u(x, y))
 ```
 
-Nonlinear terms are rejected on the steady path, as on the time-dependent one. Newton starts
-from zero, with the Dirichlet data on any Dirichlet dofs the unknown vector holds; another
-initial guess is a vector laid out like `prob.u0`, passed as `remake(prob; u0)`. With the
+Newton starts from zero, with the Dirichlet data on any Dirichlet dofs the unknown vector
+holds; another initial guess is a vector laid out like `prob.u0`, passed as `remake(prob; u0)`. With the
 default `dirichlet = :algebraic` that vector holds every dof and field `name` occupies
 `FiniteElementMethod.field_range(prob.problem_type.space, name)`. Equations with no entry in
 `pairing` are tested with the remaining dependent variables in declared order.
+
+## Dirichlet conditions
+
+`dirichlet = :algebraic` (the default) keeps every dof as an unknown and makes each prescribed
+row the algebraic equation `u_d = g_d(t)`, so it accepts Dirichlet data of any time dependence.
+`dirichlet = :eliminate` removes the prescribed dofs instead: the `DAEProblem` has only the free
+dofs as unknowns, with `M[fr, fr]`, `K[fr, fr]` and the load `F[fr] - K[fr, cd] g`; nonlinear
+terms are evaluated at the full state with `u_cd = g` and keep their rows `fr`. It needs
+Dirichlet data that are constant in time, though they may vary in space; time-dependent data
+raise an `ArgumentError` naming the boundary piece. The solution is the same either way:
+`sol[u]`, `sol(t, x, y)`, traces `sol[u(t, Γ)]`, `normal_flux` and `write_vtk` all return the
+full field with `g` at the prescribed nodes. Only `sol.original_sol` and the array unknowns
+hold the free dofs alone.
+
+```julia
+disc = FEMDiscretization(Ω, t; dirichlet = :eliminate)
+```

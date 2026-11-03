@@ -25,6 +25,7 @@ FiniteElementMethod.dirichlet_values!
 FiniteElementMethod.FEMOperators
 FiniteElementMethod.FEMOp
 FiniteElementMethod.FEMLoad
+FiniteElementMethod.FEMNonlinear
 FiniteElementMethod.load!
 FiniteElementMethod.dirichlet_rates
 FiniteElementMethod.fem_system

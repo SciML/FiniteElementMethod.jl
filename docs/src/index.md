@@ -6,10 +6,11 @@ on a mesh, derives the Galerkin weak form, assembles it with
 [Ferrite.jl](https://github.com/Ferrite-FEM/Ferrite.jl) and lowers it to a `DAEProblem`.
 
 !!! warning
-    This package is under construction. Linear time-dependent problems with Galerkin testing
-    are supported, with one or more fields; nonlinear terms, periodic
-    conditions and other test spaces raise an error. [Boundary conditions and limitations](@ref)
-    lists every restriction.
+    This package is under construction. Problems with Galerkin testing are supported,
+    including nonlinear terms whose state dependence is in the coefficients, sources and
+    natural conditions (`∇·((1 + u²)∇u)`, `u ∂ₓu`, `u²`, `∂ₙu = −u⁴`); periodic
+    conditions, time-dependent mass or stiffness coefficients and other test spaces raise
+    an error. [Boundary conditions and limitations](@ref) lists every restriction.
 
 [Getting started](@ref) solves a heat equation on a Gmsh mesh. A MethodOfLines user should
 then read [Differences from MethodOfLines](@ref): coordinates are bound differently, boundary
