@@ -270,6 +270,6 @@ end
     )
     # The front end's own: a time-dependent coefficient in a linear operator would need reassembly.
     @test_throws ArgumentError(
-        "time-dependent coefficients in the mass or stiffness operator land in M3: equation 1 has G₁*W₁ + G₁*T*W₁"
+        "time-dependent coefficients in the mass or stiffness operator are not supported: equation 1 has G₁*W₁ + G₁*T*W₁"
     ) lower([Dt(U) ~ Dx((1 + t) * Dx(U))])
 end

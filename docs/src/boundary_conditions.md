@@ -104,7 +104,7 @@ have a flux, the discretization warns about each such piece.
 Neumann conditions. The data `β` may depend on the coordinates, time and parameters. The
 coefficient `α` may depend on the coordinates and parameters but not on time in this release:
 a time-dependent `α` makes the boundary part of the stiffness operator time-dependent, which is
-rejected with `time-dependent coefficients in the mass or stiffness operator land in M3`.
+rejected with `time-dependent coefficients in the mass or stiffness operator are not supported`.
 Like a Neumann condition, it enters the weak form as a facet integral.
 
 ## Periodic conditions

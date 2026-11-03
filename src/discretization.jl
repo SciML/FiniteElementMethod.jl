@@ -64,7 +64,7 @@ gives a `PDENoTimeSolution`.
     still returns full fields, with `g` at the prescribed nodes, through `sol[u]`,
     `sol(t, x, y)`, traces and `write_vtk`; only `sol.original_sol` and the array unknowns
     hold the free dofs alone. `:algebraic` is recommended.
-  - `codegen = :mtk` is reserved for a later milestone and raises; remaining keywords are
+  - `codegen = :mtk` is reserved and raises; remaining keywords are
     passed to the `DAEProblem` (or `NonlinearProblem`), where a keyword given at the
     `discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate`, `name` and `parameters` are set
     by the discretization and rejected.
@@ -122,7 +122,7 @@ function FEMDiscretization(
     )
     domain.mesh isa Ferrite.Grid ||
         throw(ArgumentError("FEMDiscretization needs a MeshDomain of a Ferrite.Grid, got a mesh of type $(typeof(domain.mesh))"))
-    codegen === :mtk && throw(ArgumentError("codegen = :mtk lands in M3; use the default codegen = :numeric"))
+    codegen === :mtk && throw(ArgumentError("codegen = :mtk is not supported; use the default codegen = :numeric"))
     codegen === :numeric || throw(ArgumentError("codegen must be :numeric, got $(repr(codegen))"))
     dirichlet in (:algebraic, :eliminate) ||
         throw(ArgumentError("dirichlet must be :algebraic or :eliminate, got $(repr(dirichlet))"))

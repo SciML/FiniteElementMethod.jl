@@ -77,13 +77,13 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         Ω = box()
         Γl, Γr = sides(Ω)
         @test_throws ArgumentError(
-            "periodic conditions need milestone M4 (Ferrite PeriodicDirichlet): u(t, Γ_left) ~ u(t, Γ_right)"
+            "periodic boundary conditions are not supported: u(t, Γ_left) ~ u(t, Γ_right)"
         ) lower([heat], [u(t, Γl) ~ u(t, Γr), ic], Ω)
     end
 
     @testset "reserved options" begin
         Ω = box()
-        @test_throws ArgumentError("codegen = :mtk lands in M3; use the default codegen = :numeric") FEMDiscretization(
+        @test_throws ArgumentError("codegen = :mtk is not supported; use the default codegen = :numeric") FEMDiscretization(
             Ω, t; codegen = :mtk
         )
         @test_throws ArgumentError("dirichlet must be :algebraic or :eliminate, got :condense") FEMDiscretization(
@@ -130,7 +130,7 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         Ω = box()
         td = Dt(u(t, x, y)) ~ Dx((1 + t) * Dx(u(t, x, y))) + Dy((1 + t) * Dy(u(t, x, y)))
         @test_throws ArgumentError(
-            "time-dependent coefficients in the mass or stiffness operator land in M3: equation 1 has " *
+            "time-dependent coefficients in the mass or stiffness operator are not supported: equation 1 has " *
                 "G₁*W₁ + G₂*W₂ + G₁*T*W₁ + G₂*T*W₂"
         ) lower([td], [dirichlet(Ω); ic], Ω)
     end
