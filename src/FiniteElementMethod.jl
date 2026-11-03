@@ -21,7 +21,7 @@ using PDEBase: PDEBase
 using PrecompileTools: PrecompileTools
 using RuntimeGeneratedFunctions: RuntimeGeneratedFunctions
 using SciMLBase: SciMLBase, DAEFunction, DAEProblem
-using SciMLBase.SymbolicIndexingInterface: getp, variable_index
+using SciMLBase.SymbolicIndexingInterface: SymbolicIndexingInterface, getp, parameter_index, variable_index
 using SparseArrays: SparseMatrixCSC, nonzeros, nzrange, rowvals
 using SymbolicUtils: SymbolicUtils
 using Symbolics: Symbolics, Equation, Num, @register_array_symbolic, substitute, unwrap
