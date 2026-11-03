@@ -20,7 +20,7 @@ using NonlinearSolveFirstOrder: NewtonRaphson
 using PDEBase: PDEBase
 using PrecompileTools: PrecompileTools
 using RuntimeGeneratedFunctions: RuntimeGeneratedFunctions
-using SciMLBase: SciMLBase, DAEFunction, DAEProblem, NonlinearProblem
+using SciMLBase: SciMLBase, DAEFunction, DAEProblem
 using SciMLBase.SymbolicIndexingInterface: getp, variable_index
 using SparseArrays: SparseMatrixCSC, nonzeros, nzrange, rowvals
 using SymbolicUtils: SymbolicUtils
