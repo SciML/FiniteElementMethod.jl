@@ -32,7 +32,7 @@ Restrictions of this release:
   - Boundary pieces must be disjoint. A piece with no condition gets the natural zero-flux condition, with a warning when the operator has a flux.
   - Where two Dirichlet pieces of one field meet, the condition listed last in the `PDESystem` wins.
   - Every field with a time derivative needs an initial condition, linear in that one field and finite at every node.
-  - `dirichlet = :eliminate`, fields with different interpolations and test spaces other than `Galerkin()` are rejected until M4. Nonlinear operators, time-dependent mass or stiffness coefficients and `codegen = :mtk` are rejected until M3.
+  - Fields with different interpolations and test spaces other than `Galerkin()` are rejected until M4. Nonlinear operators, time-dependent mass or stiffness coefficients and `codegen = :mtk` are rejected until M3.
 
 "Time-dependent" means boundary data that varies with time, for every condition kind.
 
@@ -132,7 +132,6 @@ is an error that names the problem; nothing falls back to `mtkcompile`.
 | A time-dependent coefficient in the mass or stiffness operator, such as `Dx((1 + t) * Dx(u))` | error; lands in M3 |
 | A time-dependent Robin coefficient, such as `Dn(u(t, Γ)) + (1 + t) * u(t, Γ) ~ 0` | error; lands in M3 |
 | `FEMDiscretization(…; codegen = :mtk)` | error; lands in M3 |
-| `FEMDiscretization(…; dirichlet = :eliminate)` | error; lands in M4 |
 | A test space other than `Galerkin()` | error; lands in M4 |
 | A mesh with mixed cell types | error; lands in M4 |
 | Fields with different interpolations, such as P2 velocity and P1 pressure | error; lands in M4 |

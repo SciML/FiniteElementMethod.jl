@@ -179,7 +179,8 @@ function _check_linear(wf)
 end
 
 function _parameter_values(pdesys, ctx)
-    given = Dict{Any, Any}(unwrap(p.first) => p.second for p in pdesys.ps if p isa Pair)
+    ps = pdesys.ps isa SciMLBase.NullParameters ? () : pdesys.ps
+    given = Dict{Any, Any}(unwrap(p.first) => p.second for p in ps if p isa Pair)
     return map(ctx.params) do p
         haskey(given, p) && given[p] isa Number ||
             throw(ArgumentError("parameter $p needs a numeric value in the PDESystem, as $p => value"))
@@ -357,19 +358,32 @@ function _lower(pdesys, disc::FEMDiscretization)
     dirichlet = emit_dirichlet(an)
     t0, t1 = steady ? (0.0, 0.0) : v.intervals[v.time]
     space, names, ips = _space(disc, ctx, an, dirichlet, pvals, t0)
-    timedep_dirichlet = any(bc -> _depends(bc.g, [an.slots.T]), an.essential)
-    ops, coords = _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
+    timedep = findfirst(bc -> _depends(bc.g, [an.slots.T]), an.essential)
+    disc.dirichlet === :eliminate && timedep !== nothing && throw(
+        ArgumentError(
+            "dirichlet = :eliminate needs Dirichlet data that are constant in time, but the condition on boundary piece " *
+                "$(an.essential[timedep].piece.name) depends on time; use the default dirichlet = :algebraic"
+        )
+    )
+    ops, coords = _operators(space, wf, names, dirichlet, pvals, t0, timedep !== nothing)
     u0 = _initial_values(Equation[b.eq for b in ics], ctx, space, coords, an, names, pvals)
     dirichlet_values!(view(u0, ops.prescribed), ops.load, t0)
-    iv = disc.time
-    unknowns = map(names) do name
-        n = length(field_range(space, name))
-        steady ? only(@variables $name[1:n]) : only(@variables $name(iv)[1:n])
+    elimination = nothing
+    unknown_u0 = u0
+    if disc.dirichlet === :eliminate
+        ops, elimination = eliminate_dirichlet(ops)
+        unknown_u0 = u0[elimination.free]
     end
-    fields = [FieldInfo(dv, name, u, ip) for (dv, name, u, ip) in zip(StrongForm.declared_fields(sys, v), names, unknowns, ips)]
+    iv = disc.time
+    unknowns = [(steady ? only(@variables $name[1:length(r)]) : only(@variables $name(iv)[1:length(r)])) for (name, r) in ops.fields]
+    unknown_of = Dict(zip(first.(ops.fields), unknowns))
+    fields = [
+        FieldInfo(dv, name, get(unknown_of, name, nothing), ip)
+            for (dv, name, ip) in zip(StrongForm.declared_fields(sys, v), names, ips)
+    ]
     pieces = Dict{Any, String}(Γ => String(Γ.name) for Γ in PDEBase.boundarypieces(disc.domain))
-    md = FEMMetadata(space, iv, v.x̄, fields, pieces, pdesys; u0)
-    return (; ops, u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys))
+    md = FEMMetadata(space, iv, v.x̄, fields, pieces, pdesys; u0, elimination)
+    return (; ops, u0 = unknown_u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys))
 end
 
 # `K u - F` with the Dirichlet rows `u_d - g_d`: `K` holds `e_d` and `F` holds `g_d` there.
@@ -395,7 +409,8 @@ end
     discretize(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
 
 Discretize `pdesys` with `disc` and return the `DAEProblem` `M du + K u = F(t)` of the
-Galerkin operators, with Dirichlet rows `u_d = g_d(t)` as algebraic equations, a sparse
+Galerkin operators, with Dirichlet rows `u_d = g_d(t)` as algebraic equations (or, with
+`dirichlet = :eliminate`, restricted to the free dofs), a sparse
 analytic Jacobian and the `FEMMetadata` as its `problem_type`, so `solve` returns a
 `PDETimeSeriesSolution`. Nothing calls `mtkcompile`; anything this milestone cannot
 discretize raises. A `disc` without a time variable lowers instead to the steady

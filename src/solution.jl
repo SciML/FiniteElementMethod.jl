@@ -3,7 +3,8 @@
 
 One dependent variable of a FEM discretization: the `PDESystem` dependent variable `dv`
 (for example `u(t, x, y)`), the name of its field in the `DofHandler`, the array unknown
-of the discretized system (for example `u(t)[1:n]`) and the field's interpolation.
+of the discretized system (for example `u(t)[1:n]`, or `nothing` for a field that
+`dirichlet = :eliminate` prescribes entirely) and the field's interpolation.
 """
 struct FieldInfo
     dv::Any
@@ -13,7 +14,7 @@ struct FieldInfo
 end
 
 """
-    FEMMetadata(space, time, x̄, fields, pieces, pdesys; u0 = Float64[])
+    FEMMetadata(space, time, x̄, fields, pieces, pdesys; u0 = Float64[], elimination = nothing)
 
 Discretization metadata passed as the `problem_type` of the `DAEProblem` (or, for a steady
 problem with `time === nothing`, the `NonlinearProblem`), so that `solve` returns a
@@ -27,6 +28,8 @@ called in the variables of the `PDESystem`.
   - `fields`: one [`FieldInfo`](@ref) per dependent variable.
   - `pieces`: maps each boundary piece to the name of its Ferrite facet set.
   - `pdesys`: the `PDESystem` that was discretized.
+  - `elimination`: `nothing`, or for `dirichlet = :eliminate` the data that rebuild the full
+    dof vector from the solver's free dofs, so every accessor returns full fields.
 """
 struct FEMMetadata{hasTime, DH, PDE, Sp} <: SciMLBase.AbstractDiscretizationMetadata{hasTime}
     space::Sp
@@ -37,13 +40,14 @@ struct FEMMetadata{hasTime, DH, PDE, Sp} <: SciMLBase.AbstractDiscretizationMeta
     pdesys::PDE
     metadata::Ref{Any}
     u0::Vector
+    elimination::Union{Nothing, DirichletElimination}
 end
 
-function FEMMetadata(space, time, x̄, fields, pieces, pdesys; u0 = Float64[])
+function FEMMetadata(space, time, x̄, fields, pieces, pdesys; u0 = Float64[], elimination = nothing)
     hasTime = time === nothing ? Val(false) : Val(true)
     return FEMMetadata{hasTime, typeof(space.dh), typeof(pdesys), typeof(space)}(
         space, time, collect(Any, x̄), collect(FieldInfo, fields),
-        Dict{Any, String}(pieces), pdesys, Ref{Any}(nothing), u0
+        Dict{Any, String}(pieces), pdesys, Ref{Any}(nothing), u0, elimination
     )
 end
 
@@ -104,6 +108,8 @@ function _locate(grid, pts)
 end
 
 _dh(md::FEMMetadata) = md.space.dh
+# The full dof vector of a solver state.
+_full(md::FEMMetadata, U) = md.elimination === nothing ? U : full_state(md.elimination, U)
 _grid(md::FEMMetadata) = _dh(md).grid
 # Ferrite's FE values default to linear geometry, which breaks on quadratic cells.
 _geometry(md::FEMMetadata) = Ferrite.geometric_interpolation(Ferrite.getcelltype(_grid(md)))
@@ -130,7 +136,7 @@ function _wrap_parts(sol, md::FEMMetadata, states)
     for f in md.fields
         out = Matrix{T}(undef, nt, Ferrite.getnnodes(_grid(md)))
         for (k, U) in enumerate(states)
-            out[k, :] .= Ferrite.evaluate_at_grid_nodes(_dh(md), U, f.name)
+            out[k, :] .= Ferrite.evaluate_at_grid_nodes(_dh(md), _full(md, U), f.name)
         end
         umap[Num(f.dv)] = _time_last(md, f) ? permutedims(out) : out
     end
@@ -178,8 +184,8 @@ function Base.lastindex(::FEMSolution, ::Integer)
     throw(ArgumentError("`end` cannot be resolved in `sol[dv, inds...]`; index the field instead: `sol[dv][end, :]`."))
 end
 
-_states(A::FEMTimeSolution) = A.original_sol.u
-_states(A::FEMSteadySolution) = [A.original_sol.u]
+_states(A::FEMTimeSolution) = [_full(A.disc_data, U) for U in A.original_sol.u]
+_states(A::FEMSteadySolution) = [_full(A.disc_data, A.original_sol.u)]
 # `rows` holds one row per saved time.
 _stack(A::FEMTimeSolution, f, rows) = _time_last(A.disc_data, f) ? reduce(hcat, rows) : permutedims(reduce(hcat, rows))
 _stack(::FEMSteadySolution, f, rows) = only(rows)
@@ -350,7 +356,7 @@ Base.getindex(A::FEMSolution, sym::Num, args...) = A[sym][args...]
 function _dofs_at(A::FEMTimeSolution, t::Real)
     lo, hi = minmax(A.t[1], A.t[end])
     lo <= t <= hi || throw(DomainError(t, "outside the saved time span $(A.t[1]) .. $(A.t[end])"))
-    return A.original_sol(t)
+    return _full(A.disc_data, A.original_sol(t))
 end
 
 _axis(a) = a isa AbstractVector ? collect(a) : [a]
