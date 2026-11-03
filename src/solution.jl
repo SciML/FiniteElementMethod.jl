@@ -273,7 +273,7 @@ coordinates only where the field lives; this covers every dof of every field.
 """
 function dof_coordinates(md::FEMMetadata)
     dh = _dh(md)
-    dim = Ferrite.getspatialdim(_grid(md))
+    dim = length(Ferrite.get_node_coordinate(first(Ferrite.getnodes(_grid(md)))))
     X = zeros(dim, Ferrite.ndofs(dh))
     for name in map(f -> f.name, md.fields), d in 1:dim
         a = fill(NaN, Ferrite.ndofs(dh))
