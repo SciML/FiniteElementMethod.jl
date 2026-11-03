@@ -566,13 +566,17 @@ builds its own system around them (such as a component with boundary ports). Ret
   - `differential_vars`: rows of `M` with a nonzero entry;
   - `prescribed`, `dirichlet_values`: the dofs of the `PDESystem`'s Dirichlet conditions and
     their values (the rows `M` and `K` would have replaced);
-  - `u0`: the initial dof vector, with the Dirichlet values on the prescribed dofs;
+  - `u0`: the initial dof vector, with the Dirichlet values on the prescribed dofs. It always has
+    every dof, also under `dirichlet = :eliminate`, where the `DAEProblem`'s own `u0` holds the
+    free dofs only;
   - `metadata`: the [`FEMMetadata`](@ref), for [`facet_dofs`](@ref),
     [`dof_coordinates`](@ref) and [`cell_dofs`](@ref).
 
-It is the linear, time-independent case only: a nonlinear term, a time-dependent source or
-time-dependent Dirichlet data has no data form and raises an `ArgumentError`. Parameters are
-substituted by their values, as for the `DAEProblem`.
+It is the linear, time-independent case only, and anything else raises an `ArgumentError`: a
+nonlinear term ("operators returns linear operators only, but the PDESystem has nonlinear
+terms"), a time-dependent source ("operators needs time-independent sources, but a source
+depends on time") and time-dependent Dirichlet data ("operators needs Dirichlet data that are
+constant in time"). Parameters are substituted by their values, as for the `DAEProblem`.
 """
 function operators(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
     parts = _lower(pdesys, disc)
