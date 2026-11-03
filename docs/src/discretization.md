@@ -10,6 +10,7 @@ FiniteElementMethod.SciMLBase.discretize(::FiniteElementMethod.ModelingToolkit.P
 FiniteElementMethod.AbstractTestSpace
 FiniteElementMethod.Galerkin
 FiniteElementMethod.assemble_sources!
+FiniteElementMethod.operators
 ```
 
 `discretize(pdesys, disc)` returns the `DAEProblem` of the discretization. `symbolic_discretize(pdesys, disc)`
