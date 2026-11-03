@@ -50,6 +50,21 @@ boundary pieces are `boundarypiece.(Ω, (:left, :right, :bottom, :top))` in 2D a
 | `solution_access.jl` | `sol(t, x, y; dv)` points, grids, outside the mesh | heat | 2 | P2 | Dirichlet |
 | `solution_access.jl` | derivative and trace keys | heat | 2 | P2 | Dirichlet |
 | `solution_access.jl` | parameter values set the diffusivity | heat | 2 | P2 | Dirichlet |
+| `advection_diffusion.jl` | exact reproduction with constant velocity | advection-diffusion with source | 1 | P2 | time-dependent Dirichlet |
+| `advection_diffusion.jl` | P2 convergence rate 3 with manufactured source | advection-diffusion with source | 1 | P2 | zero Dirichlet |
+| `advection_diffusion.jl` | exact reproduction with velocity vector on triangles and quadrilaterals | advection-diffusion with source | 2 | P2 | time-dependent Dirichlet |
+| `advection_diffusion.jl` | P2 convergence rate 3 with manufactured source | advection-diffusion with source | 2 | P2 | zero Dirichlet |
+| `reaction_diffusion.jl` | linear reaction with source on triangles and quadrilaterals | reaction-diffusion | 2 | P2 | zero Dirichlet |
+| `reaction_diffusion.jl` | decay reaction, P2 convergence rate 3 | reaction-diffusion | 1 | P2 | zero Dirichlet |
+| `reaction_diffusion.jl` | two linearly coupled fields, exact | coupled reaction-diffusion | 1 | P2 | time-dependent Dirichlet |
+| `reaction_diffusion.jl` | nonlinear reaction rejected (M3) | logistic reaction-diffusion | 2 | P1 | zero Dirichlet |
+| `variable_coefficient_diffusion.jl` | `Dx(a Dx(u))`, rate 3 | divergence-form diffusion | 1 | P2 | zero Dirichlet |
+| `variable_coefficient_diffusion.jl` | `a Dxx(u)`, rate 3 | non-divergence-form diffusion | 1 | P2 | zero Dirichlet |
+| `variable_coefficient_diffusion.jl` | `Dx(a Dx(u)) + Dy(a Dy(u))`, rate 3, triangles and quadrilaterals | divergence-form diffusion | 2 | P2 | zero Dirichlet |
+| `variable_coefficient_diffusion.jl` | `a (Dxx(u) + Dyy(u))`, rate 3, triangles and quadrilaterals | non-divergence-form diffusion | 2 | P2 | zero Dirichlet |
+| `source_terms.jl` | manufactured source, rates 2 and 3 | heat with source | 1 | P1, P2 | time-dependent Dirichlet |
+| `source_terms.jl` | manufactured source, rate 3, triangles and quadrilaterals | heat with source | 2 | P2 | time-dependent Dirichlet |
+| `source_terms.jl` | polynomial solution, exact | heat with source | 2 | P2 | time-dependent Dirichlet |
 | `rejections.jl` | rejected boundary conditions, equations, options, domains, shared facets | heat | 1 to 2 | | |
 
 ## Not covered on this branch
