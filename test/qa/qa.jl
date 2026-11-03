@@ -2,7 +2,8 @@ using SciMLTesting, FiniteElementMethod, Test
 using JET
 
 # `Ferrite.DofOrder.FieldWise` is Ferrite's documented renumbering API but is not declared `public`;
-# ForwardDiff documents `derivative` as its API but does not declare it `public`;
+# ForwardDiff documents `derivative`, and `Dual`, `Partials`, `value` and `partials` for custom rules, as its API
+# but declares none of them `public`;
 # `Ferrite.dirichlet_facetdof_indices` (a facet's local nodes) has no public spelling in Ferrite 1.
 # `Ferrite.vertices`, `reference_facets` and `getrefdim` (the corner nodes of a cell, of its facets, and the
 # dimension of its reference shape) identify the facets of a submesh and have no public spelling in Ferrite 1.
@@ -16,7 +17,10 @@ run_qa(
     aqua_kwargs = (; piracies = (; treat_as_own = [FiniteElementMethod.Ferrite.Grid])),
     ei_kwargs = (;
         all_qualified_accesses_are_public = (;
-            ignore = (:FieldWise, :derivative, :dirichlet_facetdof_indices, :vertices, :reference_facets, :getrefdim),
+            ignore = (
+                :FieldWise, :derivative, :Dual, :Partials, :value, :partials, :dirichlet_facetdof_indices,
+                :vertices, :reference_facets, :getrefdim,
+            ),
         ),
         all_explicit_imports_via_owners = (; ignore = LTS_MTK_OWNER),
         all_qualified_accesses_via_owners = (; ignore = LTS_MTK_OWNER),

@@ -52,6 +52,30 @@ end
 
 rates(errs) = [log2(errs[i] / errs[i + 1]) for i in 1:(length(errs) - 1)]
 
+# Taylor–Hood Stokes on the unit square: stream function ψ = x²(1 − x)²y²(1 − y)², u = (ψ_y, −ψ_x), which
+# vanishes on the boundary, and p = x³ − y³; the source makes (u, p) steady.
+const U1, U2, P = u1(t, x, y), u2(t, x, y), p(t, x, y)
+const STOKES_ψ = x^2 * (1 - x)^2 * y^2 * (1 - y)^2
+const STOKES_SOLUTION = (expand_derivatives(Dy(STOKES_ψ)), expand_derivatives(-Dx(STOKES_ψ)), x^3 - y^3)
+const STOKES_EXACT = map(e -> Symbolics.build_function(e, x, y; expression = Val(false)), STOKES_SOLUTION)
+function stokes_problem(ct, n; kw...)
+    u1s, u2s, ps = STOKES_SOLUTION
+    f1, f2 = expand_derivatives(-Δ(u1s) + Dx(ps)), expand_derivatives(-Δ(u2s) + Dy(ps))
+    continuity = 0 ~ Dx(U1) + Dy(U2)
+    eqs = [Dt(U1) ~ Δ(U1) - Dx(P) + f1, Dt(U2) ~ Δ(U2) - Dy(P) + f2, continuity]
+    Ω = MeshDomain(corner_grid(ct, n))
+    Γs = boundarypiece.(Ω, (:left, :right, :bottom, :top, :corner))
+    bcs = [
+        [u1(t, Γ) ~ 0 for Γ in Γs]; [u2(t, Γ) ~ 0 for Γ in Γs]; p(t, Γs[end]) ~ x^3 - y^3;
+        u1(0, x, y) ~ 0; u2(0, x, y) ~ 0; p(0, x, y) ~ x^3 - y^3
+    ]
+    @named stokes = PDESystem(eqs, bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.5)], [t, x, y], [U1, U2, P], [])
+    shape = SHAPE[ct]
+    P2, P1 = Lagrange{shape, 2}(), Lagrange{shape, 1}()
+    disc = FEMDiscretization(Ω, t; spaces = Dict(u1 => P2, u2 => P2, p => P1), pairing = Dict(continuity => p), kw...)
+    return discretize(stokes, disc)
+end
+
 @testset verbose = true "multi-field front end" begin
     @testset "unequal orders, $(ct)s: rates p + 1 for both fields" for ct in (Triangle, Quadrilateral)
         # u in P2/Q2, w in P1/Q1. w's equation reads u but not the reverse, so u keeps its own rate.
@@ -87,37 +111,49 @@ rates(errs) = [log2(errs[i] / errs[i + 1]) for i in 1:(length(errs) - 1)]
     end
 
     @testset "Taylor–Hood Stokes, $(ct)s: velocity rate 3, pressure rate 2" for ct in (Triangle, Quadrilateral)
-        # Stream function ψ = x²(1 − x)²y²(1 − y)², u = (ψ_y, −ψ_x), which vanishes on the boundary, and p = x³ − y³;
-        # the source makes (u, p) steady. Marched from u = 0 to the steady state (the slowest Stokes mode decays like
+        # Marched from u = 0 to the steady state (the slowest Stokes mode decays like
         # e^{−52t}). The continuity rows are algebraic and the pressure is absent from them (index 2): the pressure
-        # starts from its exact values, is pinned on the one-facet piece "corner", and is left out of the error
-        # control through a large abstol, without which DFBDF fails at t ≈ 1e-10 on the 16 × 16 meshes.
-        U1, U2, P = u1(t, x, y), u2(t, x, y), p(t, x, y)
-        ψ = x^2 * (1 - x)^2 * y^2 * (1 - y)^2
-        u1s, u2s, ps = expand_derivatives(Dy(ψ)), expand_derivatives(-Dx(ψ)), x^3 - y^3
-        f1, f2 = expand_derivatives(-Δ(u1s) + Dx(ps)), expand_derivatives(-Δ(u2s) + Dy(ps))
-        continuity = 0 ~ Dx(U1) + Dy(U2)
-        eqs = [Dt(U1) ~ Δ(U1) - Dx(P) + f1, Dt(U2) ~ Δ(U2) - Dy(P) + f2, continuity]
-        exact = map(e -> Symbolics.build_function(e, x, y; expression = Val(false)), (u1s, u2s, ps))
-        shape = SHAPE[ct]
+        # starts from its exact values and is pinned on the one-facet piece "corner". FEMDiscretization's default
+        # algebraic_abstol = :auto leaves the algebraic rows out of the error control (abstol 1e8), without which
+        # DFBDF fails at t ≈ 1e-10 on the 16 × 16 meshes; no abstol is written here.
         errs = map((4, 8, 16)) do n
-            Ω = MeshDomain(corner_grid(ct, n))
-            Γs = boundarypiece.(Ω, (:left, :right, :bottom, :top, :corner))
-            bcs = [
-                [u1(t, Γ) ~ 0 for Γ in Γs]; [u2(t, Γ) ~ 0 for Γ in Γs]; p(t, Γs[end]) ~ x^3 - y^3;
-                u1(0, x, y) ~ 0; u2(0, x, y) ~ 0; p(0, x, y) ~ x^3 - y^3
-            ]
-            @named stokes = PDESystem(eqs, bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.5)], [t, x, y], [U1, U2, P], [])
-            P2, P1 = Lagrange{shape, 2}(), Lagrange{shape, 1}()
-            prob = discretize(stokes, FEMDiscretization(Ω, t; spaces = Dict(u1 => P2, u2 => P2, p => P1), pairing = Dict(continuity => p)))
-            @test count(.!prob.differential_vars) > length(FiniteElementMethod.field_range(prob.problem_type.space, :p))
-            abstol = [d ? 1.0e-8 : 1.0e8 for d in prob.differential_vars]
-            sol = solve(prob, EXACT_ROWS; abstol, reltol = 1.0e-8)
+            prob = stokes_problem(ct, n)
+            abstol = prob.kwargs[:abstol]
+            @test abstol == [d ? 1.0e-6 : 1.0e8 for d in prob.differential_vars]
+            space = prob.problem_type.space
+            pressure = setdiff(FiniteElementMethod.field_range(space, :p), FiniteElementMethod.prescribed_dofs(space))
+            @test !isempty(pressure) && all(==(1.0e8), abstol[pressure])
+            @test count(==(1.0e8), abstol) > length(pressure)
+            sol = solve(prob, EXACT_ROWS; reltol = 1.0e-8)
             @test SciMLBase.successful_retcode(sol)
-            [rms_error(sol, dv, (_, x_, y_) -> e(x_, y_)) for (dv, e) in zip((U1, U2, P), exact)]
+            [rms_error(sol, dv, (_, x_, y_) -> e(x_, y_)) for (dv, e) in zip((U1, U2, P), STOKES_EXACT)]
         end
         @test all(>(2.7), rates(getindex.(errs, 1))) && all(>(2.7), rates(getindex.(errs, 2)))
         @test all(>(1.7), rates(getindex.(errs, 3)))
+    end
+
+    @testset "algebraic_abstol off with a hand-written vector, a scalar abstol, an override at solve" begin
+        n = 8
+        # Hand-written vector (the recipe before the keyword) with the keyword off: the same solution.
+        prob = stokes_problem(Quadrilateral, n; algebraic_abstol = nothing)
+        @test !haskey(prob.kwargs, :abstol)
+        abstol = [d ? 1.0e-8 : 1.0e8 for d in prob.differential_vars]
+        manual = solve(prob, EXACT_ROWS; abstol, reltol = 1.0e-8)
+        @test SciMLBase.successful_retcode(manual)
+        # A scalar abstol given to discretize goes to the differential rows; the solve gives the same solution.
+        auto = solve(stokes_problem(Quadrilateral, n; abstol = 1.0e-8), EXACT_ROWS; reltol = 1.0e-8)
+        @test auto.t == manual.t && auto.original_sol.u[end] == manual.original_sol.u[end]
+        # Measured on this 8 × 8 Q2/Q1 mesh: 1.6e-5 for each velocity component, 2.7e-3 for the pressure.
+        errs = [rms_error(manual, dv, (_, x_, y_) -> e(x_, y_)) for (dv, e) in zip((U1, U2, P), STOKES_EXACT)]
+        @test all(errs .< [3.0e-5, 3.0e-5, 6.0e-3])
+        # An abstol given to solve replaces the problem's vector.
+        prob = stokes_problem(Quadrilateral, n; algebraic_abstol = 1.0e4)
+        @test prob.kwargs[:abstol] == [d ? 1.0e-6 : 1.0e4 for d in prob.differential_vars]
+        @test SciMLBase.init(prob, EXACT_ROWS).opts.abstol == prob.kwargs[:abstol]
+        @test SciMLBase.init(prob, EXACT_ROWS; abstol = 1.0e-9).opts.abstol == 1.0e-9
+        # An array abstol given to discretize is used as it is.
+        given = fill(1.0e-7, length(prob.u0))
+        @test stokes_problem(Quadrilateral, n; abstol = given).kwargs[:abstol] === given
     end
 
     @testset "a field on a region reads NaN outside it" begin

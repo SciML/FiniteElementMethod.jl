@@ -8,7 +8,7 @@
 # Tracking: move to PDEBase's `symbolic_discretize` with hook methods once the numeric path builds
 # its system through `generate_system` (PDEBase M0 release as the compat floor).
 
-const _PERIODIC_M4 = "periodic conditions need milestone M4 (Ferrite PeriodicDirichlet)"
+const _PERIODIC_UNSUPPORTED = "periodic boundary conditions are not supported"
 
 _unwrap_arg(a) = SymbolicUtils.unwrap_const(unwrap(a))
 
@@ -56,7 +56,16 @@ function _check_domains(pdesys, disc::FEMDiscretization)
     pairings[i].domain === disc.domain ||
         throw(ArgumentError("the PDESystem's MeshDomain is not the domain of the FEMDiscretization"))
     t = disc.time
-    t === nothing && return nothing
+    if t === nothing
+        j = findfirst(d -> d.domain isa DomainSets.AbstractInterval, pairings)
+        j === nothing || throw(
+            ArgumentError(
+                "the PDESystem pairs $(pairings[j].variables) with an interval, but the FEMDiscretization has no time " *
+                    "variable; for a time-dependent problem write FEMDiscretization(Ω, $(pairings[j].variables))"
+            )
+        )
+        return nothing
+    end
     j = findfirst(d -> isequal(unwrap(d.variables), unwrap(t)), pairings)
     (j === nothing || !(pairings[j].domain isa DomainSets.AbstractInterval)) &&
         throw(ArgumentError("time $t must be paired with an interval, as in $t ∈ Interval(0.0, 1.0)"))
@@ -79,8 +88,8 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
     t = v.time
     for u in dvs
         args = SymbolicUtils.arguments(unwrap(u))
-        t !== nothing && any(a -> isequal(a, t), args) && !isequal(first(args), t) &&
-            throw(ArgumentError("time must be the first argument of $u; time-last ordering lands later"))
+        t !== nothing && any(a -> isequal(a, t), args[2:(end - 1)]) &&
+            throw(ArgumentError("time must be the first or the last argument of $u, as in u(t, x, y) or u(x, y, t)"))
     end
     grid = disc.domain.mesh
     if !isconcretetype(Ferrite.getcelltype(grid))
@@ -91,7 +100,7 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
                     "`spaces`; $(join(unset, ", ")) has none"
             )
         )
-        throw(ArgumentError("meshes with mixed cell types land in M4"))
+        throw(ArgumentError("meshes with mixed cell types are not supported; use a mesh with a single cell type"))
     end
     check_facetsets(grid, [Γ.name for Γ in _condition_pieces(pdesys.bcs)])
     return nothing
@@ -99,7 +108,7 @@ end
 
 function _boundary_map(bcs, v, disc)
     for eq in bcs
-        length(_trace_pieces(eq.lhs - eq.rhs)) > 1 && throw(ArgumentError("$(_PERIODIC_M4): $eq"))
+        length(_trace_pieces(eq.lhs - eq.rhs)) > 1 && throw(ArgumentError("$(_PERIODIC_UNSUPPORTED): $eq"))
     end
     orders = Dict(x => PDEBase.d_orders(x, bcs) for x in PDEBase.all_ivs(v))
     return PDEBase.parse_bcs(bcs, v, orders, disc)
@@ -122,6 +131,14 @@ function _paired(an, eqs, ctx, disc)
         f = findfirst(op -> isequal(op, _field_op(dv)), ctx.ops)
         f === nothing && throw(ArgumentError("pairing value $dv is not a dependent variable of the system"))
         explicit[e] = f
+    end
+    # A steady system has no time derivatives to pair by, so the unnamed equations take the
+    # unnamed fields in declared order.
+    if disc.time === nothing
+        free = [f for f in eachindex(ctx.ops) if !(f in values(explicit))]
+        for e in eachindex(eqs)
+            haskey(explicit, e) || (explicit[e] = popfirst!(free))
+        end
     end
     fields = StrongForm.pair_equations(an.mass, an.slots; pairing = explicit)
     order = invperm(fields)
@@ -150,19 +167,18 @@ function _check_supg(test_space, an, ctx)
     return nothing
 end
 
-function _check_linear(wf)
+function _check_terms(wf)
     for term in vcat(wf.volume, wf.facet)
-        term.kind === :nonlinear &&
-            throw(ArgumentError("nonlinear terms land in M3: equation $(term.eq) has the nonlinear term $(term.integrand)"))
         term.kind in (:mass, :bilinear) && term.timedep && throw(
-            ArgumentError("time-dependent coefficients in the mass or stiffness operator land in M3: equation $(term.eq) has $(term.integrand)")
+            ArgumentError("time-dependent coefficients in the mass or stiffness operator are not supported: equation $(term.eq) has $(term.integrand)")
         )
     end
     return nothing
 end
 
 function _parameter_values(pdesys, ctx)
-    given = Dict{Any, Any}(unwrap(p.first) => p.second for p in pdesys.ps if p isa Pair)
+    ps = pdesys.ps isa SciMLBase.NullParameters ? () : pdesys.ps
+    given = Dict{Any, Any}(unwrap(p.first) => p.second for p in ps if p isa Pair)
     return map(ctx.params) do p
         haskey(given, p) && given[p] isa Number ||
             throw(ArgumentError("parameter $p needs a numeric value in the PDESystem, as $p => value"))
@@ -253,14 +269,6 @@ function assemble_sources!(F, ctx::AssemblyContext, kernels, p, t)
     return F
 end
 
-# `reinit!` mutates CellValues and FacetValues, so each load evaluation gets its own copies and
-# concurrent solves of one problem's remakes share no mutable state.
-function _fresh_values(ctx::AssemblyContext{NF, DH, CV, FV}) where {NF, DH, CV, FV}
-    return AssemblyContext{NF, DH, CV, FV}(
-        ctx.dh, ctx.fields, map(copy, ctx.cellvalues), map(copy, ctx.facetvalues), ctx.facetsets, ctx.facetcells
-    )
-end
-
 function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
     kernels = emit_kernels(wf)
     # `emit_kernels` sums the terms sharing an equation, kind and piece, so a kernel is dynamic when any of its terms is.
@@ -275,13 +283,16 @@ function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
     M, K, F = copy(space.pattern), copy(space.pattern), zeros(n)
     assemble_linear!(M, K, F, ctx, static, pvals; t = t0)
     load = isempty(dynamic) ? F : (out, t) -> (assemble_sources!(out, _fresh_values(ctx), dynamic, pvals, t); out .+= F)
+    nonlinear = any(k -> k.kind === :nonlinear, kernels) ?
+        FEMNonlinear(NonlinearOperator(_fresh_values(ctx), kernels; ch = space.ch), pvals) : nothing
     coords = _dof_coordinates(space)
     values!, values0 = _dirichlet_values(space, dirichlet, coords, pvals, t0)
     ops = FEMOperators(
         M, K, load, [name => field_range(space, name) for name in names];
-        prescribed = prescribed_dofs(space), dirichlet_values = timedep_dirichlet ? values! : values0
+        prescribed = prescribed_dofs(space), dirichlet_values = timedep_dirichlet ? values! : values0, nonlinear
     )
-    return ops, coords
+    raw = (; M, K, load, nonlinear = nonlinear !== nothing, prescribed = prescribed_dofs(space), dirichlet_values = values0, timedep_dirichlet)
+    return ops, coords, raw
 end
 
 function _initial_values(ics, ctx, space, coords, an, names, pvals)
@@ -349,7 +360,6 @@ function _check_boundary_conditions(disc::FEMDiscretization, an, ctx)
 end
 
 function _lower(pdesys, disc::FEMDiscretization)
-    disc.time === nothing && throw(ArgumentError("steady problems land in M4; give FEMDiscretization a time variable"))
     _check_domains(pdesys, disc)
     sys, replaced = PDEBase.make_pdesys_compatible(pdesys)
     v = PDEBase.VariableMap(sys, disc; replaced_vars = replaced)
@@ -358,37 +368,94 @@ function _lower(pdesys, disc::FEMDiscretization)
     ics, _ = PDEBase.split_ics_bcs(boundarymap, v, disc)
     ctx = StrongForm.SlotContext(sys, v)
     an = _paired(StrongForm.analyse(sys, v, boundarymap; ibp = disc.ibp), pdesys.eqs, ctx, disc)
-    isempty(an.periodic) || throw(ArgumentError(_PERIODIC_M4))
+    isempty(an.periodic) || throw(ArgumentError(_PERIODIC_UNSUPPORTED))
     disc.test_space isa SUPG && _check_supg(disc.test_space, an, ctx)
     wf = weak_form(an; test_space = disc.test_space)
-    _check_linear(wf)
+    steady = disc.time === nothing
+    _check_terms(wf)
+    disc.test_space isa SUPG && any(term -> term.kind === :nonlinear, wf.volume) && throw(
+        ArgumentError("SUPG stabilises linear terms only, but the system has a nonlinear term; use test_space = Galerkin()")
+    )
     pvals = _parameter_values(sys, ctx)
     dirichlet = emit_dirichlet(an)
-    t0, t1 = v.intervals[v.time]
+    t0, t1 = steady ? (0.0, 0.0) : v.intervals[v.time]
     space, names, ips = _space(disc, ctx, an, dirichlet, pvals, t0)
     _check_boundary_conditions(disc, an, ctx)
-    timedep_dirichlet = any(bc -> _depends(bc.g, [an.slots.T]), an.essential)
-    ops, coords = _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
+    timedep = findfirst(bc -> _depends(bc.g, [an.slots.T]), an.essential)
+    disc.dirichlet === :eliminate && timedep !== nothing && throw(
+        ArgumentError(
+            "dirichlet = :eliminate needs Dirichlet data that are constant in time, but the condition on boundary piece " *
+                "$(an.essential[timedep].piece.name) depends on time; use the default dirichlet = :algebraic"
+        )
+    )
+    ops, coords, raw = _operators(space, wf, names, dirichlet, pvals, t0, timedep !== nothing)
     u0 = _initial_values(Equation[b.eq for b in ics], ctx, space, coords, an, names, pvals)
     dirichlet_values!(view(u0, ops.prescribed), ops.load, t0)
+    elimination = nothing
+    unknown_u0 = u0
+    if disc.dirichlet === :eliminate
+        ops, elimination = eliminate_dirichlet(ops)
+        unknown_u0 = u0[elimination.free]
+    end
     iv = disc.time
-    unknowns = [only(@variables $name(iv)[1:length(field_range(space, name))]) for name in names]
-    fields = [FieldInfo(dv, name, u, ip) for (dv, name, u, ip) in zip(StrongForm.declared_fields(sys, v), names, unknowns, ips)]
+    unknowns = map(ops.fields) do (name, r)
+        steady ? only(@variables $name[1:length(r)]) : only(@variables $name(iv)[1:length(r)])
+    end
+    unknown_of = Dict(zip(first.(ops.fields), unknowns))
+    fields = [
+        FieldInfo(dv, name, get(unknown_of, name, nothing), ip)
+            for (dv, name, ip) in zip(StrongForm.declared_fields(sys, v), names, ips)
+    ]
     pieces = Dict{Any, String}(Γ => String(Γ.name) for Γ in PDEBase.boundarypieces(disc.domain))
-    md = FEMMetadata(space, iv, v.x̄, fields, pieces, pdesys; u0)
-    return (; ops, u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys))
+    md = FEMMetadata(space, iv, v.x̄, fields, pieces, pdesys; u0, elimination)
+    parameters = [q => v for (q, v) in zip(ctx.params, pvals)]
+    selfnonlinear = Set(names[f] for f in 1:an.nfields if _nonlinear_in_own_field(wf, an, f))
+    return (; ops, u0 = unknown_u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys), parameters, selfnonlinear, raw, full_u0 = u0)
+end
+
+# `K u + N(u, t0) - F` with the Dirichlet rows `u_d - g_d`: `K` holds `e_d`, `F` holds `g_d` and `N` is zero there.
+function _steady_problem(parts; kwargs...)
+    (; ops) = parts
+    t0 = first(parts.tspan)
+    F = load!(zeros(length(parts.u0)), ops.load, t0)
+    N = ops.nonlinear
+    function f!(res, u, p)
+        mul!(res, ops.K, u)
+        res .-= F
+        N === nothing || add_nonlinear!(res, N, u, t0)
+        return nothing
+    end
+    function jac!(J, u, p)
+        check_pattern(J, ops.K, "the Jacobian")
+        copyto!(nonzeros(J), nonzeros(ops.K))
+        N === nothing || add_nonlinear_jacobian!(J, N, u, t0)
+        return nothing
+    end
+    f = SciMLBase.NonlinearFunction{true}(f!; jac = jac!, jac_prototype = copy(ops.K))
+    return SciMLBase.NonlinearProblem{true}(f, parts.u0, SciMLBase.NullParameters(), parts.md; kwargs...)
 end
 
 """
     discretize(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
 
-Discretize `pdesys` with `disc` and return the `DAEProblem` `M du + K u = F(t)` of the
-Galerkin operators, with Dirichlet rows `u_d = g_d(t)` as algebraic equations, a sparse
-analytic Jacobian and the `FEMMetadata` as its `problem_type`, so `solve` returns a
-`PDETimeSeriesSolution`. Nothing calls `mtkcompile`; anything this milestone cannot
-discretize raises. Keywords are passed to the `DAEProblem` after `disc.kwargs`, so a keyword
-given here wins; the keywords the discretization sets (`iv`, `unknowns`, `du0`, `coordinate`,
-`name`) are rejected.
+Discretize `pdesys` with `disc` and return the `DAEProblem` `M du + K u + N(u, t) = F(t)` of
+the Galerkin operators, with Dirichlet rows `u_d = g_d(t)` as algebraic equations (or, with
+`dirichlet = :eliminate`, restricted to the free dofs), a sparse
+analytic Jacobian (the nonlinear part `N` from the terms whose coefficients depend on the
+state, with its symbolic tangent) and the `FEMMetadata` as its `problem_type`, so `solve` returns a
+`PDETimeSeriesSolution` (`SciMLBase.wrap_sol` of the solver's solution). Nothing calls
+`mtkcompile`; anything it cannot discretize raises. A `disc` without a time variable lowers instead to the steady
+`NonlinearProblem` documented under `NonlinearProblem(pdesys, disc)`. Keywords are passed to
+the `DAEProblem` after `disc.kwargs`, so a keyword given here wins; the keywords the discretization sets (`iv`, `unknowns`, `du0`, `coordinate`,
+`name`, `parameters`) are rejected, and so are `tspan` (the `PDESystem`'s time domain), `u0` (its
+initial conditions; use `remake(prob; u0)`), `p` (its parameter defaults) and `differential_vars`
+(computed from the weak form). The problem carries an `abstol` vector when `disc.algebraic_abstol`
+applies (see [`FEMDiscretization`](@ref)). Any other SciML problem or solver keyword (`saveat`,
+`tstops`, `callback`, ...) is forwarded. Further positional arguments, a first argument that is not
+a `PDESystem`, and an equation, domain or boundary condition the discretization does not support
+raise an `ArgumentError` before the operators are assembled.
+[`symbolic_discretize`](@ref SciMLBase.symbolic_discretize(::ModelingToolkit.PDESystem, ::FEMDiscretization))
+returns the symbolic system of the same discretization.
 
 The Dirichlet rows are linear with identity Jacobian rows, so a Newton step with a current
 Jacobian satisfies them exactly. OrdinaryDiffEq's BDF methods reuse the Jacobian across
@@ -399,17 +466,155 @@ size change and holds `u(t, Γ) ~ g(t)` to round-off.
 function SciMLBase.discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
     _check_reserved(kwargs)
     parts = _lower(pdesys, disc)
+    disc.time === nothing && return _steady_problem(parts; disc.kwargs..., kwargs...)
+    kwargs = merge(disc.kwargs, values(kwargs))
     return numeric_dae_problem(
         parts.ops, parts.u0, parts.tspan, parts.md;
-        iv = parts.iv, unknowns = parts.unknowns, name = parts.name, disc.kwargs..., kwargs...
+        iv = parts.iv, unknowns = parts.unknowns, name = parts.name, parameters = parts.parameters, kwargs...,
+        _abstol(disc.algebraic_abstol, parts.ops, parts.selfnonlinear, get(kwargs, :abstol, nothing))...
     )
 end
 
-SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...) =
-    SciMLBase.discretize(pdesys, disc; kwargs...)
+# An algebraic field whose own unknowns are absent from its equation (the pressure in the continuity equation) is
+# fixed only through the other fields, which makes the DAE index 2. The nonlinear Jacobian shares K's pattern and
+# says nothing about which blocks are zero, so a field in `selfnonlinear`, whose equation has a nonlinear term in
+# the field itself (0 = v² − u), counts as present.
+function _index2(ops::FEMOperators, selfnonlinear)
+    free = trues(size(ops.K, 1))
+    free[ops.prescribed] .= false
+    return any(ops.fields) do (name, r)
+        rows = filter(i -> free[i], r)
+        !isempty(rows) && !(name in selfnonlinear) && !any(ops.differential_vars[rows]) && iszero(ops.K[rows, r])
+    end
+end
 
-# `(sys, tspan)`, the shape PDEBase and MethodOfLines return.
-function SciMLBase.symbolic_discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
-    prob = SciMLBase.discretize(pdesys, disc)
+# Whether a nonlinear term of equation `f` (paired with field `f`) reads field `f`'s value, gradient or Hessian.
+function _nonlinear_in_own_field(wf, an, f)
+    d = an.dim
+    own = [an.slots.U[f]; an.slots.G[((f - 1) * d + 1):(f * d)]; an.slots.H[((f - 1) * d * d + 1):(f * d * d)]]
+    return any(term -> term.kind === :nonlinear && term.eq == f && _depends(unwrap(term.integrand), own), [wf.volume; wf.facet])
+end
+
+# The `abstol` keyword of the `DAEProblem` (see `FEMDiscretization`'s `algebraic_abstol`); empty when none is set.
+function _abstol(algebraic, ops, selfnonlinear, abstol)
+    algebraic === :auto && (algebraic = _index2(ops, selfnonlinear) ? 1.0e8 : nothing)
+    (algebraic === nothing || !(abstol isa Union{Nothing, Real})) && return (;)
+    differential = something(abstol, 1.0e-6)
+    return (; abstol = [d ? differential : algebraic for d in ops.differential_vars])
+end
+
+SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...) =
+    disc.time === nothing ?
+    throw(
+        ArgumentError(
+            "the FEMDiscretization has no time variable, so it lowers to a NonlinearProblem, not a DAEProblem; " *
+            "call discretize(pdesys, disc) or NonlinearProblem(pdesys, disc)"
+        )
+    ) : SciMLBase.discretize(pdesys, disc; kwargs...)
+
+"""
+    NonlinearProblem(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
+
+Discretize the steady `pdesys` with a `disc` that has no time variable and return the
+`NonlinearProblem` `K u + N(u) - F = 0` of the Galerkin operators, with Dirichlet rows
+`u_d - g_d` as algebraic equations, the sparse analytic Jacobian `K + ∂N/∂u` and the
+`FEMMetadata` as its `problem_type`, so `solve` returns a `PDENoTimeSolution`. `N` holds the
+terms whose coefficients depend on the state, as on the time-dependent path; without them
+Newton solves the problem in one step.
+
+The initial guess `u0` is zero, with the Dirichlet data `g_d` wherever the problem's unknown
+vector holds Dirichlet dofs; a steady `PDESystem` has no initial conditions. To start Newton
+elsewhere, `remake(prob; u0)` with a vector laid out like `prob.u0`, the problem's unknown
+vector (with the default `dirichlet = :algebraic` it holds every dof, and field `name`
+occupies `FiniteElementMethod.field_range(prob.problem_type.space, name)`).
+Keywords are passed to the `NonlinearProblem` after `disc.kwargs`; the keywords
+`iv`, `unknowns`, `du0`, `coordinate`, `name`, `parameters`, `tspan`, `u0`, `p` and
+`differential_vars` are rejected, as for the `DAEProblem`.
+"""
+function SciMLBase.NonlinearProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
+    disc.time === nothing || throw(
+        ArgumentError(
+            "the FEMDiscretization has the time variable $(disc.time), so it lowers to a DAEProblem; " *
+                "for a steady problem write FEMDiscretization(Ω) without a time variable"
+        )
+    )
+    return SciMLBase.discretize(pdesys, disc; kwargs...)
+end
+
+SciMLBase.discretize(::ModelingToolkit.PDESystem, ::FEMDiscretization, arg, args...; kwargs...) =
+    throw(ArgumentError("discretize(pdesys, disc; kwargs...) takes no further positional arguments; got $(length(args) + 1)"))
+
+SciMLBase.discretize(x, ::FEMDiscretization, args...; kwargs...) =
+    throw(ArgumentError("FEMDiscretization discretizes a ModelingToolkit.PDESystem; got $(typeof(x))"))
+
+"""
+    symbolic_discretize(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
+
+Return `(sys, tspan)`, the shape PDEBase and MethodOfLines return, for the discretization that
+`discretize(pdesys, disc; kwargs...)` builds: it runs the same code path, so it assembles the
+Galerkin operators, and returns the `DAEProblem`'s `prob.f.sys` and `prob.tspan`. `sys` is the
+completed `ModelingToolkit.System` of [`FiniteElementMethod.fem_system`](@ref), whose unknowns are
+the arrays of field values, with the operators as parameters and the `FEMMetadata` (the
+problem's `problem_type`) attached for rebuilding the solution; `tspan` is the time interval of
+`pdesys`. Keywords are passed to that problem construction as for `discretize`,
+so the reserved keywords raise the same `ArgumentError`. Further positional arguments raise an
+`ArgumentError`.
+
+A steady `disc` (no time variable) raises an `ArgumentError`: its `NonlinearProblem` is built
+from a numeric `NonlinearFunction` with no `System`, so there is no symbolic system describing
+it; call `discretize(pdesys, disc)` for the `NonlinearProblem`.
+"""
+function SciMLBase.symbolic_discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization, args...; kwargs...)
+    isempty(args) || throw(
+        ArgumentError(
+            "symbolic_discretize(pdesys, disc; kwargs...) takes no further positional arguments; got $(length(args))"
+        )
+    )
+    disc.time === nothing && throw(
+        ArgumentError(
+            "a steady FEMDiscretization builds no symbolic System, so it has no symbolic_discretize; " *
+                "call discretize(pdesys, disc) for its NonlinearProblem"
+        )
+    )
+    prob = SciMLBase.discretize(pdesys, disc; kwargs...)
     return prob.f.sys, prob.tspan
+end
+
+"""
+    operators(pdesys::PDESystem, disc::FEMDiscretization) -> NamedTuple
+
+The assembled Galerkin operators of `discretize(pdesys, disc)` as plain data, for a caller that
+builds its own system around them (such as a component with boundary ports). Returns
+
+  - `M`, `K`: the mass and stiffness matrices with one sparsity pattern, before any Dirichlet row
+    is replaced, so a caller can impose its own conditions or read reactions from them;
+  - `F`: the load vector, the volume sources and natural boundary data, without Dirichlet values;
+  - `fields`: `name => dof range` per field, in declared order;
+  - `differential_vars`: rows of `M` with a nonzero entry;
+  - `prescribed`, `dirichlet_values`: the dofs of the `PDESystem`'s Dirichlet conditions and
+    their values (the rows `M` and `K` would have replaced);
+  - `u0`: the initial dof vector, with the Dirichlet values on the prescribed dofs;
+  - `metadata`: the [`FEMMetadata`](@ref), for [`facet_dofs`](@ref),
+    [`dof_coordinates`](@ref) and [`cell_dofs`](@ref).
+
+It is the linear, time-independent case only: a nonlinear term, a time-dependent source or
+time-dependent Dirichlet data has no data form and raises an `ArgumentError`. Parameters are
+substituted by their values, as for the `DAEProblem`.
+"""
+function operators(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
+    parts = _lower(pdesys, disc)
+    (; M, K, load, nonlinear, prescribed, dirichlet_values, timedep_dirichlet) = parts.raw
+    nonlinear && throw(ArgumentError("operators returns linear operators only, but the PDESystem has nonlinear terms"))
+    load isa AbstractVector || throw(ArgumentError("operators needs time-independent sources, but a source depends on time"))
+    timedep_dirichlet && throw(ArgumentError("operators needs Dirichlet data that are constant in time"))
+    differential_vars = falses(size(M, 1))
+    for (k, i) in enumerate(rowvals(M))
+        iszero(nonzeros(M)[k]) || (differential_vars[i] = true)
+    end
+    md = parts.md
+    fields = [f.name => field_range(md.space, f.name) for f in md.fields]
+    return (;
+        M = copy(M), K = copy(K), F = copy(load), fields, differential_vars, prescribed = copy(prescribed),
+        dirichlet_values = copy(dirichlet_values), u0 = parts.full_u0, metadata = md,
+    )
 end

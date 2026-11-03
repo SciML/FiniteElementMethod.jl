@@ -44,6 +44,16 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         @test nodal_error(sol, u(t, x, y), uexact) <= tol
         space = sol.disc_data.space
         @test !any(prob.differential_vars[space.ch.prescribed_dofs])
+        # Not index 2: the default algebraic_abstol = :auto sets no abstol.
+        @test !haskey(prob.kwargs, :abstol)
+        # An explicit algebraic_abstol applies to any system: here to the Dirichlet rows, which stay exact.
+        sol, prob = fem_solve(
+            [heat_eq], [dirichlet_all(Ω); ic], Ω, (x, y), t, [u(t, x, y)]; algebraic_abstol = 1.0e3,
+            solve_kwargs = (; reltol = 1.0e-10), abstol = 1.0e-10
+        )
+        @test prob.kwargs[:abstol] == [d ? 1.0e-10 : 1.0e3 for d in prob.differential_vars]
+        @test SciMLBase.successful_retcode(sol)
+        @test nodal_error(sol, u(t, x, y), uexact) <= tol
         # The symbolic Dirichlet data agree with the ConstraintHandler, including at corners
         # shared by two pieces, where the condition added last wins.
         load = SciMLBase.SymbolicIndexingInterface.getp(prob.f.sys, prob.f.sys.Fop)(prob.p)
@@ -62,7 +72,7 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         @test sol.t == 0:0.25:1
         @test sol.disc_data isa FEMMetadata
         @test discretize(pdesys, FEMDiscretization(Ω, t; saveat = 0.25); saveat = 0.5).kwargs[:saveat] == 0.5
-        reserved = "keyword `name` is set by the FEM discretization and cannot be passed; the reserved keywords are iv, unknowns, du0, coordinate, name"
+        reserved = "keyword `name` is set by the FEM discretization and cannot be passed; the reserved keywords are iv, unknowns, du0, coordinate, name, parameters"
         @test_throws ArgumentError(reserved) FEMDiscretization(Ω, t; name = :other)
         @test_throws ArgumentError(replace(reserved, "`name`" => "`du0`")) discretize(pdesys, FEMDiscretization(Ω, t); du0 = zeros(3))
         @test sprint(show, sol.disc_data) == sprint(show, prob.problem_type) == "FEMMetadata(fields = [u], ndofs = 9, hasTime = true)"
@@ -70,6 +80,17 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         sys, tspan = SciMLBase.symbolic_discretize(pdesys, FEMDiscretization(Ω, t))
         @test tspan == (0.0, 1.0)
         @test sys isa ModelingToolkit.System
+    end
+
+    @testset "PDESystem without parameters" begin
+        # Leaving out `ps` gives the system `NullParameters()`, which means no parameters.
+        Ω = MeshDomain(rectangle_grid(Triangle, (4, 4)))
+        domains = [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)]
+        @named pdesys = PDESystem([heat_eq], [dirichlet_all(Ω); ic], domains, [t, x, y], [u(t, x, y)])
+        @test pdesys.ps isa SciMLBase.NullParameters
+        sol = solve(discretize(pdesys, FEMDiscretization(Ω, t)), EXACT_ROWS; abstol = 1.0e-10, reltol = 1.0e-10)
+        @test SciMLBase.successful_retcode(sol)
+        @test nodal_error(sol, u(t, x, y), uexact) <= tol
     end
 
     @testset "P1 quadrilaterals" begin
@@ -213,6 +234,8 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         @test SciMLBase.successful_retcode(sol)
         space = sol.disc_data.space
         @test !any(prob.differential_vars[FiniteElementMethod.field_range(space, :v)])
+        # v is algebraic but appears in its own equation (index 1): no abstol is set.
+        @test !haskey(prob.kwargs, :abstol)
         @test nodal_error(sol, u(t, x, y), uexact) <= tol
         @test nodal_error(sol, v(t, x, y), (t_, x_, y_) -> 1 + x_ + 2y_) <= tol
     end

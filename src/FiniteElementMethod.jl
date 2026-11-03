@@ -38,7 +38,7 @@ include("weakform.jl")
 include("kernels.jl")
 include("assembly.jl")
 include("operators.jl")
-export FieldInfo, FEMMetadata, piece_nodes, normal_flux, write_vtk
+export FieldInfo, FEMMetadata, piece_nodes, normal_flux, write_vtk, facet_dofs, dof_coordinates, cell_dofs
 # Re-exported so that the user API of a FEM model needs no `using PDEBase, Ferrite`.
 export Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexahedron
 

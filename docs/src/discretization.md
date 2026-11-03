@@ -7,9 +7,12 @@
 ```@docs
 FEMDiscretization
 FiniteElementMethod.SciMLBase.discretize(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
+FiniteElementMethod.SciMLBase.NonlinearProblem(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
 FiniteElementMethod.AbstractTestSpace
 FiniteElementMethod.Galerkin
+FiniteElementMethod.SciMLBase.symbolic_discretize(::FiniteElementMethod.ModelingToolkit.PDESystem, ::FEMDiscretization)
 FiniteElementMethod.assemble_sources!
+FiniteElementMethod.operators
 ```
 
 ## Boundary pieces from submeshes
@@ -18,7 +21,7 @@ FiniteElementMethod.assemble_sources!
 add_boundary_pieces!
 ```
 
-`discretize(pdesys, disc)` returns the `DAEProblem` of the discretization. `symbolic_discretize(pdesys, disc)`
+`discretize(pdesys, disc)` returns the `DAEProblem` of the discretization (the `NonlinearProblem` of a steady one, see [Steady problems](@ref)). `symbolic_discretize(pdesys, disc)`
 returns `(sys, tspan)`, where `sys` is the array-residual `System` attached to that problem
 (see [`FiniteElementMethod.fem_system`](@ref)): one block equation per field over the
 assembled operators, not scalar equations per node as MethodOfLines returns.
@@ -64,19 +67,36 @@ small piece (a single facet set), or leave an outflow piece with the natural con
 The pressure is absent from its own rows, so the DAE has index 2. Two things make `DFBDF` step
 it: start from a velocity that is discretely divergence free (zero, with zero Dirichlet data
 at the initial time) and a pressure initial condition, and leave the algebraic rows out of the
-error control with a large `abstol` on them, since the pressure's local error does not shrink
-with the step:
+error control with a large absolute tolerance on them, since the pressure's local error does
+not shrink with the step. `FEMDiscretization` does the second by default: with
+`algebraic_abstol = :auto` it detects an algebraic field absent from its own equation and gives
+the problem the `abstol` vector `1e8` on every algebraic row (the algebraic fields and the
+Dirichlet rows of all fields) and `1e-6` elsewhere:
 
 ```julia
-prob = discretize(pdesys, disc)
-abstol = [d ? 1.0e-8 : 1.0e8 for d in prob.differential_vars]
-sol = solve(prob, DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0)); abstol, reltol = 1.0e-8)
+prob = discretize(pdesys, disc)        # prob.kwargs[:abstol] is the vector
+sol = solve(prob, DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0)); reltol = 1.0e-8)
 ```
 
-Without the `abstol`, the step size collapses near the initial time (`dt` below `eps` at
-`t ≈ 1e-10` on a 16 × 16 Taylor–Hood mesh). When the linear solver then reports the Newton
+A number `abstol` given to `FEMDiscretization` or `discretize` sets the differential rows'
+entries, as in `discretize(pdesys, disc; abstol = 1.0e-8)`; an array is used as it is.
+`algebraic_abstol = 1.0e4` sets another value on the algebraic rows, of any system, and
+`algebraic_abstol = nothing` sets none. An `abstol` passed to `solve` replaces the whole vector
+(SciMLBase merges the problem's keywords first and the `solve` keywords over them), so
+`solve(prob, alg; abstol = 1.0e-8)` puts the algebraic rows back under error control; write the
+vector by hand in that case, `abstol = [d ? 1.0e-8 : 1.0e8 for d in prob.differential_vars]`.
+Systems without an index-2 field, such as `0 ~ Δv + u` paired with `v`, get no `abstol`.
+The keyword applies to the time-dependent (DAE) path only: a steady `FEMDiscretization(Ω)`
+accepts `:auto` and `nothing` and does nothing with them, and raises for a number.
+
+Without the large tolerance, the step size collapses near the initial time (`dt` below `eps`
+at `t ≈ 1e-10` on a 16 × 16 Taylor–Hood mesh). When the linear solver then reports the Newton
 matrix as singular, LinearSolve falls back to a sparse QR factorization, which can take
 minutes and tens of gigabytes on a saddle-point system.
+
+`algebraic_abstol` is not in the spec (§7.1, §7.6 list the `FEMDiscretization` keywords
+without it): it was added after the Taylor–Hood Stokes and DFG cylinder benchmarks needed the
+tolerance in user code every time.
 
 A field can live on part of the mesh: `regions = Dict(w => Region(Ω, :name))` restricts `w`
 to the cell set `name`, through a Ferrite `SubDofHandler`. Outside its region the field has no
@@ -103,3 +123,88 @@ tested with `τ b·∇v`, which needs the shape-function Hessians, so the `CellV
 with them. Limits: linear terms only, `τ` and `b` must be numbers or expressions in the
 coordinates, time and `hK` (not parameters of the `PDESystem`), and boundary terms stay
 Galerkin.
+
+## Curved meshes
+
+The geometry of every cell comes from the mesh: the space, the assembly (facet normals
+included) and the solution interface map each cell with the geometric interpolation of its
+Ferrite cell type. A second-order mesh therefore gives curved cells with no option to set.
+To keep P2 at its full rate on a curved domain, mesh it at order 2 so the mid-side nodes lie
+on the true boundary:
+
+```julia
+using FerriteGmsh, Gmsh
+
+Gmsh.initialize()
+gmsh.option.setNumber("Mesh.MeshSizeMax", 0.05)
+outer, inner = gmsh.model.occ.addCircle(0, 0, 0, 1.0), gmsh.model.occ.addCircle(0, 0, 0, 0.5)
+surface = gmsh.model.occ.addPlaneSurface([gmsh.model.occ.addCurveLoop([outer]), gmsh.model.occ.addCurveLoop([inner])])
+gmsh.model.occ.synchronize()
+gmsh.model.addPhysicalGroup(1, [inner], -1, "inner")
+gmsh.model.addPhysicalGroup(1, [outer], -1, "outer")
+gmsh.model.addPhysicalGroup(2, [surface], -1, "domain")
+gmsh.model.mesh.generate(2)
+gmsh.model.mesh.setOrder(2)         # QuadraticTriangle cells, mid-side nodes on the circles
+grid = FerriteGmsh.togrid()
+Gmsh.finalize()
+
+Ω = MeshDomain(grid)
+Γi, Γo = boundarypiece.(Ω, (:inner, :outer))
+disc = FEMDiscretization(Ω, t; spaces = Dict(u => Lagrange{RefTriangle, 2}()))
+```
+
+Conditions on the curved pieces are written as on any other piece, with `NormalDerivative(Γ)`
+the derivative along the outward normal of the curved facets. With straight-sided cells
+(`setOrder(1)`) the boundary is a polygon and P2 drops from L2 rate 3 to 2 once boundary data
+or normals of the true curve enter; `test/shared/frontend_tests/curved.jl` measures both on
+this annulus. Use a mesh generator that does not leave nodes outside every cell, such as the
+centre point of Gmsh's built-in-kernel circle arcs: `sol[u]` is `NaN` at such nodes.
+
+## Steady problems
+
+A `PDESystem` with no time variable, discretized by a `FEMDiscretization` built without one,
+lowers to a `NonlinearProblem` `K u + N(u) - F = 0`, where `N` holds the terms whose
+coefficients depend on the state; without them Newton solves it in one step. Dirichlet rows
+are the algebraic equations `u_d - g_d = 0`, the Jacobian `K + ∂N/∂u` is sparse, and `solve` returns a
+`PDENoTimeSolution` with the same interface as a transient solution, without the time argument:
+`sol[u(x, y)]`, `sol(x, y; dv)`, traces `sol[u(Γ)]`, derivatives such as `sol[Dx(u(x, y))]`,
+`normal_flux` and `write_vtk` (one `.vtu` file). Traces are written `u(Γ)`, since the dependent
+variables have no time argument.
+
+```julia
+using FiniteElementMethod, ModelingToolkit, NonlinearSolve
+using Ferrite: Triangle
+@variables x y u(..)
+Dx, Dy = Differential(x), Differential(y)
+Ω = MeshDomain(FiniteElementMethod.rectangle_grid(Triangle, (16, 16)))
+eq = Dx(Dx(u(x, y))) + Dy(Dy(u(x, y))) ~ -1
+@named pdesys = PDESystem([eq], [u(Γ) ~ 0 for Γ in boundarypieces(Ω)], [(x, y) ∈ Ω], [x, y], [u(x, y)], [])
+prob = discretize(pdesys, FEMDiscretization(Ω))
+sol = solve(prob, NewtonRaphson())
+sol(0.5, 0.5; dv = u(x, y))
+```
+
+Newton starts from zero, with the Dirichlet data on any Dirichlet dofs the unknown vector
+holds; another initial guess is a vector laid out like `prob.u0`, passed as `remake(prob; u0)`. With the
+default `dirichlet = :algebraic` that vector holds every dof and field `name` occupies
+`FiniteElementMethod.field_range(prob.problem_type.space, name)`. Equations with no entry in
+`pairing` are tested with the remaining dependent variables in declared order.
+`algebraic_abstol` belongs to the time-dependent (DAE) path: a steady discretization accepts
+`:auto` and `nothing` and does nothing with them, and raises for a number.
+
+## Dirichlet conditions
+
+`dirichlet = :algebraic` (the default) keeps every dof as an unknown and makes each prescribed
+row the algebraic equation `u_d = g_d(t)`, so it accepts Dirichlet data of any time dependence.
+`dirichlet = :eliminate` removes the prescribed dofs instead: the `DAEProblem` has only the free
+dofs as unknowns, with `M[fr, fr]`, `K[fr, fr]` and the load `F[fr] - K[fr, cd] g`; nonlinear
+terms are evaluated at the full state with `u_cd = g` and keep their rows `fr`. It needs
+Dirichlet data that are constant in time, though they may vary in space; time-dependent data
+raise an `ArgumentError` naming the boundary piece. The solution is the same either way:
+`sol[u]`, `sol(t, x, y)`, traces `sol[u(t, Γ)]`, `normal_flux` and `write_vtk` all return the
+full field with `g` at the prescribed nodes. Only `sol.original_sol` and the array unknowns
+hold the free dofs alone.
+
+```julia
+disc = FEMDiscretization(Ω, t; dirichlet = :eliminate)
+```
