@@ -62,7 +62,7 @@ using ModelingToolkit: t_nounits as t
         ]
         @named sys = PDESystem([eq], bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
         @test_throws ArgumentError(
-            "time-dependent coefficients in the mass or stiffness operator land in M3: equation 1 has U₁*V + T*U₁*V"
+            "time-dependent coefficients in the mass or stiffness operator are not supported: equation 1 has U₁*V + T*U₁*V"
         ) discretize(sys, FEMDiscretization(Ω, t))
     end
 end
