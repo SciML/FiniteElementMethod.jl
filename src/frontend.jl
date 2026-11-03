@@ -442,7 +442,7 @@ SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization;
     throw(
         ArgumentError(
             "the FEMDiscretization has no time variable, so it lowers to a NonlinearProblem, not a DAEProblem; " *
-                "call discretize(pdesys, disc) or NonlinearProblem(pdesys, disc)"
+            "call discretize(pdesys, disc) or NonlinearProblem(pdesys, disc)"
         )
     ) : SciMLBase.discretize(pdesys, disc; kwargs...)
 
