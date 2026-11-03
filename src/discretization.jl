@@ -67,7 +67,8 @@ gives a `PDENoTimeSolution`.
   - `codegen = :mtk` is reserved and raises; remaining keywords are
     passed to the `DAEProblem` (or `NonlinearProblem`), where a keyword given at the
     `discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate`, `name` and `parameters` are set
-    by the discretization and rejected.
+    by the discretization and rejected, as are `tspan`, `u0`, `p` and `differential_vars`, which
+    come from the `PDESystem` and the weak form.
 
 Pieces come from `boundarypiece.(Ω, names)`; on an analytic DomainSets box write
 `boundarypiece.(Ref(rect), names)`, since DomainSets types do not broadcast as scalars.
@@ -83,7 +84,7 @@ through `PDEBase.StrongForm.pair_equations`.
 Parameters are substituted by the values given in the `PDESystem` when the operators are
 assembled, and are parameters of the problem at those values. The operators are not
 reassembled for new values: after `remake(prob; p = [k => 3.0])` the solve throws an
-`ArgumentError` naming `k`; build a new problem with `DAEProblem(pdesys, disc)` instead.
+`ArgumentError` naming `k`; build a new problem with `discretize(pdesys, disc)` instead.
 """
 struct FEMDiscretization{T} <: PDEBase.AbstractMeshDiscretization
     domain::PDEBase.MeshDomain
@@ -103,8 +104,19 @@ end
 # Keywords of `numeric_dae_problem` that the front end sets itself.
 const _RESERVED_KWARGS = (:iv, :unknowns, :du0, :coordinate, :name, :parameters)
 
+# Problem keywords the front end computes, with where each value comes from instead.
+const _DERIVED_KWARGS = (
+    tspan = "the time span is the time domain of the PDESystem; change that domain to change it",
+    u0 = "the initial state comes from the PDESystem's initial conditions (a steady problem starts from zero " *
+        "with its Dirichlet data); change those, or call remake(prob; u0 = ...) on the returned problem",
+    p = "the parameter values are the PDESystem's parameter defaults; change those and discretize again " *
+        "(the operators are assembled at those values, so solve rejects remake(prob; p = ...))",
+    differential_vars = "which unknowns are differential is computed from the weak form (the fields with a time derivative)",
+)
+
 function _check_reserved(kwargs)
     for k in keys(kwargs)
+        haskey(_DERIVED_KWARGS, k) && throw(ArgumentError("keyword `$k` cannot be passed: " * _DERIVED_KWARGS[k]))
         k in _RESERVED_KWARGS && throw(
             ArgumentError(
                 "keyword `$k` is set by the FEM discretization and cannot be passed; the reserved keywords are " *

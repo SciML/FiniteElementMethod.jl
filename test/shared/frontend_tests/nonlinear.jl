@@ -239,7 +239,7 @@ end
         sol = solve(prob, EXACT_ROWS; abstol = 1.0e-10, reltol = 1.0e-10)
         @test nodal_error(sol, U, uexact) <= tol
         @test SciMLBase.successful_retcode(solve(remake(prob; p = [k => 1.0]), EXACT_ROWS))
-        msg = "parameter k was 1.0 when the operators were assembled but is 3.0 in this problem; operators are not reassembled for new parameter values, so build a new problem with DAEProblem(pdesys, disc)"
+        msg = "parameter k was 1.0 when the operators were assembled but is 3.0 in this problem; operators are not reassembled for new parameter values, so build a new problem with discretize(pdesys, disc)"
         @test_throws ArgumentError(msg) solve(remake(prob; p = [k => 3.0]), EXACT_ROWS)
     end
 end
