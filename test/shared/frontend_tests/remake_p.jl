@@ -64,4 +64,11 @@ end
         @test err isa ArgumentError
         @test occursin("parameter D", sprint(showerror, err))
     end
+    @testset "editing prob.p in place is rejected too" begin
+        if kind == "steady"
+            prob = make()
+            prob.p[1] = 3.0
+            @test_throws ArgumentError solve(prob, alg)
+        end
+    end
 end

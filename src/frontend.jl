@@ -428,7 +428,7 @@ function _steady_problem(parts; kwargs...)
         return nothing
     end
     f = SciMLBase.NonlinearFunction{true}(f!; jac = jac!, jac_prototype = copy(ops.K), sys = isempty(syms) ? nothing : SteadyParameters(syms))
-    return SciMLBase.NonlinearProblem{true}(f, parts.u0, isempty(syms) ? SciMLBase.NullParameters() : assembled, parts.md; kwargs...)
+    return SciMLBase.NonlinearProblem{true}(f, parts.u0, isempty(syms) ? SciMLBase.NullParameters() : copy(assembled), parts.md; kwargs...)
 end
 
 """
