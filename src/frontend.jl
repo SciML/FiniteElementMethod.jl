@@ -415,14 +415,19 @@ the Galerkin operators, with Dirichlet rows `u_d = g_d(t)` as algebraic equation
 `dirichlet = :eliminate`, restricted to the free dofs), a sparse
 analytic Jacobian (the nonlinear part `N` from the terms whose coefficients depend on the
 state, with its symbolic tangent) and the `FEMMetadata` as its `problem_type`, so `solve` returns a
-`PDETimeSeriesSolution`. Nothing calls `mtkcompile`; anything it cannot
-discretize raises. A `disc` without a time variable lowers instead to the steady
+`PDETimeSeriesSolution` (`SciMLBase.wrap_sol` of the solver's solution). Nothing calls
+`mtkcompile`; anything it cannot discretize raises. A `disc` without a time variable lowers instead to the steady
 `NonlinearProblem` documented under `NonlinearProblem(pdesys, disc)`. Keywords are passed to
 the `DAEProblem` after `disc.kwargs`, so a keyword given here wins; the keywords the discretization sets (`iv`, `unknowns`, `du0`, `coordinate`,
 `name`, `parameters`) are rejected, and so are `tspan` (the `PDESystem`'s time domain), `u0` (its
 initial conditions; use `remake(prob; u0)`), `p` (its parameter defaults) and `differential_vars`
 (computed from the weak form). The problem carries an `abstol` vector when `disc.algebraic_abstol`
-applies (see [`FEMDiscretization`](@ref)).
+applies (see [`FEMDiscretization`](@ref)). Any other SciML problem or solver keyword (`saveat`,
+`tstops`, `callback`, ...) is forwarded. Further positional arguments, a first argument that is not
+a `PDESystem`, and an equation, domain or boundary condition the discretization does not support
+raise an `ArgumentError` before the operators are assembled.
+[`symbolic_discretize`](@ref SciMLBase.symbolic_discretize(::ModelingToolkit.PDESystem, ::FEMDiscretization))
+returns the symbolic system of the same discretization.
 
 The Dirichlet rows are linear with identity Jacobian rows, so a Newton step with a current
 Jacobian satisfies them exactly. OrdinaryDiffEq's BDF methods reuse the Jacobian across
