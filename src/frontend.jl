@@ -316,6 +316,38 @@ function _initial_values(ics, ctx, space, coords, an, names, pvals)
     return u0
 end
 
+# Boundary facets that carry no condition for a field whose equation has a flux get the natural zero-flux condition
+# silently, which hides a forgotten piece. A piece is covered for a field by a Dirichlet condition on that field, a
+# Neumann or Robin condition in its equation, or an entry in `disc.natural`.
+function _check_boundary_conditions(disc::FEMDiscretization, an, ctx)
+    disc.boundary_check === :off && return nothing
+    grid = disc.domain.mesh
+    boundary = _boundary_facets(grid)
+    facetsets = Dict(name => Set(Ferrite.getfacetset(grid, String(name))) for name in _facetset_names(grid))
+    lines = String[]
+    for (f, op) in enumerate(ctx.ops)
+        all(c -> isequal(c, 0), an.conormal[f]) && continue
+        covered = Set{Ferrite.FacetIndex}()
+        for name in [disc.natural; [bc.piece.name for bc in an.essential if bc.field == f]; [bc.piece.name for bc in an.natural if bc.eq == f]]
+            union!(covered, facetsets[name])
+        end
+        cells = haskey(disc.regions, op) ? Set(Ferrite.getcellset(grid, String(disc.regions[op].name))) : nothing
+        open = Set(fi for fi in boundary if fi ∉ covered && (cells === nothing || fi[1] in cells))
+        isempty(open) && continue
+        pieces = [(name, length(intersect(open, set))) for (name, set) in sort!(collect(facetsets); by = first)]
+        listed = ["Γ_$name ($n facets)" for (name, n) in pieces if n > 0]
+        unnamed = length(setdiff(open, union(values(facetsets)...)))
+        unnamed > 0 && push!(listed, "$unnamed facets in no piece")
+        push!(lines, "  $(nameof(op)): $(length(open)) of $(length(boundary)) boundary facets have no condition: $(join(listed, ", "))")
+    end
+    isempty(lines) && return nothing
+    msg = "boundary facets with no condition get the natural zero-flux condition:\n" * join(lines, "\n") *
+        "\nDeclare them with `FEMDiscretization(…; natural = [pieces])` or a zero Neumann condition, or set `boundary_check = :off`"
+    disc.boundary_check === :error && throw(ArgumentError(msg))
+    @warn msg
+    return nothing
+end
+
 function _lower(pdesys, disc::FEMDiscretization)
     disc.time === nothing && throw(ArgumentError("steady problems land in M4; give FEMDiscretization a time variable"))
     _check_domains(pdesys, disc)
@@ -323,16 +355,10 @@ function _lower(pdesys, disc::FEMDiscretization)
     v = PDEBase.VariableMap(sys, disc; replaced_vars = replaced)
     PDEBase.interface_errors(sys, v, disc)
     boundarymap = _boundary_map(sys.bcs, v, disc)
-    ics, bcmap = PDEBase.split_ics_bcs(boundarymap, v, disc)
+    ics, _ = PDEBase.split_ics_bcs(boundarymap, v, disc)
     ctx = StrongForm.SlotContext(sys, v)
     an = _paired(StrongForm.analyse(sys, v, boundarymap; ibp = disc.ibp), pdesys.eqs, ctx, disc)
     isempty(an.periodic) || throw(ArgumentError(_PERIODIC_M4))
-    covered = Set(Γ for bykey in values(bcmap) for (Γ, bs) in bykey if !isempty(bs))
-    if any(c -> !all(x -> isequal(x, 0), c), an.conormal)
-        for Γ in PDEBase.boundarypieces(disc.domain)
-            Γ in covered || @warn "boundary piece $Γ has no condition, so it gets the natural zero-flux condition"
-        end
-    end
     disc.test_space isa SUPG && _check_supg(disc.test_space, an, ctx)
     wf = weak_form(an; test_space = disc.test_space)
     _check_linear(wf)
@@ -340,6 +366,7 @@ function _lower(pdesys, disc::FEMDiscretization)
     dirichlet = emit_dirichlet(an)
     t0, t1 = v.intervals[v.time]
     space, names, ips = _space(disc, ctx, an, dirichlet, pvals, t0)
+    _check_boundary_conditions(disc, an, ctx)
     timedep_dirichlet = any(bc -> _depends(bc.g, [an.slots.T]), an.essential)
     ops, coords = _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
     u0 = _initial_values(Equation[b.eq for b in ics], ctx, space, coords, an, names, pvals)

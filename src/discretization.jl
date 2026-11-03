@@ -7,7 +7,7 @@ PDEBase.contains_point(grid::Ferrite.Grid, x) = _contains_point(grid, x)
 """
     FEMDiscretization(Ω::MeshDomain, t = nothing; spaces = Dict(), regions = Dict(),
         quadrature = nothing, test_space = Galerkin(), ibp = Dict(), pairing = Dict(),
-        codegen = :numeric, dirichlet = :algebraic, kwargs...)
+        codegen = :numeric, dirichlet = :algebraic, natural = (), boundary_check = :warn, kwargs...)
 
 Finite-element discretization of a `PDESystem` whose spatial domain is the mesh domain `Ω`
 (of a `Ferrite.Grid`), with time variable `t`. `discretize(pdesys, disc)` assembles the
@@ -28,6 +28,16 @@ Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknow
   - `ibp`: equation (or its index) `=>` `PDEBase.StrongForm` integration-by-parts policy.
   - `pairing`: equation `=>` dependent variable it is tested with, needed for an equation
     with no time derivative of its own, such as `0 ~ Dxx(v) + f`.
+  - `natural`: boundary pieces (as `boundarypiece(Ω, name)` or a facet set name) that deliberately carry
+    the natural zero-flux condition of every field, such as an outflow or a symmetry plane. A piece
+    with an explicit zero Neumann condition `Dn(u(t, Γ)) ~ 0` needs no entry here. See `boundary_check`.
+  - `boundary_check`: what to do when part of the boundary has no condition for a field whose
+    equation has a flux, neither a Dirichlet, Neumann or Robin condition nor a `natural` piece.
+    `:warn` (default) logs one warning per `discretize` call, listing the pieces and the number of
+    facets for each such field, and treats them as zero-flux; `:error` throws the same message as an
+    `ArgumentError`, for strict completeness; `:off` skips the check. A facet claimed by two pieces that both carry
+    conditions, and a piece that is not on the boundary, are errors whatever `boundary_check` is.
+    A boundary given as a lower-dimensional mesh is made a piece with [`add_boundary_pieces!`](@ref).
   - `codegen = :mtk` and `dirichlet = :eliminate` are reserved for later milestones and
     raise; remaining keywords are passed to the `DAEProblem`, where a keyword given at the
     `discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate` and `name`
@@ -58,6 +68,8 @@ struct FEMDiscretization{T} <: PDEBase.AbstractMeshDiscretization
     pairing::Dict{Equation, Any}
     codegen::Symbol
     dirichlet::Symbol
+    natural::Vector{Symbol}
+    boundary_check::Symbol
     kwargs::NamedTuple
 end
 
@@ -79,7 +91,7 @@ end
 function FEMDiscretization(
         domain::PDEBase.MeshDomain, time = nothing; spaces = Dict(), regions = Dict(), quadrature = nothing,
         test_space = Galerkin(), ibp = Dict(), pairing = Dict(), codegen::Symbol = :numeric,
-        dirichlet::Symbol = :algebraic, kwargs...
+        dirichlet::Symbol = :algebraic, natural = (), boundary_check::Symbol = :warn, kwargs...
     )
     domain.mesh isa Ferrite.Grid ||
         throw(ArgumentError("FEMDiscretization needs a MeshDomain of a Ferrite.Grid, got a mesh of type $(typeof(domain.mesh))"))
@@ -94,12 +106,16 @@ function FEMDiscretization(
         region isa PDEBase.Region && region.parent === domain ||
             throw(ArgumentError("the region of $(_field_op(dv)) must be a Region of the FEMDiscretization's MeshDomain, as Region(Ω, name); got $(repr(region))"))
     end
+    boundary_check in (:warn, :error, :off) ||
+        throw(ArgumentError("boundary_check must be :warn, :error or :off, got $(repr(boundary_check))"))
+    natural = Symbol[p isa PDEBase.BoundaryPiece ? p.name : Symbol(p) for p in natural]
+    check_facetsets(domain.mesh, natural; disjoint = false)
     _check_reserved(kwargs)
     return FEMDiscretization{typeof(time)}(
         domain, time, Dict{Any, Ferrite.Interpolation}(_field_op(k) => ip for (k, ip) in spaces),
         Dict{Any, Any}(_field_op(k) => r for (k, r) in regions),
         quadrature, test_space, Dict{Any, StrongForm.IBPPolicy}(ibp), Dict{Equation, Any}(pairing),
-        codegen, dirichlet, NamedTuple(kwargs)
+        codegen, dirichlet, unique(natural), boundary_check, NamedTuple(kwargs)
     )
 end
 
@@ -131,7 +147,7 @@ PDEBase.supported_conditions(::FEMDiscretization) = PDEBase.SupportedConditions(
       - Coordinates are Cartesian and named by the `(x, y) ∈ Ω` pairing. Time must be the first argument of every dependent variable.
       - Dirichlet data may depend on space, time and parameters but not on another field. Neumann and Robin conditions are written with `NormalDerivative(Γ)`, with any conormal coefficient written explicitly. Neumann and Robin data may depend on time; the Robin coefficient multiplying `u(t, Γ)` may depend only on space and parameters until M3.
       - Periodic conditions `u(t, Γa) ~ u(t, Γb)` are rejected until M4. Interface conditions between regions have no syntax; every field lives on the whole mesh.
-      - Boundary pieces must be disjoint. A piece with no condition gets the natural zero-flux condition, with a warning when the operator has a flux.
+      - Boundary pieces must be disjoint and lie on the boundary. Boundary facets with no condition for a field get the natural zero-flux condition, with a warning when that field's equation has a flux; `natural` declares them and `boundary_check` makes the warning an error or turns it off.
       - Where two Dirichlet pieces of one field meet, the condition listed last in the `PDESystem` wins.
       - Every field with a time derivative needs an initial condition, linear in that one field and finite at every node.
       - Steady problems, `dirichlet = :eliminate`, fields with different interpolations and test spaces other than `Galerkin()` are rejected until M4. Nonlinear operators, time-dependent mass or stiffness coefficients and `codegen = :mtk` are rejected until M3.

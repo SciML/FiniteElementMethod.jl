@@ -182,6 +182,6 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
     @testset "a piece with no condition warns when its flux is not zero" begin
         Ω = box()
         Γl, Γr, Γb, Γt = sides(Ω)
-        @test_logs (:warn, r"boundary piece Γ_top has no condition") match_mode = :any lower([heat], [u(t, Γl) ~ 0, u(t, Γr) ~ 0, u(t, Γb) ~ 0, ic], Ω)
+        @test_logs (:warn, r"u: 2 of 8 boundary facets have no condition: Γ_top \(2 facets\)") match_mode = :any lower([heat], [u(t, Γl) ~ 0, u(t, Γr) ~ 0, u(t, Γb) ~ 0, ic], Ω)
     end
 end
