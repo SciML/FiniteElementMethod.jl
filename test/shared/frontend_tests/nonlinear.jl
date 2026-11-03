@@ -71,6 +71,28 @@ end
         @test nodal_error(sol, U, uexact) <= tol
     end
 
+    @testset "algebraic field fixed by a nonlinear term in itself (index 1) keeps its abstol" begin
+        # 0 = v² − u − s with v* = 1 + x + 2y: v's linear block is zero, but v² determines v, so the system has
+        # index 1 and algebraic_abstol = :auto must not put v out of error control.
+        @variables v(..)
+        V = v(t, x, y)
+        Ω = square()
+        parabolic = Dt(U) ~ Dx(Dx(U)) + Dy(Dy(U)) + (1 + x + 2y)
+        constraint = 0 ~ V^2 - U - ((1 + x + 2y)^2 - ustar)
+        bcs = [dirichlet(Ω); ic; v(0, x, y) ~ 1 + x + 2y]
+        sol, prob = fem_solve(
+            [parabolic, constraint], bcs, Ω, (x, y), t, [U, V]; pairing = Dict(constraint => v),
+            abstol = 1.0e-10, solve_kwargs = (; reltol = 1.0e-10)
+        )
+        @test !any(prob.differential_vars[FiniteElementMethod.field_range(sol.disc_data.space, :v)])
+        @test prob.kwargs[:abstol] === 1.0e-10
+        @test SciMLBase.successful_retcode(sol)
+        @test nodal_error(sol, U, uexact) <= tol
+        @test nodal_error(sol, V, (_, x_, y_) -> 1 + x_ + 2y_) <= tol
+        @named pdesys = PDESystem([parabolic, constraint], bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [U, V], [])
+        @test !haskey(discretize(pdesys, FEMDiscretization(Ω, t; pairing = Dict(constraint => v))).kwargs, :abstol)
+    end
+
     @testset "Burgers-type convection u(∂ₓu + ∂ᵧu)" begin
         # u*(∂ₓu* + ∂ᵧu*) = 3u*(1 + t).
         Ω = square()

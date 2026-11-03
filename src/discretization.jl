@@ -7,7 +7,7 @@ PDEBase.contains_point(grid::Ferrite.Grid, x) = _contains_point(grid, x)
 """
     FEMDiscretization(Ω::MeshDomain, t = nothing; spaces = Dict(), regions = Dict(),
         quadrature = nothing, test_space = Galerkin(), ibp = Dict(), pairing = Dict(),
-        codegen = :numeric, dirichlet = :algebraic, kwargs...)
+        codegen = :numeric, dirichlet = :algebraic, algebraic_abstol = :auto, kwargs...)
 
 Finite-element discretization of a `PDESystem` whose spatial domain is the mesh domain `Ω`
 (of a `Ferrite.Grid`), with time variable `t`. `discretize(pdesys, disc)` assembles the
@@ -35,6 +35,20 @@ gives a `PDENoTimeSolution`.
   - `pairing`: equation `=>` dependent variable it is tested with, needed for an equation
     with no time derivative of its own, such as `0 ~ Dxx(v) + f`. In a steady system the
     equations not named here take the remaining dependent variables in declared order.
+  - `algebraic_abstol`: the absolute tolerance the `DAEProblem` carries for its algebraic rows
+    (those with `differential_vars` false: algebraic fields and Dirichlet rows), so that they
+    are left out of the solver's error control. `:auto` sets `1e8` when the system has index
+    2, that is when an algebraic field's own unknowns are absent from its equation (the
+    pressure in `0 ~ Dx(u1) + Dy(u2)`; a nonlinear term in the field, as in `0 ~ v^2 - u`,
+    counts as present), and nothing otherwise; a positive number sets that
+    value on the algebraic rows of any system; `nothing` sets nothing. The differential rows
+    get the `abstol` passed to `FEMDiscretization` or `DAEProblem` if it is a number, else
+    OrdinaryDiffEq's default `1e-6`; an array `abstol` passed there is used as it is. An
+    `abstol` passed to `solve` replaces the problem's whole vector. The keyword belongs to the
+    time-dependent (DAE) path: a steady discretization ignores `:auto` and `nothing` and
+    rejects a number. This keyword is not in the spec (§7.1, §7.6): without it, `DFBDF`
+    drives the step size of an index-2 system below `eps` near the initial time, since the
+    local error of the index-2 unknowns does not shrink with the step.
   - `dirichlet`: how Dirichlet conditions enter the DAE (spec §7.3). The default `:algebraic`
     keeps every dof as an unknown and makes each prescribed row the algebraic equation
     `u_d = g_d(t)`. `:eliminate` removes the prescribed dofs: the unknowns are the free dofs
@@ -82,6 +96,7 @@ struct FEMDiscretization{T} <: PDEBase.AbstractMeshDiscretization
     pairing::Dict{Equation, Any}
     codegen::Symbol
     dirichlet::Symbol
+    algebraic_abstol::Union{Symbol, Nothing, Float64}
     kwargs::NamedTuple
 end
 
@@ -103,7 +118,7 @@ end
 function FEMDiscretization(
         domain::PDEBase.MeshDomain, time = nothing; spaces = Dict(), regions = Dict(), quadrature = nothing,
         test_space = Galerkin(), ibp = Dict(), pairing = Dict(), codegen::Symbol = :numeric,
-        dirichlet::Symbol = :algebraic, kwargs...
+        dirichlet::Symbol = :algebraic, algebraic_abstol = :auto, kwargs...
     )
     domain.mesh isa Ferrite.Grid ||
         throw(ArgumentError("FEMDiscretization needs a MeshDomain of a Ferrite.Grid, got a mesh of type $(typeof(domain.mesh))"))
@@ -117,12 +132,19 @@ function FEMDiscretization(
         region isa PDEBase.Region && region.parent === domain ||
             throw(ArgumentError("the region of $(_field_op(dv)) must be a Region of the FEMDiscretization's MeshDomain, as Region(Ω, name); got $(repr(region))"))
     end
+    algebraic_abstol === :auto || algebraic_abstol === nothing || algebraic_abstol isa Real && algebraic_abstol > 0 ||
+        throw(ArgumentError("algebraic_abstol must be :auto, nothing or a positive number, got $(repr(algebraic_abstol))"))
+    time === nothing && algebraic_abstol isa Real && throw(
+        ArgumentError(
+            "algebraic_abstol applies to time-dependent problems (the DAE path); a steady FEMDiscretization has no time stepper"
+        )
+    )
     _check_reserved(kwargs)
     return FEMDiscretization{typeof(time)}(
         domain, time, Dict{Any, Ferrite.Interpolation}(_field_op(k) => ip for (k, ip) in spaces),
         Dict{Any, Any}(_field_op(k) => r for (k, r) in regions),
         quadrature, test_space, Dict{Any, StrongForm.IBPPolicy}(ibp), Dict{Equation, Any}(pairing),
-        codegen, dirichlet, NamedTuple(kwargs)
+        codegen, dirichlet, algebraic_abstol isa Real ? Float64(algebraic_abstol) : algebraic_abstol, NamedTuple(kwargs)
     )
 end
 

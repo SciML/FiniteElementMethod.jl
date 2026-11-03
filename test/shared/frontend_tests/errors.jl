@@ -89,6 +89,11 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         @test_throws ArgumentError("dirichlet must be :algebraic or :eliminate, got :condense") FEMDiscretization(
             Ω, t; dirichlet = :condense
         )
+        for (value, shown) in ((0, "0"), (-1.0e8, "-1.0e8"), (NaN, "NaN"), ("1e8", "\"1e8\""), (:on, ":on"), ([1.0e8], "[1.0e8]"))
+            @test_throws ArgumentError("algebraic_abstol must be :auto, nothing or a positive number, got $shown") FEMDiscretization(
+                Ω, t; algebraic_abstol = value
+            )
+        end
     end
 
     @testset "steady and time-dependent entry points" begin
@@ -116,6 +121,13 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         @test_throws ArgumentError(
             "keyword `name` is set by the FEM discretization and cannot be passed; the reserved keywords are iv, unknowns, du0, coordinate, name, parameters"
         ) discretize(steady, FEMDiscretization(Ω); name = :other)
+        @test_throws ArgumentError(
+            "algebraic_abstol applies to time-dependent problems (the DAE path); a steady FEMDiscretization has no time stepper"
+        ) FEMDiscretization(Ω; algebraic_abstol = 1.0e8)
+        # :auto (the default) and nothing are accepted and set no abstol on the NonlinearProblem.
+        for value in (:auto, nothing)
+            @test !haskey(discretize(steady, FEMDiscretization(Ω; algebraic_abstol = value)).kwargs, :abstol)
+        end
     end
 
     @testset "time-dependent operators" begin

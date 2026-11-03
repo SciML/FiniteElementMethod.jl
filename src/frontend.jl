@@ -381,7 +381,8 @@ function _lower(pdesys, disc::FEMDiscretization)
     pieces = Dict{Any, String}(Γ => String(Γ.name) for Γ in PDEBase.boundarypieces(disc.domain))
     md = FEMMetadata(space, iv, v.x̄, fields, pieces, pdesys; u0, elimination)
     parameters = [q => v for (q, v) in zip(ctx.params, pvals)]
-    return (; ops, u0 = unknown_u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys), parameters)
+    selfnonlinear = Set(names[f] for f in 1:an.nfields if _nonlinear_in_own_field(wf, an, f))
+    return (; ops, u0 = unknown_u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys), parameters, selfnonlinear)
 end
 
 # `K u + N(u, t0) - F` with the Dirichlet rows `u_d - g_d`: `K` holds `e_d`, `F` holds `g_d` and `N` is zero there.
@@ -418,7 +419,8 @@ state, with its symbolic tangent) and the `FEMMetadata` as its `problem_type`, s
 discretize raises. A `disc` without a time variable lowers instead to the steady
 `NonlinearProblem` documented under `NonlinearProblem(pdesys, disc)`. Keywords are passed to
 the `DAEProblem` after `disc.kwargs`, so a keyword given here wins; the keywords the discretization sets (`iv`, `unknowns`, `du0`, `coordinate`,
-`name`, `parameters`) are rejected.
+`name`, `parameters`) are rejected. The problem carries an `abstol` vector when `disc.algebraic_abstol`
+applies (see [`FEMDiscretization`](@ref)).
 
 The Dirichlet rows are linear with identity Jacobian rows, so a Newton step with a current
 Jacobian satisfies them exactly. OrdinaryDiffEq's BDF methods reuse the Jacobian across
@@ -430,11 +432,40 @@ function SciMLBase.discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscre
     _check_reserved(kwargs)
     parts = _lower(pdesys, disc)
     disc.time === nothing && return _steady_problem(parts; disc.kwargs..., kwargs...)
+    kwargs = merge(disc.kwargs, values(kwargs))
     return numeric_dae_problem(
         parts.ops, parts.u0, parts.tspan, parts.md;
-        iv = parts.iv, unknowns = parts.unknowns, name = parts.name, parameters = parts.parameters,
-        disc.kwargs..., kwargs...
+        iv = parts.iv, unknowns = parts.unknowns, name = parts.name, parameters = parts.parameters, kwargs...,
+        _abstol(disc.algebraic_abstol, parts.ops, parts.selfnonlinear, get(kwargs, :abstol, nothing))...
     )
+end
+
+# An algebraic field whose own unknowns are absent from its equation (the pressure in the continuity equation) is
+# fixed only through the other fields, which makes the DAE index 2. The nonlinear Jacobian shares K's pattern and
+# says nothing about which blocks are zero, so a field in `selfnonlinear`, whose equation has a nonlinear term in
+# the field itself (0 = v² − u), counts as present.
+function _index2(ops::FEMOperators, selfnonlinear)
+    free = trues(size(ops.K, 1))
+    free[ops.prescribed] .= false
+    return any(ops.fields) do (name, r)
+        rows = filter(i -> free[i], r)
+        !isempty(rows) && !(name in selfnonlinear) && !any(ops.differential_vars[rows]) && iszero(ops.K[rows, r])
+    end
+end
+
+# Whether a nonlinear term of equation `f` (paired with field `f`) reads field `f`'s value, gradient or Hessian.
+function _nonlinear_in_own_field(wf, an, f)
+    d = an.dim
+    own = [an.slots.U[f]; an.slots.G[((f - 1) * d + 1):(f * d)]; an.slots.H[((f - 1) * d * d + 1):(f * d * d)]]
+    return any(term -> term.kind === :nonlinear && term.eq == f && _depends(unwrap(term.integrand), own), [wf.volume; wf.facet])
+end
+
+# The `abstol` keyword of the `DAEProblem` (see `FEMDiscretization`'s `algebraic_abstol`); empty when none is set.
+function _abstol(algebraic, ops, selfnonlinear, abstol)
+    algebraic === :auto && (algebraic = _index2(ops, selfnonlinear) ? 1.0e8 : nothing)
+    (algebraic === nothing || !(abstol isa Union{Nothing, Real})) && return (;)
+    differential = something(abstol, 1.0e-6)
+    return (; abstol = [d ? differential : algebraic for d in ops.differential_vars])
 end
 
 SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...) =
