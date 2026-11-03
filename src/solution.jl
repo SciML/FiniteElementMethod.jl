@@ -225,9 +225,9 @@ end
 # A field as its `Symbol`/`String` name or as the dependent variable (`u`, `u(..)` or `u(t, x, y)`).
 function _field_name(md::FEMMetadata, field)
     name = field isa Union{Symbol, AbstractString} ? Symbol(field) : begin
-        s = Symbolics.unwrap(field)
-        nameof(SymbolicUtils.iscall(s) ? SymbolicUtils.operation(s) : s)
-    end
+            s = Symbolics.unwrap(field)
+            nameof(SymbolicUtils.iscall(s) ? SymbolicUtils.operation(s) : s)
+        end
     any(f -> f.name === name, md.fields) ||
         throw(ArgumentError("$field is not a field of this discretization; the fields are $(map(f -> f.name, md.fields))"))
     return name
