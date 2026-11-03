@@ -336,7 +336,7 @@ function _check_boundary_conditions(disc::FEMDiscretization, an, ctx)
         isempty(open) && continue
         pieces = [(name, length(intersect(open, set))) for (name, set) in sort!(collect(facetsets); by = first)]
         listed = ["Γ_$name ($n facets)" for (name, n) in pieces if n > 0]
-        unnamed = length(setdiff(open, union(values(facetsets)...)))
+        unnamed = length(setdiff(open, union(Set{Ferrite.FacetIndex}(), values(facetsets)...)))
         unnamed > 0 && push!(listed, "$unnamed facets in no piece")
         push!(lines, "  $(nameof(op)): $(length(open)) of $(length(boundary)) boundary facets have no condition: $(join(listed, ", "))")
     end

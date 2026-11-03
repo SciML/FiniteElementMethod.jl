@@ -211,4 +211,10 @@ end
         @named pdesys = PDESystem([heat2d], [u(t, boundarypiece(Ω, :left)) ~ 0, u(0, x, y) ~ 0], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
         @test_logs (:warn, r"12 of 16 boundary facets have no condition: 12 facets in no piece") discretize(pdesys, FEMDiscretization(Ω, t))
     end
+
+    @testset "a mesh with no named pieces warns instead of failing" begin
+        Ω = MeshDomain(bare_box(Triangle, (4, 4)))
+        @named pdesys = PDESystem([heat2d], [u(0, x, y) ~ 0], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
+        @test_logs (:warn, r"16 of 16 boundary facets have no condition: 16 facets in no piece") discretize(pdesys, FEMDiscretization(Ω, t))
+    end
 end
