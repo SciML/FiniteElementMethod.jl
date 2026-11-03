@@ -405,8 +405,9 @@ builds its own system around them (such as a component with boundary ports). Ret
   - `metadata`: the [`FEMMetadata`](@ref), for [`facet_dofs`](@ref),
     [`dof_coordinates`](@ref) and [`cell_dofs`](@ref).
 
-It is the linear, time-independent case only: a nonlinear term, a time-dependent source or
-time-dependent Dirichlet data has no data form and raises an `ArgumentError`. Parameters are
+It is the linear, time-independent case only: a time-dependent source or time-dependent
+Dirichlet data has no data form and raises an `ArgumentError`, and so does a nonlinear term (the
+message begins "nonlinear terms land in M3"). Parameters are
 substituted by their values, as for the `DAEProblem`.
 """
 function operators(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
