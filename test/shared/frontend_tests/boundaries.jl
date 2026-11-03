@@ -116,6 +116,11 @@ end
         msg = errmsg(() -> add_boundary_pieces!(grid(), :face => face(1, 0.0, 2)))
         @test occursin("has 3-dimensional coordinates", msg)
         @test_throws ArgumentError("atol must be positive, got 0.0") add_boundary_pieces!(grid(), :bottom => segment((0.0, 0.0), (1.0, 0.0), 4); atol = 0.0)
+        # A mesh far from the origin, or a tiny tolerance, does not overflow the node lookup.
+        far = rectangle_grid(Triangle, (4, 4); lo = (1.0e8, 1.0e8), hi = (1.0e8 + 1, 1.0e8 + 1))
+        empty!(far.facetsets)
+        add_boundary_pieces!(far, :bottom => segment((1.0e8, 1.0e8), (1.0e8 + 1, 1.0e8), 4); atol = 1.0e-12)
+        @test length(getfacetset(far, "bottom")) == 4
         # A looser tolerance admits a segment that is off by less than it.
         g = grid()
         add_boundary_pieces!(g, :bottom => segment((0.0, 1.0e-4), (1.0, 1.0e-4), 4); atol = 1.0e-3)

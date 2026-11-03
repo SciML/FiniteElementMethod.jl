@@ -122,7 +122,9 @@ _boundary_facets(grid::Ferrite.Grid) = Set(only(fs) for fs in values(_facet_owne
 # Map each node of `sub` to the parent node within `atol` of it (the nearest one), through a hash of `atol`-wide
 # buckets, so that a point's candidates lie in the 3^dim buckets around its own.
 function _match_nodes(grid::Ferrite.Grid{dim}, sub::Ferrite.Grid, atol) where {dim}
-    bucket(x) = ntuple(d -> floor(Int, x[d] / atol), dim)
+    # Relative to the parent's lowest corner, and clamped, so a translated mesh or a tiny `atol` cannot overflow `Int`.
+    origin = ntuple(d -> minimum(n -> n.x[d], Ferrite.getnodes(grid)), dim)
+    bucket(x) = ntuple(d -> floor(Int, clamp((x[d] - origin[d]) / atol, -1.0e15, 1.0e15)), dim)
     buckets = Dict{NTuple{dim, Int}, Vector{Int}}()
     for (i, node) in enumerate(Ferrite.getnodes(grid))
         push!(get!(buckets, bucket(node.x), Int[]), i)
