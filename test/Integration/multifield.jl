@@ -107,3 +107,22 @@ end
     ch_ref = constraints_reference(setup, [("left", :p, (X, t) -> 0.0), ("right", :p, (X, t) -> 0.0)])
     @test ch.prescribed_dofs == ch_ref.prescribed_dofs
 end
+
+@testset "declared field order [u, w] survives an equation that mentions w first" begin
+    # Regression: PDEBase once numbered fields in the order the equations mention them, which put w first here and
+    # sent u's equation to w's dofs. Fields must follow the declared depvars, so the u block is diffusion 2 with
+    # mass, and the w block diffusion 5 coupled to u, with no mass.
+    eqs = [Dt(U) ~ Wf + 2 * (Dx(Dx(U)) + Dy(Dy(U))), 0 ~ 5 * (Dx(Dx(Wf)) + Dy(Dy(Wf))) + U]
+    c = chain(eqs, BC[]; depvars = [U, Wf], t, sivs = [x, y])
+    s = c.an.slots
+    @test isequal(c.an.mass[1], s.Ud[1]) && isequal(c.an.mass[2], 0)
+    setup = mesh_setup(Triangle, 1, 6; fields = [:u, :w])
+    blocks = Dict(
+        (1, 1) => (; zero_block(2)..., κ = iso(2.0), m = 1.0),
+        (1, 2) => (; zero_block(2)..., c = -1.0),
+        (2, 1) => (; zero_block(2)..., c = -1.0),
+        (2, 2) => (; zero_block(2)..., κ = iso(5.0)),
+    )
+    A = assemble_linear(setup.ctx, c.kernels, P0)
+    check_operators(A, linear_reference(setup; block = (e, f, X) -> blocks[(e, f)], source = (e, X) -> 0.0)...)
+end
