@@ -257,7 +257,7 @@ function facet_dofs(md::FEMMetadata, Γ, field)
     name = _field_name(md, field)
     facets = Ferrite.getfacetset(_grid(md), _facetset_name(md, Γ))
     # Ferrite throws when no facet of the set lies in a cell that holds the field.
-    any(fi -> name in dh.subdofhandlers[dh.cell_to_subdofhandler[fi[1]]].field_names, facets) || return Int[]
+    any(fi -> _cell_range(dh, fi[1], name) !== nothing, facets) || return Int[]
     ch = Ferrite.ConstraintHandler(dh)
     Ferrite.add!(ch, Ferrite.Dirichlet(name, facets, Returns(0.0)))
     Ferrite.close!(ch)

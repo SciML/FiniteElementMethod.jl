@@ -74,6 +74,20 @@ end
         @test occursin("regions", errmsg(() -> cell_dofs(md, w)))
     end
 
+    @testset "cells that hold no field at all" begin
+        grid = rectangle_grid(Triangle, (4, 4))
+        addcellset!(grid, "left_half", X -> X[1] <= 0.5 + 1.0e-12)
+        Ω = MeshDomain(grid)
+        Γ = Dict(n => boundarypiece(Ω, n) for n in (:left, :right))
+        U = u(t, x, y)
+        @named pdesys = PDESystem(
+            [Dt(U) ~ Δ(U)], [u(t, Γ[:left]) ~ 0; u(0, x, y) ~ x], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [U], []
+        )
+        md = discretize(pdesys, FEMDiscretization(Ω, t; regions = Dict(u => Region(Ω, :left_half)))).problem_type
+        @test isempty(facet_dofs(md, :right, u))
+        @test length(facet_dofs(md, :left, u)) == 5
+    end
+
     @testset "rejections" begin
         md = heat_metadata(MeshDomain(rectangle_grid(Quadrilateral, (2, 2))))
         @test occursin("not a facet set", errmsg(() -> facet_dofs(md, "nope", u)))
