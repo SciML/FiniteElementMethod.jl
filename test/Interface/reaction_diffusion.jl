@@ -67,9 +67,9 @@ end
     v_exact(t_, x_) = 1 + x_^2 - t_ * x_^2
     Ω = MeshDomain(generate_grid(Line, (4,), Vec(0.0), Vec(1.0)))
     left, right = boundarypiece.(Ω, (:left, :right))
-    ue, ve = x^2 + t, 1 + x^2 - t * x^2
-    f_u = 1 - 2 - a * (ve - ue)
-    f_v = -x^2 - D * (2 - 2t) + a * (ve - ue)
+    u_sym, v_sym = x^2 + t, 1 + x^2 - t * x^2
+    f_u = 1 - 2 - a * (v_sym - u_sym)
+    f_v = -x^2 - D * (2 - 2t) + a * (v_sym - u_sym)
     eqs = [
         Dt(u(t, x)) ~ Dx(Dx(u(t, x))) + a * (v(t, x) - u(t, x)) + f_u,
         Dt(v(t, x)) ~ D * Dx(Dx(v(t, x))) - a * (v(t, x) - u(t, x)) + f_v,
