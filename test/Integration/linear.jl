@@ -235,9 +235,9 @@ end
 end
 
 @testset "periodic conditions are carried through weak_form untouched" begin
-    # Checks only that weak_form passes periodic data through with its terms unchanged. Periodic pairing is
-    # constraint-level (PeriodicDirichlet in M4), and rejecting periodic conditions before M4 belongs to the
-    # discretizer (M2/M4), so this is not coverage of the periodic BC kind.
+    # Checks only that weak_form passes periodic data through with its terms unchanged. Periodic conditions are not
+    # supported by the discretizer ("periodic boundary conditions are not supported"), which rejects them
+    # after weak_form, so this is not coverage of the periodic BC kind.
     eq = Dt(U) ~ Dx(k * Dx(U)) + Dy(k * Dy(U)) + x * y + 1
     bcs = [BC("top", k * Dy(U) + α * U ~ β, TOP)]
     periodic = [PeriodicBC("left", "right", 1, [2.0, 0.0])]

@@ -1,4 +1,4 @@
-# Every M2 error path of the front end. Each is raised by `discretize` (which is
+# The user-facing error paths of the front end. Each is raised by `discretize` (which is
 # `discretize(pdesys, disc)`) before any solver runs. Documented user-facing messages are matched
 # exactly; errors raised inside PDEBase's analysis are matched by substring.
 using Test
