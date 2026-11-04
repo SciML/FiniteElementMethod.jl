@@ -1,19 +1,22 @@
 # The README's showcase code block, so that the test that runs it and the documentation build
 # that animates it both use exactly what the README shows.
 
-# The first ```julia block of the README.
-function readme_code(readme = joinpath(@__DIR__, "..", "README.md"))
-    m = match(r"```julia\n(.*?)```"s, read(readme, String))
-    m === nothing && error("$readme has no ```julia block")
-    return m.captures[1]
+# The `block`-th ```julia block of the README: 1 is the heat showcase, 2 the Navier–Stokes one.
+function readme_code(readme = joinpath(@__DIR__, "..", "README.md"); block = 1)
+    blocks = collect(eachmatch(r"```julia\n(.*?)```"s, read(readme, String)))
+    length(blocks) < block && error("$readme has no ```julia block number $block")
+    return blocks[block].captures[1]
 end
 
-# Run the README block in a fresh module and return its `sol`, `u`, `x`, `y`, `t` and pieces as a
-# named tuple. The bindings are read with invokelatest: they are newer than the caller's world.
-function run_readme(readme = joinpath(@__DIR__, "..", "README.md"))
+# Run a README block in a fresh module and return the bindings `names` (by default the heat showcase's
+# `sol`, `u`, `x`, `y`, `t` and pieces) as a named tuple. The bindings are read with invokelatest: they
+# are newer than the caller's world.
+function run_readme(
+        readme = joinpath(@__DIR__, "..", "README.md"); block = 1,
+        names = (:sol, :u, :x, :y, :t, :Γ_in, :Γ_wall, :Γ_out)
+    )
     mod = Module(:ReadmeShowcase)
     Core.eval(mod, :(include(path) = Base.include($mod, path)))
-    Base.include_string(mod, readme_code(readme), readme)
-    names = (:sol, :u, :x, :y, :t, :Γ_in, :Γ_wall, :Γ_out)
+    Base.include_string(mod, readme_code(readme; block), readme)
     return NamedTuple{names}(map(name -> Base.invokelatest(getglobal, mod, name), names))
 end

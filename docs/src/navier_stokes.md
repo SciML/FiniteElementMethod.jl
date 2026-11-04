@@ -39,6 +39,24 @@ sol = solve(prob, DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0), linsolve = UMFP
     abstol, reltol = 1e-7)
 ```
 
+## Vortex shedding at Reynolds number 100
+
+![The flow past a cylinder starting from rest: speed above, vorticity below](assets/ns_showcase.gif)
+
+![Speed and vorticity of the flow past a cylinder at the final time](assets/ns_showcase.png)
+
+The same formulation with the inflow of DFG case 2D-2 (peak 1.5, Reynolds number 100) is the second
+code block of the [README](https://github.com/SciML/FiniteElementMethod.jl#navierstokes). The
+documentation build runs that block and renders the figure and the animation above with
+[`examples/ns_showcase.jl`](https://github.com/SciML/FiniteElementMethod.jl/blob/master/examples/ns_showcase.jl):
+the velocity is sampled on a regular grid with `sol(ts, xs, ys; dv)`, which returns `NaN`
+inside the cylinder, and the vorticity is a central difference of the sampled velocity. The flow
+starts at rest, the wake behind the cylinder turns unstable and a von Kármán vortex street has
+formed by `t = 6`. It is a showcase, not a validated 2D-2 run: the mesh is the coarse `h = 0.04`
+mesh of the steady case above and the tolerance is `10⁻⁶`. The test suite checks only that the wake
+sheds with a Strouhal number between 0.25 and 0.35 (measured 0.28 to 0.31, against about 0.3 for
+the benchmark), not the benchmark's amplitudes or lift oscillation.
+
 ## Formulation choices
 
 - **Outflow condition.** PDEBase's strong-form analysis integrates only second-order terms by
