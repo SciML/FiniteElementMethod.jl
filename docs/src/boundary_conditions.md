@@ -25,14 +25,14 @@ rendering.
 
 Restrictions of this release:
 
-  - Geometries are `Ferrite.Grid` meshes (1D, 2D and 3D cell shapes) wrapped as `MeshDomain(grid)`, with boundary pieces named by the grid's facet sets. Only 1D and 2D are evidenced; meshes with mixed cell types are rejected until M4.
+  - Geometries are `Ferrite.Grid` meshes (1D, 2D and 3D cell shapes) wrapped as `MeshDomain(grid)`, with boundary pieces named by the grid's facet sets. 1D, 2D and 3D meshes are tested; meshes with mixed cell types are rejected.
   - Coordinates are Cartesian and named by the `(x, y) ∈ Ω` pairing. Time is the first or last argument of every dependent variable, never between spatial arguments.
-  - Dirichlet data may depend on space, time and parameters but not on another field. Neumann and Robin conditions are written with `NormalDerivative(Γ)`, with any conormal coefficient written explicitly. Neumann and Robin data may depend on time; the Robin coefficient multiplying `u(t, Γ)` may depend only on space and parameters until M3.
-  - Periodic conditions `u(t, Γa) ~ u(t, Γb)` are rejected until M4. Interface conditions between regions have no syntax; every field lives on the whole mesh.
+  - Dirichlet data may depend on space, time and parameters but not on another field. Neumann and Robin conditions are written with `NormalDerivative(Γ)`, with any conormal coefficient written explicitly. Neumann and Robin data may depend on time; the Robin coefficient multiplying `u(t, Γ)` may depend only on space and parameters.
+  - Periodic conditions `u(t, Γa) ~ u(t, Γb)` are rejected. Interface conditions between regions have no syntax; every field lives on the whole mesh.
   - Boundary pieces must be disjoint. A piece with no condition gets the natural zero-flux condition, with a warning when the operator has a flux.
   - Where two Dirichlet pieces of one field meet, the condition listed last in the `PDESystem` wins.
   - Every field with a time derivative needs an initial condition, linear in that one field and finite at every node.
-  - Time-dependent mass or stiffness coefficients and `codegen = :mtk` are rejected until M3.
+  - Time-dependent mass or stiffness coefficients and `codegen = :mtk` are rejected.
 
 "Time-dependent" means boundary data that varies with time, for every condition kind.
 
@@ -42,8 +42,8 @@ The spatial domain is a `MeshDomain(grid)` of a `Ferrite.Grid`, for example one 
 with `FerriteGmsh.togrid` or made with `Ferrite.generate_grid`. Boundary pieces are the grid's
 facet sets: `boundarypiece(Ω, :inlet)` is the facet set `"inlet"`. Pieces must be disjoint; a
 facet in two pieces that both carry conditions is an error naming the first shared facet.
-Line, triangle and quadrilateral meshes are tested; tetrahedral and hexahedral meshes construct
-but are not evidenced (see [Supported equation classes](@ref)). Every cell of the mesh must
+Line, triangle, quadrilateral, tetrahedral and hexahedral meshes are tested (3D heat
+convergence in `test/Integration/three_d.jl`; see [Supported equation classes](@ref)). Every cell of the mesh must
 have the same shape.
 
 Coordinates are Cartesian. Their names and order come from the `(x, y) ∈ Ω` pairing (see
@@ -111,7 +111,7 @@ Like a Neumann condition, it enters the weak form as a facet integral.
 
 Not supported in this release. An equation between traces on two pieces,
 `u(t, Γ_left) ~ u(t, Γ_right)`, is rejected with
-`periodic conditions need milestone M4 (Ferrite PeriodicDirichlet)`.
+`periodic boundary conditions are not supported`.
 
 ## Interface conditions
 
@@ -128,11 +128,11 @@ is an error that names the problem; nothing falls back to `mtkcompile`.
 
 | Input | Result in this release |
 |:--- |:--- |
-| A time-dependent coefficient in the mass or stiffness operator, such as `Dx((1 + t) * Dx(u))` | error; lands in M3 |
-| A time-dependent Robin coefficient, such as `Dn(u(t, Γ)) + (1 + t) * u(t, Γ) ~ 0` | error; lands in M3 |
-| `FEMDiscretization(…; codegen = :mtk)` | error; lands in M3 |
-| A mesh with mixed cell types | error; lands in M4 |
-| A periodic condition `u(t, Γa) ~ u(t, Γb)` | error; lands in M4 |
+| A time-dependent coefficient in the mass or stiffness operator, such as `Dx((1 + t) * Dx(u))` | error |
+| A time-dependent Robin coefficient, such as `Dn(u(t, Γ)) + (1 + t) * u(t, Γ) ~ 0` | error |
+| `FEMDiscretization(…; codegen = :mtk)` | error |
+| A mesh with mixed cell types | error |
+| A periodic condition `u(t, Γa) ~ u(t, Γb)` | error |
 | A time argument between spatial arguments, such as `u(x, t, y)` | error |
 | Two Dirichlet pieces of one field sharing nodes | the condition listed last wins |
 | A boundary piece with no condition | natural zero-flux condition, with a warning when the equations have a flux |

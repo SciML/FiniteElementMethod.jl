@@ -36,8 +36,7 @@ GROUP=QA julia --project=. -e 'using Pkg; Pkg.test()'
    activated with the package developed into it, as `test/qa/` does.
 
 A declared group whose folder is missing or empty is an error, so only declare groups that
-have tests. Planned milestone groups: `StrongForm`, `Assembly`, `Space`, `DAE`, `Solution`,
-`Convergence`, `MOLComparison`, `Library`.
+have tests.
 
 ## Shared helpers
 
