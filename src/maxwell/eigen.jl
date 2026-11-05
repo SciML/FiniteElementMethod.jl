@@ -81,15 +81,17 @@ end
     maxwell_eigenmodes(model::MaxwellModel; nev, target_frequency, krylovdim = max(30, 2nev + 10),
                        tol = 1e-10, maxiter = 300, nullspace_tol = 1e-6)
 
-The `nev` resonant modes of `model` with eigenfrequencies `Re(ω) / 2π` nearest `target_frequency` (Hz, real and
-positive), sorted by frequency. Requires `using KrylovKit`.
+The `nev` resonant modes of `model` whose complex angular frequencies `ω` are nearest `ωt = 2π target_frequency`
+(`target_frequency` in Hz, real and positive), that is with the least `|ω - ωt|`, sorted by `Re(ω)`. For a
+lossless model this is the nearest eigenfrequency; with loss a strongly damped mode counts as further from the
+target than its real frequency alone suggests. Requires `using KrylovKit`.
 
 Source-free modes satisfy `Kc u = λ (Mε' + i Mε'') u` (see [`MaxwellModel`](@ref)) on the dofs off the PEC
 facets, which are eliminated rather than constrained, with `λ = ω² μ0 ε0 L²`. The problem is solved by
 shift-invert Arnoldi: one sparse LU of `Kc - σ Mε` at `σ` from `target_frequency` (complex when a material is
 lossy), with KrylovKit's `eigsolve` on `u ↦ (Kc - σ Mε) \\ (Mε u)`. Shift-invert ranks modes by distance in
-`λ ∝ ω²`, so it computes at least `2nev` candidates, enough to contain the `nev` nearest in frequency, and
-returns those; `krylovdim` grows with the candidate count.
+`λ ∝ ω²`, so it computes at least `2nev` candidates, enough to contain the `nev` nearest in `ω`, and returns
+those; `krylovdim` grows with the candidate count.
 
 Edge elements carry the gradients of the nodal hat functions as an exact `λ = 0` null space (one mode per node
 off the PEC facets, less one per connected part of the mesh without PEC), which would swamp the shift-invert for any target below the lowest physical mode. Every
@@ -134,9 +136,9 @@ function maxwell_eigenmodes(
     op(x) = project(F \ (M * x))
 
     x0 = project(T.(sin.(1.3 .* (1:length(free)) .^ 1.1)))
-    # Shift-invert finds the modes nearest σ in λ ∝ ω², which favours those below the target. Every mode within
-    # frequency distance d of the target lies within λ distance (2ωt + d) d scale of σ, so the candidates (all
-    # modes within the largest λ distance R found) hold the nev nearest in frequency once R reaches that bound.
+    # Shift-invert finds the modes nearest σ in λ ∝ ω², which favours those below the target. Every mode with
+    # |ω - ωt| ≤ d has |λ - σ| = scale |ω - ωt| |ω + ωt| ≤ scale d (2ωt + d), complex ω included, so the
+    # candidates (all modes within the largest λ distance found) hold the nev nearest in ω once it reaches that.
     ωt = 2π * target_frequency
     howmany = 2nev
     local λ, vecs, keep
@@ -145,7 +147,7 @@ function maxwell_eigenmodes(
         λ = σ .+ 1 ./ θ
         lossy || (λ = real.(λ))
         keep = findall(l -> abs(l) >= nullspace_tol * σ, λ)
-        dist = abs.(real.(sqrt.(complex.(λ[keep]) ./ scale)) .- ωt)
+        dist = abs.(sqrt.(complex.(λ[keep]) ./ scale) .- ωt)
         keep = keep[sortperm(dist)]
         length(keep) < nev && break
         d = sort(dist)[nev]
@@ -155,7 +157,7 @@ function maxwell_eigenmodes(
     end
     length(keep) < nev && @warn "maxwell_eigenmodes found $(length(keep)) of $nev modes"
     keep = keep[1:min(nev, end)]
-    keep = keep[sortperm(real.(λ[keep]))]
+    keep = keep[sortperm(real.(sqrt.(complex.(λ[keep]))))]
 
     omega = sqrt.(complex.(λ[keep])) ./ sqrt(scale)
     Q = [iszero(imag(ω)) ? Inf : real(ω) / (2imag(ω)) for ω in omega]

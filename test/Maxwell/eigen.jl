@@ -60,6 +60,24 @@ end
     @test maxwell_eigenmodes(box_model(3); nev = 1, target_frequency = 0.98).frequency[1] ≈ EXACT[2] rtol = 0.01
 end
 
+@testset "lossy: nearest in complex ω, and the candidate bound holds" begin
+    # eps_r = 1 - 100i scales ω by 1/√(1 - 100i): the lowest modes sit at Re f = 0.0592, 0.0794, 0.0854 with
+    # Im f about as large. From 0.0854 the nearest in complex ω is the first, and shift-invert ranks the first
+    # two ahead of the third in λ, so a bound on Re ω alone would stop too early.
+    grid = box_grid(2)
+    addcellset!(grid, "fill", x -> true)
+    model = MaxwellModel(
+        grid; materials = Dict("fill" => MaxwellMaterial(; eps_r = 1 - 100im)), pec = CUBE_FACES,
+        eps0 = 1.0, mu0 = 1.0,
+    )
+    ωt = 2π * 0.085405
+    one = maxwell_eigenmodes(model; nev = 1, target_frequency = 0.085405)
+    six = maxwell_eigenmodes(model; nev = 6, target_frequency = 0.085405)
+    @test issorted(six.frequency)
+    @test one.omega[1] ≈ six.omega[argmin(abs.(six.omega .- ωt))]
+    @test one.omega[1] ≈ 2π * EXACT[1] / sqrt(1 - 100im) rtol = 0.02
+end
+
 @testset "no PEC: the constant potential is removed from the gradient basis" begin
     # Natural (magnetic-wall) conditions everywhere: the dual of the PEC cube, lowest at √2/2 (x3).
     single = MaxwellModel(generate_grid(Tetrahedron, (1, 1, 1)); eps0 = 1.0, mu0 = 1.0)
