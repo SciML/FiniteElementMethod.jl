@@ -321,3 +321,15 @@ guarded_root(z) = sqrt(z)
         @test kernel.f(args[1:5]..., X, args[7:9]...) == 0.0
     end
 end
+
+module Custom
+    pow(x, y) = x + y
+end
+@register_symbolic Custom.pow(x, y)
+
+@testset "only NaNMath.pow is rewritten into literal_pow" begin
+    @variables ξ
+    ex = Custom.pow(ξ, 2) + ξ^2 * Custom.pow(ξ, 3)
+    f = build(ex, (ξ,), Val(false); cse = true)
+    @test f(3.0) == Custom.pow(3.0, 2) + 3.0^2 * Custom.pow(3.0, 3)
+end

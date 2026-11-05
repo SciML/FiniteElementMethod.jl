@@ -25,6 +25,8 @@ function has_ifelse(ex)
     return any(has_ifelse, SU.arguments(ex))
 end
 
+is_nanmath_pow(f) = f === Symbolics.NaNMath.pow || f == GlobalRef(Symbolics.NaNMath, :pow)
+
 # The numeric temporaries `var"##cse#k" = 2` that are assigned once, substituted into their uses and dropped, and
 # `NaNMath.pow(x, 2)` with an integer literal exponent back as `Base.literal_pow(^, x, Val(2))`.
 function inline_literals(code)
@@ -45,7 +47,7 @@ substitute_literals(x, literals) = x isa Symbol ? get(literals, x, x) : x
 function substitute_literals(ex::Expr, literals)
     isliteral(arg) = arg isa Expr && arg.head === :(=) && haskey(literals, arg.args[1])
     args = Any[substitute_literals(arg, literals) for arg in ex.args if !isliteral(arg)]
-    if ex.head === :call && length(args) == 3 && args[1] isa Function && nameof(args[1]) === :pow && args[3] isa Integer
+    if ex.head === :call && length(args) == 3 && is_nanmath_pow(args[1]) && args[3] isa Integer
         return Expr(:call, Base.literal_pow, ^, args[2], Expr(:call, Val, args[3]))
     end
     return Expr(ex.head, args...)
