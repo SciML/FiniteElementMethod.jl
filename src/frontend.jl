@@ -413,26 +413,49 @@ function _lower(pdesys, disc::FEMDiscretization)
     return (; ops, u0 = unknown_u0, tspan = (t0, t1), md, iv, unknowns, name = nameof(pdesys), parameters, selfnonlinear, raw, full_u0 = u0)
 end
 
+# The parameters of a steady problem as a symbolic container, so `remake(prob; p = [k => 3.0])` resolves `k` to its
+# slot in `p` and reaches the same check as `remake(prob; p = [3.0])`, instead of leaving `p` unchanged.
+struct SteadyParameters
+    syms::Vector{Any}
+end
+
+SymbolicIndexingInterface.parameter_symbols(sys::SteadyParameters) = sys.syms
+SymbolicIndexingInterface.is_parameter(sys::SteadyParameters, sym) = parameter_index(sys, sym) !== nothing
+SymbolicIndexingInterface.parameter_index(sys::SteadyParameters, sym) = findfirst(q -> isequal(q, sym), sys.syms)
+SymbolicIndexingInterface.variable_symbols(::SteadyParameters) = []
+SymbolicIndexingInterface.is_variable(::SteadyParameters, sym) = false
+SymbolicIndexingInterface.variable_index(::SteadyParameters, sym) = nothing
+SymbolicIndexingInterface.is_independent_variable(::SteadyParameters, sym) = false
+SymbolicIndexingInterface.independent_variable_symbols(::SteadyParameters) = []
+SymbolicIndexingInterface.is_time_dependent(::SteadyParameters) = false
+SymbolicIndexingInterface.is_observed(::SteadyParameters, sym) = false
+SymbolicIndexingInterface.constant_structure(::SteadyParameters) = true
+
 # `K u + N(u, t0) - F` with the Dirichlet rows `u_d - g_d`: `K` holds `e_d`, `F` holds `g_d` and `N` is zero there.
 function _steady_problem(parts; kwargs...)
     (; ops) = parts
     t0 = first(parts.tspan)
     F = load!(zeros(length(parts.u0)), ops.load, t0)
     N = ops.nonlinear
+    syms = [q for (q, _) in parts.parameters]
+    assembled = [v for (_, v) in parts.parameters]
+    check_parameters(p) = isempty(syms) || check_assembled_values(syms, assembled, p)
     function f!(res, u, p)
+        check_parameters(p)
         mul!(res, ops.K, u)
         res .-= F
         N === nothing || add_nonlinear!(res, N, u, t0)
         return nothing
     end
     function jac!(J, u, p)
+        check_parameters(p)
         check_pattern(J, ops.K, "the Jacobian")
         copyto!(nonzeros(J), nonzeros(ops.K))
         N === nothing || add_nonlinear_jacobian!(J, N, u, t0)
         return nothing
     end
-    f = SciMLBase.NonlinearFunction{true}(f!; jac = jac!, jac_prototype = copy(ops.K))
-    return SciMLBase.NonlinearProblem{true}(f, parts.u0, SciMLBase.NullParameters(), parts.md; kwargs...)
+    f = SciMLBase.NonlinearFunction{true}(f!; jac = jac!, jac_prototype = copy(ops.K), sys = isempty(syms) ? nothing : SteadyParameters(syms))
+    return SciMLBase.NonlinearProblem{true}(f, parts.u0, isempty(syms) ? SciMLBase.NullParameters() : copy(assembled), parts.md; kwargs...)
 end
 
 """
