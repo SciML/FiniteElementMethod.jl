@@ -463,15 +463,20 @@ function assembled_parameter_check(sys, parameters)
     get = getp(sys, syms)
     return function (p)
         current = get(p)
-        for (q, a, c) in zip(syms, assembled, current)
-            isequal(a, c) || throw(
-                ArgumentError(
-                    "parameter $q was $a when the operators were assembled but is $c in this problem; operators are not reassembled for new parameter values, so build a new problem with discretize(pdesys, disc)"
-                )
-            )
-        end
+        check_assembled_values(syms, assembled, current)
         return nothing
     end
+end
+
+function check_assembled_values(syms, assembled, current)
+    for (q, a, c) in zip(syms, assembled, current)
+        isequal(a, c) || throw(
+            ArgumentError(
+                "parameter $q was $a when the operators were assembled but is $c in this problem; operators are not reassembled for new parameter values, so build a new problem with discretize(pdesys, disc)"
+            )
+        )
+    end
+    return nothing
 end
 
 default_initializealg() = BrownFullBasicInit(nlsolve = NewtonRaphson(autodiff = AutoForwardDiff()))
