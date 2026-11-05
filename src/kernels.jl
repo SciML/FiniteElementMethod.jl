@@ -142,6 +142,14 @@ function compile_tangent(ex, s, slots; expression = Val(false))
     return compile_tuple([checked_derivative(ex, x) for x in [s.U; s.G]], slots; expression)
 end
 
+# Whether every call of `ex` that depends on `syms` is a `+`, `*` or `/`, so that `ex` is affine in them once its
+# derivatives are free of them.
+function arithmetic_in(ex, syms)
+    ex = Symbolics.unwrap(ex)
+    (SymbolicUtils.iscall(ex) && depends(ex, syms)) || return true
+    return SymbolicUtils.operation(ex) in (+, *, /) && all(a -> arithmetic_in(a, syms), SymbolicUtils.arguments(ex))
+end
+
 """
     compile_coeffs(kind, ex, slots, test)
 
@@ -169,7 +177,12 @@ function compile_coeffs(kind, ex, s, test; expression = Val(false))
         exs = [checked_derivative(d, si) for si in trial for d in first_order]
         linear = sum(exs .* [si * wi for si in trial for wi in w])
     end
-    isequal(Symbolics.expand(ex - linear), 0) || return nothing
+    # A source is affine in `w` once the check below passes (its coefficients are free of `w`), so `ex(w = 0) == 0`
+    # means it is linear; this settles the long sources whose residue `expand` cannot cancel. A function of `w`
+    # such as `sign` can have a zero derivative without being affine, hence the arithmetic-only walk.
+    linear_in_w = isequal(Symbolics.expand(ex - linear), 0) ||
+        (kind === :source && arithmetic_in(ex, w) && isequal(Symbolics.substitute(ex, Dict(wi => 0 for wi in w)), 0))
+    linear_in_w || return nothing
     any(e -> depends(e, [s.U; s.G; s.Ud; H; w]), exs) && return nothing
     cse = kind === :source && !has_ifelse(ex)
     cell || return compile_tuple(exs, (s.X, s.T, s.N, s.P); zero = StructuralZero(), expression, cse)

@@ -35,9 +35,29 @@ disc = FEMDiscretization(Ω, t; spaces = Dict(u => Q2, v => Q2, p => Q1),
     pairing = Dict(eqs[3] => p), natural = [Γout], initializealg = CheckInit())
 prob = DAEProblem(dfg, disc)
 abstol = [d ? 1e-7 : 1e8 for d in prob.differential_vars]   # pressure and Dirichlet rows out of error control
-sol = solve(prob, DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0), linsolve = UMFPACKFactorization());
+sol = solve(prob, DFBDF(linsolve = UMFPACKFactorization());
     abstol, reltol = 1e-7)
 ```
+
+## Vortex shedding at Reynolds number 100
+
+![The flow past a cylinder starting from rest: speed above, vorticity below](assets/ns_showcase.gif)
+
+![Speed and vorticity of the flow past a cylinder at the final time](assets/ns_showcase.png)
+
+The same formulation with the inflow of DFG case 2D-2 (peak 1.5, Reynolds number 100) is the second
+code block of the [README](https://github.com/SciML/FiniteElementMethod.jl#navierstokes), and the
+figure and the animation above are rendered by its third block, the plotting, with
+[`examples/ns_showcase.jl`](https://github.com/SciML/FiniteElementMethod.jl/blob/master/examples/ns_showcase.jl).
+They are committed copies in `docs/src/assets`, the same files the README links to; a test fails
+when the blocks change without them being regenerated, and the documentation build re-runs both blocks to check
+that they still run. The velocity is sampled on a regular grid with `sol(ts, xs, ys; dv)`, which returns `NaN`
+inside the cylinder, and the vorticity is a central difference of the sampled velocity. The flow
+starts at rest, the wake behind the cylinder turns unstable and a von Kármán vortex street has
+formed by `t = 6`. It is a showcase, not a validated 2D-2 run: the mesh is the coarse `h = 0.04`
+mesh of the steady case above and the tolerance is `10⁻⁶`. The test suite checks only that the wake
+sheds with a Strouhal number between 0.25 and 0.35 (measured 0.28 to 0.31, against about 0.3 for
+the benchmark), not the benchmark's amplitudes or lift oscillation.
 
 ## Formulation choices
 
@@ -65,6 +85,11 @@ sol = solve(prob, DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0), linsolve = UMFP
   (and on Ferrite's own `ns_vs_diffeq.jl` tutorial). Naming it also removes the default's
   silent fall-back to sparse QR on a singular Newton matrix, which costs tens of gigabytes
   here; the example's `check_solved` raises if the solve stops before its final time.
+  UMFPACK's default has no iterative refinement and its residual grows above about 60k dofs
+  (about 1e-12 at 62k, 2e-4 at 248k, on this example's matrices); it is accurate at the 16,430
+  dofs here. Above about 60k dofs use `KLUFactorization()` until `pivot_tolerance` and `strategy`
+  are available in a released LinearSolve, then
+  `UMFPACKFactorization(control = (; strategy = 3, irstep = 2))`.
 
 ## Drag and lift
 
