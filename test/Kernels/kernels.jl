@@ -202,7 +202,8 @@ end
     s, test = wf.analysis.slots, wf.test
     V, W = test.V, test.W[1]
     X = s.X[1]
-    for ex in (V^2, V * W, V * X + 1, V * s.U[1], X + V * X)
+    # `sign` has a zero derivative and vanishes at 0 but is not linear
+    for ex in (V^2, V * W, V * X + 1, V * s.U[1], X + V * X, V + sign(V) - substitute(sign(V), V => 0))
         @test FiniteElementMethod.compile_coeffs(:source, ex, s, test) === nothing
     end
     @test FiniteElementMethod.compile_coeffs(:source, V * (X + 1)^2 / (1 + X^3)^1.5, s, test) !== nothing
