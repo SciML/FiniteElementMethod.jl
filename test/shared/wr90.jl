@@ -1,4 +1,4 @@
-# The WR-90 waveguide model shared by the Maxwell and GPU groups (exp(+iωt), ports at z = 0 and z = L,
+# The WR-90 waveguide model shared by the Maxwell and MaxwellGPU groups (exp(+iωt), ports at z = 0 and z = L,
 # broad wall along x).
 using FiniteElementMethod, Ferrite
 

@@ -74,8 +74,9 @@ storage; CUDSS.jl documents complex symmetric matrices from its version 1.0, so 
 CUDSS.jl 0.8 and 1 are accepted for the default.
 
 The CPU side of this solver (the CSR layout and the per-frequency value update) is tested in the Maxwell test
-group, and the `GPU` group checks that the extension loads and infers. The comparison of the GPU sweep with
-UMFPACK on a WR-90 guide runs only where `CUDA.functional()` holds, so only on a CUDA machine.
+group, and the `MaxwellGPU` group checks that the extension loads and infers. The comparison of the GPU sweep with
+UMFPACK on a WR-90 guide runs only where `CUDA.functional()` holds; CI has no NVIDIA GPU, so run it by hand on a
+CUDA machine with `GROUP=MaxwellGPU julia --project=. -e 'using Pkg; Pkg.test()'`.
 
 ```@docs
 MaxwellModel
