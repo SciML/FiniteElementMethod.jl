@@ -135,6 +135,10 @@ end
     @test_throws "is not PEC" MaxwellModel(
         grid; pec = ["left", "right", "front"], ports = [WavePort("bottom"; a_direction = (1, 0, 0))]
     )
+    @test_throws "cannot also be in `pec`" MaxwellModel(
+        generate_grid(Tetrahedron, (2, 2, 2)); pec = ["left", "right", "front", "back", "bottom"],
+        ports = [WavePort("bottom"; a_direction = (1, 0, 0))]
+    )
 end
 
 # Transmission-line answer for a vacuum guide (port at z = 0) with a lossy filling over the last `len2` mm and
