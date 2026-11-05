@@ -138,6 +138,26 @@ end
     @test round(FiniteElementMethod.C0 / 2 * sqrt(1 / 0.1^2 + 1 / 0.075^2) / 1.0e9; digits = 3) == 2.498
 end
 
+@testset "degenerate sizes: no gradient basis, dense fallback, too many modes" begin
+    # One PEC hexahedron of six tets: every node is on the PEC boundary, the body diagonal is the one free edge.
+    cube = MaxwellModel(generate_grid(Tetrahedron, (1, 1, 1)); pec = CUBE_FACES, eps0 = 1.0, mu0 = 1.0)
+    f = maxwell_eigenmodes(cube; nev = 1, target_frequency = 0.4).frequency
+    @test length(f) == 1 && isfinite(f[1]) && f[1] > 0
+    @test_throws "exceeds the 1 modes" maxwell_eigenmodes(cube; nev = 2, target_frequency = 0.4)
+    # A problem smaller than the Krylov dimension is solved densely, and agrees with the Krylov path.
+    small = box_model(1)
+    dense = maxwell_eigenmodes(small; nev = 4, target_frequency = 0.9, krylovdim = 10_000)
+    krylov = maxwell_eigenmodes(small; nev = 4, target_frequency = 0.9, krylovdim = 30)
+    @test dense.frequency ≈ krylov.frequency rtol = 1.0e-8
+    # A single tetrahedron with every face PEC has no free dof at all.
+    nodes = Node.([Vec(0.0, 0.0, 0.0), Vec(1.0, 0.0, 0.0), Vec(0.0, 1.0, 0.0), Vec(0.0, 0.0, 1.0)])
+    tet = Grid([Tetrahedron((1, 2, 3, 4))], nodes)
+    addfacetset!(tet, "all", x -> true)
+    @test_throws "no modes" maxwell_eigenmodes(MaxwellModel(tet; pec = ["all"]); nev = 1, target_frequency = 1.0)
+    @test_throws "nev must be positive" maxwell_eigenmodes(cube; nev = 0, target_frequency = 0.4)
+    @test_throws "finite" maxwell_eigenmodes(cube; nev = 1, target_frequency = Inf)
+end
+
 @testset "argument checks" begin
     model = box_model(2)
     @test_throws ArgumentError maxwell_eigenmodes(model; nev = 2, target_frequency = 0.0)
