@@ -35,7 +35,7 @@ disc = FEMDiscretization(Ω, t; spaces = Dict(u => Q2, v => Q2, p => Q1),
     pairing = Dict(eqs[3] => p), initializealg = CheckInit())
 prob = DAEProblem(dfg, disc)
 abstol = [d ? 1e-7 : 1e8 for d in prob.differential_vars]   # pressure and Dirichlet rows out of error control
-sol = solve(prob, DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0), linsolve = UMFPACKFactorization());
+sol = solve(prob, DFBDF(linsolve = UMFPACKFactorization());
     abstol, reltol = 1e-7)
 ```
 
@@ -65,6 +65,11 @@ sol = solve(prob, DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0), linsolve = UMFP
   (and on Ferrite's own `ns_vs_diffeq.jl` tutorial). Naming it also removes the default's
   silent fall-back to sparse QR on a singular Newton matrix, which costs tens of gigabytes
   here; the example's `check_solved` raises if the solve stops before its final time.
+  UMFPACK's default has no iterative refinement and its residual grows above about 60k dofs
+  (about 1e-12 at 62k, 2e-4 at 248k, on this example's matrices); it is accurate at the 16,430
+  dofs here. Above about 60k dofs use `KLUFactorization()` until `pivot_tolerance` and `strategy`
+  are available in a released LinearSolve, then
+  `UMFPACKFactorization(control = (; strategy = 3, irstep = 2))`.
 
 ## Drag and lift
 
