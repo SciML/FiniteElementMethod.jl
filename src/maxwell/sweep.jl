@@ -1,4 +1,4 @@
-# Frequency sweep of the wave-port scattering matrix of a MaxwellModel: one operator matrix recombined per
+# Frequency sweep of the port scattering matrix of a MaxwellModel: one operator matrix recombined per
 # frequency, one factorisation per frequency for all port excitations.
 
 """
@@ -17,7 +17,7 @@ end
     MaxwellSweep
 
 The result of [`solve_sweep`](@ref): `omegas`, the scattering matrices `S[:, :, k]` at `omegas[k]`
-(`S[i, j, k]` is the wave leaving port `i` for a unit wave incident on port `j`) and `fields`, either
+(`S[i, j, k]` is the power wave leaving port `i` for a unit power wave incident on port `j`) and `fields`, either
 `nothing` or, per frequency, the matrix whose column `j` is the edge-dof vector with port `j` driven (wrap it
 with `MaxwellSolution(model, omegas[k], fields[k][:, j])`).
 """
@@ -30,7 +30,7 @@ end
 """
     solve_sweep(model::MaxwellModel, omegas; fields = false, solver = umfpack_solver)
 
-The scattering matrix of the [`WavePort`](@ref)s of `model` at each angular frequency in `omegas` (rad/s),
+The scattering matrix of the [`WavePort`](@ref)s and [`LumpedPort`](@ref)s of `model` at each angular frequency in `omegas` (rad/s),
 as a [`MaxwellSweep`](@ref). Each frequency recombines the nonzero values of one operator matrix with
 [`maxwell_operator!`](@ref), applies the PEC constraints, and solves for all port excitations at once with
 `solver(A, B, cache)` (see [`FiniteElementMethod.umfpack_solver`](@ref)), which may keep its factorisation
@@ -38,7 +38,7 @@ between frequencies in `cache`. `fields = true` keeps the solutions (`ndofs × n
 frequency).
 """
 function solve_sweep(model::MaxwellModel, omegas; fields::Bool = false, solver = umfpack_solver)
-    isempty(model.ports) && throw(ArgumentError("the model has no wave ports"))
+    isempty(model.ports) && throw(ArgumentError("the model has no ports"))
     omegas = float.(collect(omegas))
     np = length(model.ports)
     S = zeros(ComplexF64, np, np, length(omegas))

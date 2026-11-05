@@ -126,5 +126,5 @@ end
     E = field_values(sol, [Vec(WR90_A / 2, WR90_B / 2, 0.0), Vec(WR90_A / 8, WR90_B / 2, 0.0)]).E
     @test abs(E[1][2]) ≈ abs(1 + sweep.S[1, 1, 2]) rtol = 0.05  # incident plus reflected at the port face
     @test abs(E[2][2]) / abs(E[1][2]) ≈ sin(π / 8) rtol = 0.1
-    @test_throws "no wave ports" solve_sweep(MaxwellModel(generate_grid(Tetrahedron, (1, 1, 1))), [1.0])
+    @test_throws "no ports" solve_sweep(MaxwellModel(generate_grid(Tetrahedron, (1, 1, 1))), [1.0])
 end
