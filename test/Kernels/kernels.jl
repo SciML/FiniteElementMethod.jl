@@ -223,3 +223,8 @@ end
     end
     @test worst ≤ 1.0e-13
 end
+
+@testset "device kernels say which packages load the KernelAbstractions extension when it is absent" begin
+    ex = first(emit_kernels(weak_form(case_i()); expression = Val(true))).coeffs
+    @test_throws "load KernelAbstractions, Adapt, GPUArrays and GPUArraysCore" FiniteElementMethod.device_kernel(ex, Float32)
+end

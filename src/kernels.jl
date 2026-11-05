@@ -192,3 +192,12 @@ function emit_strong(analysis; expression = Val(false))
     s = analysis.slots
     return Tuple(compile(assert_differentiated(e), (s.U, s.G, s.Ud, s.H, s.X, s.T, s.P); expression) for e in analysis.strong)
 end
+
+# The method is in the FiniteElementMethodKAExt extension, which loads with KernelAbstractions, Adapt, GPUArrays and
+# GPUArraysCore.
+device_kernel(ex, T) = throw(
+    ArgumentError(
+        "device kernels need the KernelAbstractions extension of FiniteElementMethod; " *
+            "load KernelAbstractions, Adapt, GPUArrays and GPUArraysCore"
+    )
+)
