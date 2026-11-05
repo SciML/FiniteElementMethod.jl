@@ -32,7 +32,7 @@ bcs = [
     [ν => 1e-3, Umax => 0.3])
 Q2, Q1 = Lagrange{RefQuadrilateral, 2}(), Lagrange{RefQuadrilateral, 1}()
 disc = FEMDiscretization(Ω, t; spaces = Dict(u => Q2, v => Q2, p => Q1),
-    pairing = Dict(eqs[3] => p), initializealg = CheckInit())
+    pairing = Dict(eqs[3] => p), natural = [Γout], initializealg = CheckInit())
 prob = DAEProblem(dfg, disc)
 abstol = [d ? 1e-7 : 1e8 for d in prob.differential_vars]   # pressure and Dirichlet rows out of error control
 sol = solve(prob, DFBDF(linsolve = UMFPACKFactorization());

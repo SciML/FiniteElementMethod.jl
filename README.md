@@ -44,6 +44,12 @@ traces `u(t, Γ)` and normal derivatives `NormalDerivative(Γ)`, and the solutio
 called in the same symbols. The [documentation](https://docs.sciml.ai/FiniteElementMethod/stable/)
 covers how this differs from [MethodOfLines.jl](https://docs.sciml.ai/MethodOfLines/stable/).
 
+A boundary with no condition gets the natural zero-flux condition, with a warning that lists it;
+declare it with `FEMDiscretization(Ω, t; natural = [Γ_out])`, or make the warning an error with
+`boundary_check = :error`. A boundary given as a lower-dimensional mesh becomes a piece with
+`add_boundary_pieces!(grid, :inlet => inlet_mesh)`. See
+[boundary conditions](https://docs.sciml.ai/FiniteElementMethod/stable/boundary_conditions/).
+
 ## Benchmarks
 
 Accuracy per degree of freedom against MethodOfLines, assembly cost against hand-written Ferrite,
