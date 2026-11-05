@@ -134,7 +134,7 @@ function assemble_linear!(M, K, F, ctx::AssemblyContext, kernels, p; t = 0.0, ki
     aM = Ferrite.start_assemble(M; fillzero = :mass in kinds)
     aK = Ferrite.start_assemble(K; fillzero = :bilinear in kinds)
     :source in kinds && fill!(F, 0)
-    op = LinearOp(aM, aK, F, zeros(eltype(K), ne, ne), zeros(eltype(K), ne, ne), zeros(eltype(F), ne))
+    op = LinearOp(aM, aK, F, zeros(eltype(M), ne, ne), zeros(eltype(K), ne, ne), zeros(eltype(F), ne))
     _assemble!(op, ctx, _split(ctx, kernels, kinds)..., p, t)
     return M, K, F
 end
@@ -161,12 +161,12 @@ function assemble_nonlinear!(r, J, ctx::AssemblyContext, kernels, u, p; t = 0.0)
     return r, J
 end
 
-struct LinearOp{AM, AK, FV <: AbstractVector{<:AbstractFloat}, ME <: AbstractMatrix{<:AbstractFloat}, FE <: AbstractVector{<:AbstractFloat}}
+struct LinearOp{AM, AK, FV <: AbstractVector{<:AbstractFloat}, ME <: AbstractMatrix{<:AbstractFloat}, KE <: AbstractMatrix{<:AbstractFloat}, FE <: AbstractVector{<:AbstractFloat}}
     aM::AM
     aK::AK
     F::FV
     Me::ME
-    Ke::ME
+    Ke::KE
     Fe::FE
 end
 

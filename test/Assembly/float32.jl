@@ -59,6 +59,32 @@ nonlinear_kernels() = emit_kernels(
     end
 end
 
+@testset "M and K are each accumulated in their own element type" begin
+    # A mass coefficient whose element entries overflow Float32 but not Float64.
+    ρ = 1.0e40
+    kernels = emit_kernels(
+        weak_form(
+            analyse([ρ * Dt(U) ~ Dx(Dx(U)) + Dy(Dy(U)) + 1], []; depvars = [U], t, sivs = [x, y])
+        )
+    )
+    ctx = context(Float64, 4)
+    ref = assemble_linear(ctx, kernels, [0.0])
+    @test all(isfinite, nonzeros(ref.M)) && maximum(abs, nonzeros(ref.M)) > floatmax(Float32)
+    for (TM, TK) in ((Float64, Float32), (Float32, Float64))
+        M = allocate_matrix(SparseMatrixCSC{TM, Int}, ctx.dh)
+        K = allocate_matrix(SparseMatrixCSC{TK, Int}, ctx.dh)
+        F = zeros(ndofs(ctx.dh))
+        assemble_linear!(M, K, F, ctx, kernels, [0.0])
+        @test eltype(M) == TM && eltype(K) == TK
+        @test all(isfinite, nonzeros(K)) && relerr(K, ref.K) ≤ 1.0e-6
+        if TM == Float64
+            @test M == ref.M
+        else
+            @test any(isinf, nonzeros(M))
+        end
+    end
+end
+
 @testset "Float32 nonlinear residual and Jacobian match Float64" begin
     kernels = nonlinear_kernels()
     ctx64, ctx32 = context(Float64, 8), context(Float32, 8)
