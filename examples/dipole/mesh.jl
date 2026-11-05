@@ -116,7 +116,7 @@ end
 The `Ferrite.Grid` of the current Gmsh model, as `FerriteGmsh.togrid()` makes it (facet sets from the physical
 groups of dimension 2, listing every cell next to each facet; cell sets from those of dimension 3), but finding
 the facets through a hash of their nodes, in time linear in the mesh size: `togrid` compares every facet with
-every cell, which takes hours at 10⁵ cells.
+every cell (about 17 s at 1.8 × 10⁵ cells, against 0.2 s here).
 """
 function gmsh_grid()
     gmsh.model.mesh.renumberNodes()
