@@ -120,7 +120,11 @@ function compile_coeffs(kind, ex, s, test; expression = Val(false))
         exs = [checked_derivative(d, si) for si in trial for d in first_order]
         linear = sum(exs .* [si * wi for si in trial for wi in w])
     end
-    isequal(Symbolics.expand(ex - linear), 0) || return nothing
+    # A source is affine in `w` once the check below passes (its coefficients are free of `w`), so `ex(w = 0) == 0`
+    # means it is linear; this settles the long sources whose residue `expand` cannot cancel.
+    linear_in_w = isequal(Symbolics.expand(ex - linear), 0) ||
+        (kind === :source && isequal(Symbolics.substitute(ex, Dict(wi => 0 for wi in w)), 0))
+    linear_in_w || return nothing
     any(e -> depends(e, [s.U; s.G; s.Ud; H; w]), exs) && return nothing
     cell || return compile_tuple(exs, (s.X, s.T, s.N, s.P); zero = StructuralZero(), expression)
     dim2 = length(s.X)^2
