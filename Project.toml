@@ -21,14 +21,19 @@ SymbolicUtils = "d1185830-fcd6-423d-90d6-eec64667417b"
 Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
 
 [weakdeps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+CUDSS = "45b445bb-4962-46a0-9369-b4df9d0f772e"
 FerriteGmsh = "4f95f4f8-b27c-4ae5-9a39-ea55e634e36b"
 
 [extensions]
+FiniteElementMethodCUDSSExt = ["CUDA", "CUDSS"]
 FiniteElementMethodFerriteGmshExt = "FerriteGmsh"
 
 [compat]
 ADTypes = "1.24"
 AllocCheck = "0.2"
+CUDA = "6"
+CUDSS = "0.8, 1"
 DiffEqBase = "7.21"
 DomainSets = "0.7, 0.8"
 Ferrite = "1.7"
