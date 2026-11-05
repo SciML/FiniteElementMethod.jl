@@ -2,13 +2,13 @@ using Documenter, FiniteElementMethod
 
 include("pages.jl")
 
-# The README showcase animation, rendered from the README's own code block (examples/showcase.jl)
-# and hosted at assets/showcase.gif, the URL the README embeds.
+# The README showcase animation is rendered from the README's own code block (examples/showcase.jl). The committed
+# copy in docs/src/assets is what the README and the Showcase page show; this build re-runs the block into a scratch
+# directory to check that it still runs in the documentation environment.
 showcase_page = joinpath(@__DIR__, "src", "showcase.md")
 include(joinpath(@__DIR__, "..", "examples", "showcase.jl"))
-mkpath(joinpath(@__DIR__, "src", "assets"))
-# invokelatest: record_showcase is defined by the include above.
-Base.invokelatest(record_showcase, joinpath(@__DIR__, "src", "assets", "showcase.gif"))
+# invokelatest: render_showcase_assets is defined by the include above.
+Base.invokelatest(render_showcase_assets, mktempdir())
 cp(joinpath(@__DIR__, "showcase.md"), showcase_page; force = true)
 # The README's Navier–Stokes figure and animation come from its second and third code blocks (examples/ns_showcase.jl).
 # The committed copies in docs/src/assets are what the README and the Navier–Stokes page show; this build re-runs the

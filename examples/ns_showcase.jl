@@ -20,7 +20,7 @@ function render_ns_showcase(directory = NS_ASSETS)
             Base.include_string(mod, readme_code(; block), "README.md, block $block")
         end
     end
-    write(joinpath(directory, "ns_showcase.fnv1a"), ns_blocks_hash() * "\n")
+    write(joinpath(directory, "ns_showcase.fnv1a"), blocks_hash(2:3) * "\n")
     return directory
 end
 

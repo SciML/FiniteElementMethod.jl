@@ -1,6 +1,6 @@
 # FiniteElementMethod.jl
 
-![Heat spreading from a pulsing heated hole through a plate and cooling through its right edge](https://docs.sciml.ai/FiniteElementMethod/dev/assets/showcase.gif)
+![Heat spreading from a pulsing heated hole through a plate and cooling through its right edge](https://raw.githubusercontent.com/SciML/FiniteElementMethod.jl/master/docs/src/assets/showcase.gif)
 
 FiniteElementMethod.jl solves PDEs written in strong form with
 [ModelingToolkit.jl](https://docs.sciml.ai/ModelingToolkit/stable/) on unstructured meshes. Write
