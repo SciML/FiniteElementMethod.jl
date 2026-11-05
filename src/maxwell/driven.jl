@@ -100,9 +100,9 @@ function field_values(sol::MaxwellSolution, points::AbstractVector{<:Ferrite.Vec
     for (k, cell) in pairs(ph.cells)
         cell === nothing && continue
         Ferrite.reinit!(pv, Ferrite.getcells(grid, cell), Ferrite.getcoordinates(grid, cell), ph.local_coords[k])
-        ue = u[Ferrite.celldofs(model.dh, cell)]
-        E[k] = Ferrite.function_value(pv, 1, ue)
-        curlE[k] = Ferrite.function_curl(pv, 1, ue) / model.length_scale
+        u_cell = u[Ferrite.celldofs(model.dh, cell)]
+        E[k] = Ferrite.function_value(pv, 1, u_cell)
+        curlE[k] = Ferrite.function_curl(pv, 1, u_cell) / model.length_scale
     end
     return (; E, curlE)
 end
