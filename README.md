@@ -44,6 +44,12 @@ traces `u(t, Γ)` and normal derivatives `NormalDerivative(Γ)`, and the solutio
 called in the same symbols. The [documentation](https://docs.sciml.ai/FiniteElementMethod/stable/)
 covers how this differs from [MethodOfLines.jl](https://docs.sciml.ai/MethodOfLines/stable/).
 
+A boundary with no condition gets the natural zero-flux condition, with a warning that lists it;
+declare it with `FEMDiscretization(Ω, t; natural = [Γ_out])`, or make the warning an error with
+`boundary_check = :error`. A boundary given as a lower-dimensional mesh becomes a piece with
+`add_boundary_pieces!(grid, :inlet => inlet_mesh)`. See
+[boundary conditions](https://docs.sciml.ai/FiniteElementMethod/stable/boundary_conditions/).
+
 ## Navier–Stokes
 
 ![Speed and vorticity of the flow past a cylinder](https://raw.githubusercontent.com/SciML/FiniteElementMethod.jl/master/docs/src/assets/ns_showcase.png)
@@ -98,7 +104,7 @@ domains = [(x, y) ∈ Ω, t ∈ Interval(0.0, tend)]
 Q2, Q1 = Lagrange{RefQuadrilateral, 2}(), Lagrange{RefQuadrilateral, 1}()
 disc = FEMDiscretization(
     Ω, t; spaces = Dict(u => Q2, v => Q2, p => Q1),
-    pairing = Dict(eqs[3] => p), initializealg = CheckInit()
+    pairing = Dict(eqs[3] => p), natural = [Γ_out], initializealg = CheckInit()
 )
 prob = DAEProblem(dfg, disc)
 abstol = [differential ? 1.0e-6 : 1.0e8 for differential in prob.differential_vars]   # no error control on p
