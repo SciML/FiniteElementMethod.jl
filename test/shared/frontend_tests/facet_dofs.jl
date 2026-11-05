@@ -1,7 +1,7 @@
 # Index data on the FEMMetadata of a discretized problem: `facet_dofs`, `dof_coordinates` and `cell_dofs`.
 using Test
 using FiniteElementMethod: rectangle_grid, facet_dofs, dof_coordinates, cell_dofs
-using Ferrite: Triangle, Quadrilateral, addcellset!, getcellset, getfacetset, addfacetset!
+using Ferrite: Triangle, Quadrilateral, addcellset!, getcellset, getfacetset, getfacetsets, addfacetset!
 
 include(joinpath(@__DIR__, "..", "frontend.jl"))
 
@@ -11,12 +11,14 @@ using ModelingToolkit: t_nounits as t
 const Dt, Dx, Dy = Differential(t), Differential(x), Differential(y)
 Δ(f) = Dx(Dx(f)) + Dy(Dy(f))
 
-# The metadata of the heat problem on `Ω` with no boundary conditions (natural zero flux).
+sides(Ω) = Symbol.(keys(getfacetsets(Ω.mesh)))
+
+# The metadata of the heat problem on `Ω` with no boundary conditions (natural zero flux on every side).
 function heat_metadata(Ω; kwargs...)
     @named pdesys = PDESystem(
         [Dt(u(t, x, y)) ~ Δ(u(t, x, y))], [u(0, x, y) ~ x], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], []
     )
-    return discretize(pdesys, FEMDiscretization(Ω, t; kwargs...)).problem_type
+    return discretize(pdesys, FEMDiscretization(Ω, t; natural = sides(Ω), kwargs...)).problem_type
 end
 
 @testset verbose = true "facet_dofs, dof_coordinates, cell_dofs" begin
@@ -67,7 +69,7 @@ end
         @named pdesys = PDESystem(
             [Dt(U) ~ Δ(U), Dt(W) ~ Δ(W) + U], bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [U, W], []
         )
-        md = discretize(pdesys, FEMDiscretization(Ω, t; regions = Dict(w => Region(Ω, :left_half)))).problem_type
+        md = discretize(pdesys, FEMDiscretization(Ω, t; natural = sides(Ω), regions = Dict(w => Region(Ω, :left_half)))).problem_type
         @test isempty(facet_dofs(md, :right, w))
         @test !isempty(facet_dofs(md, :right, u))
         @test length(facet_dofs(md, :left, w)) == 5
@@ -83,7 +85,7 @@ end
         @named pdesys = PDESystem(
             [Dt(U) ~ Δ(U)], [u(t, Γ[:left]) ~ 0; u(0, x, y) ~ x], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [U], []
         )
-        md = discretize(pdesys, FEMDiscretization(Ω, t; regions = Dict(u => Region(Ω, :left_half)))).problem_type
+        md = discretize(pdesys, FEMDiscretization(Ω, t; natural = sides(Ω), regions = Dict(u => Region(Ω, :left_half)))).problem_type
         @test isempty(facet_dofs(md, :right, u))
         @test length(facet_dofs(md, :left, u)) == 5
     end

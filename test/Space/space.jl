@@ -221,7 +221,8 @@ end
     @test check_facetsets(grid, [:left, :left, :bottom]) === nothing
 
     addfacetset!(grid, "middle", x -> x[1] ≈ 0.5)
-    @test_logs (:warn, r"middle.*interior") check_facetsets(grid, [:middle])
+    @test_throws ArgumentError check_facetsets(grid, [:middle])
+    @test occursin("not on the boundary", errmsg(() -> check_facetsets(grid, [:middle])))
     @test_logs check_facetsets(grid, [:left, :top])
 end
 
