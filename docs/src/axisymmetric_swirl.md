@@ -15,9 +15,10 @@ The driver here is our own manufactured field, and the force is defined as the r
 equations at that field.
 
 The code is in `examples/axisym_swirl/`: `mesh.geo` (the mesh), `manufactured.jl` (the exact
-field and its force), `axisym_swirl.jl` (the problem, the solve and the error norms) and
-`figures.jl` (renders the two images below). The `NavierStokes` test group runs the example at two
-resolutions and asserts the convergence rates.
+field and its force), `axisym_swirl.jl` (the problem, the solve and the error norms),
+`figures.jl` (renders the two images below) and `linear_residual.jl` (the linear solver check
+below). The `NavierStokes` test group runs the example at two resolutions and asserts the
+convergence rates.
 
 ## The equations
 
@@ -157,14 +158,30 @@ disc = FEMDiscretization(
   `c = 0.05`, the default leaves the pressure error at `t = 0.5` 22% larger (5.82e-4 instead
   of 4.76e-4, the velocity error unchanged to six digits) for a solve that is 16% faster (85 s
   instead of 101 s), so the example uses the refresh.
-- **Direct solver and size.** UMFPACK holds the factors in memory: the peak is 3.9 GiB at 124 thousand
-  unknowns and 9.5 GiB at 490 thousand (see the cost table). UMFPACK is used at every size on this
-  page. KLU, the other sparse direct solver, was no help: on the 26 thousand-unknown problem
-  `c = 0.1`, `τ_end = 0.1` it took 181 s and 6.2 GiB against 17 s and 2.6 GiB for UMFPACK, and at
-  `c = 0.1`, `τ_end = 0.01` (32 thousand unknowns) it had not finished after ten minutes. The linear
-  residual of the large solves was not measured; the evidence that UMFPACK is accurate enough
-  at 124 and 490 thousand unknowns is that the errors converge at the asymptotic rates in the
-  table below, with no Newton failure and no rejected step.
+- **Direct solver and size.** UMFPACK holds the factors in memory: the peak of a run is 3.9 GiB at 124
+  thousand unknowns and 9.5 GiB at 490 thousand (see the cost table). Its accuracy was measured on
+  the Newton matrix `W` itself. `examples/axisym_swirl/linear_residual.jl` steps a run to `t = 0.5`,
+  saves `W` and the right-hand side of the next step, and factorizes that one matrix with each solver in a process
+  of its own:
+
+  | unknowns | solver | factor and solve | relative residual `‖W x - b‖/‖b‖` | peak memory of the process |
+  |---|---|---|---|---|
+  | 124 138 | UMFPACK | 1.1 s | 6.4e-15 | 1.4 GiB |
+  | 124 138 | KLU | 1015 s | 8.0e-6 | 8.4 GiB |
+  | 490 169 | UMFPACK | 4.9 s | 2.6e-14 | 4.0 GiB |
+  | 490 169 | KLU | not finished after 25 min | | at least 20 GiB, still growing |
+
+  UMFPACK's default settings solve this system to rounding level at both sizes, about nine
+  orders of magnitude below the spatial errors in the table below (1e-5 to 1e-6 for the velocity), so
+  the linear solves do not contaminate those errors. KLU is both slower and less accurate here, which is why
+  every run on this page uses UMFPACK. The residual was measured at one state, `t = 0.5`, not along the whole run, and only
+  for this system; it says nothing about other saddle-point matrices. Every step of the runs needed about one Newton
+  iteration (203 iterations for 202 steps to `t = 0.5` at `c = 0.05` and 207 for 203 at `c = 0.025`, with no
+  Newton failure), so a linear solve error would not be iterated away; here it is at rounding level.
+  For problems where UMFPACK's
+  residual is poor, LinearSolve.jl [pull request #1414](https://github.com/SciML/LinearSolve.jl/pull/1414)
+  proposes opt-in `pivot_tolerance` and `strategy` keys for `UMFPACKFactorization`; it was open when this page was written,
+  so it is a route for large problems once a release contains it, not something this example uses.
 
 ## What the run shows
 
