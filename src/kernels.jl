@@ -93,7 +93,8 @@ function compile_tangent(ex, s, slots; expression = Val(false))
     return compile_tuple([checked_derivative(ex, x) for x in [s.U; s.G]], slots; expression)
 end
 
-"Whether every call of `ex` that depends on `syms` is a `+`, `*` or `/`, so that `ex` is affine in them once its derivatives are free of them."
+# Whether every call of `ex` that depends on `syms` is a `+`, `*` or `/`, so that `ex` is affine in them once its
+# derivatives are free of them.
 function arithmetic_in(ex, syms)
     ex = Symbolics.unwrap(ex)
     (SymbolicUtils.iscall(ex) && depends(ex, syms)) || return true
