@@ -38,7 +38,7 @@ end
         Ω = MeshDomain(rectangle_grid(Quadrilateral, (4, 3)))
         left, right = boundarypiece.(Ω, (:left, :right))
         pdesys = heat_system(Ω, [u(t, left) ~ 2.0, u(t, right) ~ 0.0])
-        disc = FEMDiscretization(Ω, t)
+        disc = FEMDiscretization(Ω, t; natural = [:top, :bottom])
         ops = FiniteElementMethod.operators(pdesys, disc)
         md = ops.metadata
         @test sort(ops.prescribed) == sort([facet_dofs(md, left, u); facet_dofs(md, right, u)])
@@ -80,11 +80,11 @@ end
         left = boundarypiece(Ω, :left)
         msg(f) = errmsg(f)
         nonlinear = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) - u(t, x, y)^3
-        @test occursin("nonlinear", msg(() -> FiniteElementMethod.operators(heat_system(Ω, [u(t, left) ~ 0]; eq = nonlinear), FEMDiscretization(Ω, t))))
-        @test occursin("constant in time", msg(() -> FiniteElementMethod.operators(heat_system(Ω, [u(t, left) ~ sin(t)]), FEMDiscretization(Ω, t))))
+        @test occursin("nonlinear", msg(() -> FiniteElementMethod.operators(heat_system(Ω, [u(t, left) ~ 0]; eq = nonlinear), FEMDiscretization(Ω, t; natural = [:right, :top, :bottom]))))
+        @test occursin("constant in time", msg(() -> FiniteElementMethod.operators(heat_system(Ω, [u(t, left) ~ sin(t)]), FEMDiscretization(Ω, t; natural = [:right, :top, :bottom]))))
         sourced = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + t
-        @test occursin("time-independent", msg(() -> FiniteElementMethod.operators(heat_system(Ω, [u(t, left) ~ 0]; eq = sourced), FEMDiscretization(Ω, t))))
-        ops = FiniteElementMethod.operators(heat_system(Ω, [u(t, left) ~ 0]), FEMDiscretization(Ω, t))
+        @test occursin("time-independent", msg(() -> FiniteElementMethod.operators(heat_system(Ω, [u(t, left) ~ 0]; eq = sourced), FEMDiscretization(Ω, t; natural = [:right, :top, :bottom]))))
+        ops = FiniteElementMethod.operators(heat_system(Ω, [u(t, left) ~ 0]), FEMDiscretization(Ω, t; natural = [:right, :top, :bottom]))
         @test occursin("not a facet set", msg(() -> facet_dofs(ops.metadata, "nope", u)))
         @test occursin("not a field", msg(() -> facet_dofs(ops.metadata, left, :v)))
     end

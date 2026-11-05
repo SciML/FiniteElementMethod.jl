@@ -29,7 +29,7 @@ Restrictions of this release:
   - Coordinates are Cartesian and named by the `(x, y) ∈ Ω` pairing. Time is the first or last argument of every dependent variable, never between spatial arguments.
   - Dirichlet data may depend on space, time and parameters but not on another field. Neumann and Robin conditions are written with `NormalDerivative(Γ)`, with any conormal coefficient written explicitly. Neumann and Robin data may depend on time; the Robin coefficient multiplying `u(t, Γ)` may depend only on space and parameters until M3.
   - Periodic conditions `u(t, Γa) ~ u(t, Γb)` are rejected until M4. Interface conditions between regions have no syntax; every field lives on the whole mesh.
-  - Boundary pieces must be disjoint. A piece with no condition gets the natural zero-flux condition, with a warning when the operator has a flux.
+  - Boundary pieces must be disjoint and lie on the boundary. Boundary facets with no condition for a field get the natural zero-flux condition, with a warning when that field's equation has a flux; `natural` declares them and `boundary_check` makes the warning an error or turns it off.
   - Where two Dirichlet pieces of one field meet, the condition listed last in the `PDESystem` wins.
   - Every field with a time derivative needs an initial condition, linear in that one field and finite at every node.
   - Time-dependent mass or stiffness coefficients and `codegen = :mtk` are rejected until M3.
@@ -41,10 +41,29 @@ Restrictions of this release:
 The spatial domain is a `MeshDomain(grid)` of a `Ferrite.Grid`, for example one read from Gmsh
 with `FerriteGmsh.togrid` or made with `Ferrite.generate_grid`. Boundary pieces are the grid's
 facet sets: `boundarypiece(Ω, :inlet)` is the facet set `"inlet"`. Pieces must be disjoint; a
-facet in two pieces that both carry conditions is an error naming the first shared facet.
+facet in two pieces that both carry conditions is an error naming the first shared facet, and a
+piece containing an interior facet (one shared by two cells) is an error, since a piece lies on
+the boundary.
 Line, triangle and quadrilateral meshes are tested; tetrahedral and hexahedral meshes construct
 but are not evidenced (see [Supported equation classes](@ref)). Every cell of the mesh must
 have the same shape.
+
+**Pieces from submeshes.** A boundary may also be given as a lower-dimensional mesh: the boundary
+mesh that Gmsh gives for a physical group, or any `Ferrite.Grid` whose cells are facets of the
+parent (line cells on a 2D mesh, surface cells on a 3D mesh). [`add_boundary_pieces!`](@ref)
+matches each submesh cell to a facet of the parent by the coordinates of its nodes, within a
+tolerance `atol` (the two meshes number their nodes independently), and adds the facets as the
+facet set `name`:
+
+```julia
+grid = rectangle_grid(Triangle, (4, 4))
+add_boundary_pieces!(grid, :inlet => inlet_mesh, :wall => wall_mesh)
+Ω = MeshDomain(grid)
+Γ_in = boundarypiece(Ω, :inlet)
+```
+
+A submesh cell that matches no facet of the parent, or only an interior facet, is an error that
+names the cell and where it is. The grid's own facet sets work as before.
 
 Coordinates are Cartesian. Their names and order come from the `(x, y) ∈ Ω` pairing (see
 [Coordinate binding](@ref)). A curvilinear operator, such as a radial Laplacian, is written
@@ -95,8 +114,8 @@ rescaled when it is proportional to the conormal derivative; a condition that is
 `Dx(u(t, Γ)) ~ h` on a piece that is not perpendicular to the `x` axis, is an error asking for
 the normal derivative.
 
-A boundary piece with no condition gets the natural zero-flux condition. When the equations
-have a flux, the discretization warns about each such piece.
+Boundary facets with no condition get the natural zero-flux condition; see
+[Boundary completeness](@ref).
 
 ## Robin conditions
 
@@ -119,6 +138,31 @@ Not supported. There is no syntax for a condition on an interior interface betwe
 regions, and every field is defined on the whole mesh. Discontinuous coefficients across an
 interface are not evidenced (see [Supported equation classes](@ref)).
 
+## Boundary completeness
+
+A boundary facet is covered for a field when it lies in a piece with a Dirichlet condition on
+that field, or a Neumann or Robin condition in that field's equation. Where part of the boundary
+is not covered for a field whose equation has a flux, the discretization treats it as the natural
+zero-flux condition. That is often intended (an insulated wall, a symmetry plane, the outflow
+`ν ∂ₙu = 0` of a channel flow), so it is not an error by default, but it is also what a forgotten
+piece looks like. The check is therefore configurable on [`FEMDiscretization`](@ref):
+
+  - By default (`boundary_check = :warn`) `discretize` logs one warning per call, listing for
+    each such field the uncovered pieces and their number of facets (and the facets that belong
+    to no named piece).
+  - `natural = [Γ_out, :symmetry]` declares pieces as deliberately natural for every field; the
+    warning is then silent for them. An explicit zero Neumann condition `Dn(u(t, Γ)) ~ 0` also
+    covers its piece.
+  - `boundary_check = :error` throws the same message as an `ArgumentError`, for strict
+    completeness; `boundary_check = :off` skips the check.
+  - A field whose equation has no flux, such as a pressure, is not checked.
+
+These are errors whatever `boundary_check` is: a facet in two pieces that both carry conditions
+(which includes two Dirichlet values on one facet through overlapping pieces, and the same piece
+and field listed twice), and a piece that is not on the boundary.
+
+Detecting a singular pure-Neumann problem is not part of this check.
+
 ## Validation
 
 Every condition is checked when the system is discretized, by `discretize(pdesys, disc)`, before a solver runs. An unsupported condition, operator or option
@@ -135,4 +179,6 @@ is an error that names the problem; nothing falls back to `mtkcompile`.
 | A periodic condition `u(t, Γa) ~ u(t, Γb)` | error; lands in M4 |
 | A time argument between spatial arguments, such as `u(x, t, y)` | error |
 | Two Dirichlet pieces of one field sharing nodes | the condition listed last wins |
-| A boundary piece with no condition | natural zero-flux condition, with a warning when the equations have a flux |
+| Boundary facets with no condition for a field | natural zero-flux condition, with one warning per `discretize` call when that field's equation has a flux; `natural` declares them, `boundary_check = :error` or `:off` |
+| A piece that is not on the boundary | error |
+| A submesh cell that matches no facet, or an interior facet, of the parent | error from `add_boundary_pieces!` |

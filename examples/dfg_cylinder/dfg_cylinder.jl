@@ -71,7 +71,7 @@ function dfg_problem(grid; tend = 30.0, ν_ = 1.0e-3, Umax_ = 0.3, ramp = 1 - ex
     @named dfg = PDESystem(eqs, bcs, domains, [t, x, y], [U, V, P], [ν => ν_, Umax => Umax_])
     Q2, Q1 = Lagrange{RefQuadrilateral, 2}(), Lagrange{RefQuadrilateral, 1}()
     disc = FEMDiscretization(
-        Ω, t; spaces = Dict(u => Q2, v => Q2, p => Q1), pairing = Dict(eqs[3] => p),
+        Ω, t; spaces = Dict(u => Q2, v => Q2, p => Q1), pairing = Dict(eqs[3] => p), natural = [Γout],
         initializealg = CheckInit(), kwargs...
     )
     return DAEProblem(dfg, disc)
