@@ -25,10 +25,13 @@ function has_ifelse(ex)
     return any(has_ifelse, SU.arguments(ex))
 end
 
-is_nanmath_pow(f) = f === Symbolics.NaNMath.pow || f == GlobalRef(Symbolics.NaNMath, :pow)
+function is_nanmath_pow(f)
+    f isa GlobalRef && return f.name === :pow && nameof(f.mod) === :NaNMath
+    return f isa Function && nameof(f) === :pow && nameof(parentmodule(f)) === :NaNMath
+end
 
 # The numeric temporaries `var"##cse#k" = 2` that are assigned once, substituted into their uses and dropped, and
-# `NaNMath.pow(x, 2)` with an integer literal exponent back as `Base.literal_pow(^, x, Val(2))`.
+# `NaNMath.pow(x, 2)` with an integer literal exponent back as `x^2`, which lowers to `literal_pow`.
 function inline_literals(code)
     literals = Dict{Symbol, Union{Number, Missing}}()
     collect_literals!(literals, code)
@@ -48,7 +51,7 @@ function substitute_literals(ex::Expr, literals)
     isliteral(arg) = arg isa Expr && arg.head === :(=) && haskey(literals, arg.args[1])
     args = Any[substitute_literals(arg, literals) for arg in ex.args if !isliteral(arg)]
     if ex.head === :call && length(args) == 3 && is_nanmath_pow(args[1]) && args[3] isa Integer
-        return Expr(:call, Base.literal_pow, ^, args[2], Expr(:call, Val, args[3]))
+        return Expr(:call, :^, args[2], args[3])
     end
     return Expr(ex.head, args...)
 end

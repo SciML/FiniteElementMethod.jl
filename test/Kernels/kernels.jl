@@ -265,7 +265,7 @@ count_calls(ex, name) = ex isa Expr ? (callee_name(ex) === name) + sum(a -> coun
     for cse in (false, true)
         code = build(squares, (ξ, η), Val(true); cse)
         @test isempty(hoisted_exponents(code))
-        @test count_calls(code, :literal_pow) > 0
+        @test count_calls(code, :literal_pow) + count_calls(code, :^) > 0
     end
 end
 
