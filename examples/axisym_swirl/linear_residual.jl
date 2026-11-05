@@ -4,7 +4,9 @@
 #     julia --project=docs examples/axisym_swirl/linear_residual.jl solve file umfpack|klu
 #
 # `extract` steps the integrator to `t_stop`, then writes the Newton matrix W = dF/du + γ dF/d(du) at that state
-# (γ is the one DFBDF built its own W with) and the residual right-hand side of the next step to `file`. `solve`
+# (γ is the one DFBDF built its own W with) and a representative right-hand side to `file`: minus the residual at the
+# accepted state with the time advanced by one step. It is not DFBDF's own Newton right-hand side, which uses the
+# predicted state, so the check is of the solver on this matrix with a right-hand side of the right size and kind. `solve`
 # factorizes the saved matrix once with the named solver, in a process of its own so that the peak memory is that
 # solver's, and prints the factorization time and the relative residual ‖W x - b‖ / ‖b‖.
 using LinearAlgebra, SparseArrays, Serialization, Printf

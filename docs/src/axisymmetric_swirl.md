@@ -161,7 +161,8 @@ disc = FEMDiscretization(
 - **Direct solver and size.** UMFPACK holds the factors in memory: the peak of a run is 3.9 GiB at 124
   thousand unknowns and 9.5 GiB at 490 thousand (see the cost table). Its accuracy was measured on
   the Newton matrix `W` itself. `examples/axisym_swirl/linear_residual.jl` steps a run to `t = 0.5`,
-  saves `W` and the right-hand side of the next step, and factorizes that one matrix with each solver in a process
+  saves `W` and a representative right-hand side (minus the residual at the accepted state, with the time advanced by one
+  step; not DFBDF's own Newton right-hand side), and factorizes that one matrix with each solver in a process
   of its own:
 
   | unknowns | solver | factor and solve | relative residual `‖W x - b‖/‖b‖` | peak memory of the process |
