@@ -22,7 +22,7 @@ using PrecompileTools: PrecompileTools
 using RuntimeGeneratedFunctions: RuntimeGeneratedFunctions
 using SciMLBase: SciMLBase, DAEFunction, DAEProblem
 using SciMLBase.SymbolicIndexingInterface: SymbolicIndexingInterface, getp, parameter_index, variable_index
-using SparseArrays: SparseMatrixCSC, nnz, nonzeros, nzrange, rowvals
+using SparseArrays: SparseMatrixCSC, dropzeros!, nnz, nonzeros, nzrange, rowvals
 using SymbolicUtils: SymbolicUtils
 using Symbolics: Symbolics, Equation, Num, @register_array_symbolic, substitute, unwrap
 
@@ -54,9 +54,11 @@ include("maxwell/ports.jl")
 include("maxwell/model.jl")
 include("maxwell/driven.jl")
 include("maxwell/sweep.jl")
+include("maxwell/adjoint.jl")
 export MaxwellMaterial, MaxwellModel, MaxwellTerm, maxwell_operator, maxwell_operator!
 export MaxwellSolution, driven_problem, solve_driven, field_values
 export WavePort, MaxwellSweep, solve_sweep
+export MaxwellSensitivities, s_parameter_sensitivities, adjoint_gradient
 
 include("precompile.jl")
 
