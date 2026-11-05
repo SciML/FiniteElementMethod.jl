@@ -35,3 +35,16 @@ println("KernelAbstractions ", pkgversion(KernelAbstractions), ", AMDGPU ", pkgv
         @test checked > 0
     end
 end
+
+# Device assembly through `discretize` on ROCBackend(), in its own module: `common/assembly.jl` names its own symbolic
+# variables. Float64 runs at about 1/53 of the Float32 rate on Radeon 8060S, so the cases are small.
+module DeviceAssemblyAMDGPU
+    using AMDGPU: AMDGPU, ROCBackend
+    include(joinpath(@__DIR__, "..", "..", "common", "assembly.jl"))
+    @testset "device assembly on AMDGPU" begin
+        @test Base.get_extension(FEM, :FiniteElementMethodAMDGPUExt) isa Module
+        @test Base.get_extension(Ferrite, :FerriteAMDGPUExt) isa Module
+        @test FEM.device_matrix_type(ROCBackend(), Float32, Int) <: AMDGPU.rocSPARSE.ROCSparseMatrixCSC
+        println("largest relative errors on ROCBackend(): ", test_device_assembly(ROCBackend()))
+    end
+end
