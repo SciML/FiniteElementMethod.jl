@@ -11,6 +11,8 @@ the group list and for the CI matrix: `.github/workflows/Tests.yml` fans out one
 | `QA`   | `test/qa/*.jl` (Aqua and JET)              | `test/qa/Project.toml` |
 | `X`    | `test/X/*.jl`, for any other declared `X`  | `test/X/Project.toml` if present, else main |
 
+`Interface` is the exemplary end-to-end group: narrated user-facing cases through the public interface only (see `test/Interface/README.md`).
+
 An unset `GROUP` runs `Core` plus every declared group except `QA`; `GROUP=Everything` also
 runs `QA`.
 
