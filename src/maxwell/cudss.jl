@@ -35,13 +35,11 @@ function (::CuDSSSolver)(A, B, cache)
     throw(ArgumentError(msg))
 end
 
-"""
-    csr_layout(A::SparseMatrixCSC) -> (rowptr, colval, perm)
-
-The compressed-sparse-row arrays of `A` with `Int32` indices (1-based, as cuSPARSE's `CuSparseMatrixCSR` stores
-them) and the permutation with `A.nzval[perm]` the values in that row order. The pattern of the sweep operator
-never changes, so `perm` is computed once and every later frequency only gathers its values.
-"""
+# csr_layout(A::SparseMatrixCSC) -> (rowptr, colval, perm)
+#
+# The compressed-sparse-row arrays of `A` with `Int32` indices (1-based, as cuSPARSE's `CuSparseMatrixCSR` stores
+# them) and the permutation with `A.nzval[perm]` the values in that row order. The pattern of the sweep operator
+# never changes, so `perm` is computed once and every later frequency only gathers its values.
 function csr_layout(A::SparseMatrixCSC)
     nnz(A) < typemax(Int32) ||
         throw(ArgumentError("CuDSSSolver uses Int32 indices; the matrix has $(nnz(A)) stored entries"))
@@ -50,11 +48,9 @@ function csr_layout(A::SparseMatrixCSC)
     return Int32.(byrow.colptr), Int32.(byrow.rowval), byrow.nzval
 end
 
-"""
-    csr_values!(vals, A::SparseMatrixCSC, perm)
-
-Overwrite `vals` with the nonzero values of `A` in the row order of [`csr_layout`](@ref).
-"""
+# csr_values!(vals, A::SparseMatrixCSC, perm)
+#
+# Overwrite `vals` with the nonzero values of `A` in the row order of `csr_layout`.
 function csr_values!(vals, A::SparseMatrixCSC, perm)
     length(perm) == nnz(A) ||
         throw(DimensionMismatch("the sparsity pattern changed: $(nnz(A)) stored entries, $(length(perm)) expected"))
