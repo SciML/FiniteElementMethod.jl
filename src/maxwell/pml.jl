@@ -61,13 +61,8 @@ function _pml_profile(pml::CartesianPML, grid, in_pml, k_ref, L)
     pml_cells = findall(in_pml)
     isempty(pml_cells) && throw(ArgumentError("the PML cell sets $(pml.cellsets) are empty"))
     outer_lo, outer_hi = _bounding_box(grid, pml_cells)
-    if pml.box === nothing
-        inner = findall(!, in_pml)
-        isempty(inner) && throw(ArgumentError("every cell is in the PML; give its inner `box`"))
-        lo, hi = _bounding_box(grid, inner)
-    else
-        lo, hi = collect(pml.box[1]), collect(pml.box[2])
-    end
+    pml.box === nothing && all(in_pml) && throw(ArgumentError("every cell is in the PML; give its inner `box`"))
+    lo, hi = pml.box === nothing ? _bounding_box(grid, findall(!, in_pml)) : (collect(pml.box[1]), collect(pml.box[2]))
     tol = 1.0e-9 * maximum(outer_hi .- outer_lo)
     thickness(t) = t > tol ? t : 0.0
     d_lo, d_hi = thickness.(lo .- outer_lo), thickness.(outer_hi .- hi)
