@@ -52,9 +52,8 @@ end
 const SCALAR = [(u, ustar)]
 
 # Two-field reaction–diffusion with cross-diffusion χ∇w in u's flux and linear reactions coupling
-# the fields both ways. Linear because the front end rejects nonlinear terms until M3's numeric path
-# lands (spec §11.1); the signs of the coupling are not symmetric, so a swapped sign shows up as a
-# lost rate. Each flux term is its own divergence: MethodOfLines cannot discretize
+# the fields both ways. Both couplings are linear; the signs of the
+# coupling are not symmetric, so a swapped sign shows up as a lost rate. Each flux term is its own divergence: MethodOfLines cannot discretize
 # Dx(Dx(u) + χ * Dx(w)) (it fails building an auxiliary variable), and it cannot discretize the
 # cross term next to a conormal condition on u, so u is Dirichlet on every face and only w has a
 # Neumann face.
