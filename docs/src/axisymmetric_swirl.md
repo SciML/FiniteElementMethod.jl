@@ -4,19 +4,30 @@ This page shows what a finite element run of our axisymmetric-with-swirl Navier�
 discretization does. The equations are the forced, incompressible, axisymmetric-with-swirl
 Navier–Stokes equations in the half plane `(r, z)`, discretized with Taylor–Hood P2/P1 triangles
 on a mesh graded toward the origin. The flow is a manufactured vortex core that collapses
-self-similarly toward the origin, with the exponents of the forced-blowup paper: radial scale
-`τ^(1/2)`, axial scale `τ^(1/2-h)` and speeds of order `τ^(-1/2-h)`, where `τ = 1 - t` and
-`h = 0.01`. The page reports how accurately a static graded mesh tracks that core, and at what
+self-similarly toward the origin, with the exponents of the leading core in the finite-time blowup
+construction of 1.  radial scale `τ^(1/2)`, axial scale `τ^(1/2-h)` and speeds of order `τ^(-1/2-h)`,
+where `τ = 1 - t` and `h = 0.01` (the paper takes any `0 < h < 1/100`). The page reports how accurately a static graded mesh tracks that core, and at what
 cost.
 
-It is not a reproduction, proof or disproof of that paper's result. The paper's blowing-up flow
-is not axisymmetric (only its leading background field is), and its force has no closed form.
-The driver here is our own manufactured field, and the force is defined as the residual of our
-equations at that field.
+This is our own discretization, and nothing more. It is not a reproduction, proof or disproof of the
+result of [1]. The blowing-up flow of that paper is not axisymmetric: only its leading core is, and
+the rest of the construction is three-dimensional (oscillatory pulses around the core, section 2.2
+of the paper). Nothing here represents those pulses. The driver is our own manufactured field, and the
+force is defined as the residual of our equations at that field; it is singular at `t = 1`, whereas
+the force of the paper is smooth through the singular time.
+
+**Provenance.** From the paper [1] we take the scalings and the qualitative picture of the inner core
+(its section 2.1): radial scale `τ^(1/2)`, axial scale `τ^(1/2-h)` with `0 < h < 1/100`, azimuthal and
+axial speeds of order `τ^(-1/2-h)` and radial speed `O(τ^(-1/2))`, a fluid that spirals inward and
+flows axially outwards on both sides of a layer near `z = 0`, pressure that falls toward the axis, and
+velocity `u_θ` that vanishes on the axis. Everything else is ours: the manufactured axisymmetric-with-swirl field
+(its profiles, the start-up ramp and the amplitudes), the force defined as its residual, the `(r, z)`
+weak form with `Weighted(r)`, the graded mesh (designed in a mesh study run by an AI agent; `mesh.geo`
+and the scripts are in the repository), and every error and cost reported below.
 
 The code is in `examples/axisym_swirl/`: `mesh.geo` (the mesh), `manufactured.jl` (the exact
 field and its force), `axisym_swirl.jl` (the problem, the solve and the error norms),
-`figures.jl` (renders the two images below) and `linear_residual.jl` (the linear solver check
+`figures.jl` (renders the two figures below), `animation.jl` (renders the animation) and `linear_residual.jl` (the linear solver check
 below). The `NavierStokes` test group runs the example at two resolutions and asserts the
 convergence rates.
 
@@ -211,6 +222,20 @@ graded mesh: the element count per core length stays the same as the core collap
 Absolute errors grow with the fields (the pressure scales like `τ^(-1-2h)`), so the page reports
 relative errors throughout.
 
+### Animation
+
+![The swirl u_θ and the axial velocity u_z over the collapse, from τ = 0.8 to τ = 0.01: left, a fixed window with the graded mesh; middle and right, windows that scale with the core](assets/axisym_swirl.gif)
+
+The animation is the run at the coarsest mesh of the page, `c = 0.1` (32 thousand unknowns), sampled
+from the solver's dense output at 72 frames evenly spaced in `log τ` from `τ = 0.8` to `τ = 0.01` (`t = 0.2` to `0.99`),
+with the time and `τ` in the title. The left panel is a fixed window, `r ∈ [0, 2]`, `z ∈ [-2, 2]`, with
+the mesh drawn over it and one colour scale for all frames: the core shrinks to a point and `u_θ` grows
+by a factor of about ten, so the early frames are dim. The middle and right panels follow the core: the coordinates are `r/τ^(1/2)` and `z/τ^(1/2-h)`
+and the fields are multiplied by `τ^(1/2+h)`, the scalings of the paper [1]. In these units the picture is almost
+fixed, which is the self-similarity of the manufactured field, apart from the start-up ramp in the first frames.
+It is rendered by `examples/axisym_swirl/animation.jl`, which reuses `axisym_solve`, and the file `docs/src/assets/axisym_swirl_animation.fnv1a` is
+checked in the same way as the figures (see below).
+
 ### Cost
 
 All runs went to `t = 0.99`, in 427 to 428 accepted steps with no rejected step and no Newton failure,
@@ -246,10 +271,16 @@ faster than the unknown count: 4.3 times for 3.8 times the unknowns, then 4.2 ti
 
 ```sh
 julia --project=docs examples/axisym_swirl/axisym_swirl.jl 0.1 0.01        # c, τ_end
-julia --project=docs examples/axisym_swirl/figures.jl                      # renders the images below docs/src/assets
+julia --project=docs examples/axisym_swirl/figures.jl                      # renders the two figures into docs/src/assets
+julia --project=docs examples/axisym_swirl/animation.jl                    # renders the animation (one more solve, c = 0.1)
 GROUP=NavierStokes julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 
-The two images are committed in `docs/src/assets` and the documentation build does not solve
-anything. `docs/src/assets/axisym_swirl.fnv1a` holds a checksum of the files they are rendered
-from, and the `NavierStokes` test group fails when those files change without a re-render.
+The two figures and the animation are committed in `docs/src/assets` and the documentation build does not solve
+anything. `axisym_swirl.fnv1a` holds a checksum of the files the figures are rendered from, and
+`axisym_swirl_animation.fnv1a` one of the files the animation is rendered from; the `NavierStokes` test group fails
+when those files change without a re-render.
+
+## References
+
+1. OpenAI, *Finite time blowup for Navier–Stokes*, PDF created 8 September 2026 (no arXiv number or other date is printed in it), <https://cdn.openai.com/pdf/32d9f210-8b73-45e0-91bc-82a30aef8a9a/navier-stokes.pdf>. Theorem 1.1: for every viscosity `ν > 0` there is a smooth, compactly supported force and a solution of the three-dimensional incompressible Navier–Stokes equations that starts from rest and has unbounded velocity as `t ↑ 1` while its kinetic energy stays uniformly bounded. The author line of the paper reads "OPENAI". We use its section 2 (the inner core) and the exponents of its section 3.1.

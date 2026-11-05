@@ -50,17 +50,25 @@ end
     end
 end
 
-@testset "axisymmetric swirl images are current" begin
+@testset "axisymmetric swirl images and animation are current" begin
     assets = joinpath(@__DIR__, "..", "..", "docs", "src", "assets")
     # figures.jl needs CairoMakie, which is not a test dependency: it must at least parse.
-    @test Meta.parseall(read(joinpath(@__DIR__, "..", "..", "examples", "axisym_swirl", "figures.jl"), String)) isa Expr
-    for file in ("axisym_mesh.png", "axisym_core.png", "axisym_swirl.fnv1a")
+    for script in ("figures.jl", "animation.jl")
+        @test Meta.parseall(read(joinpath(@__DIR__, "..", "..", "examples", "axisym_swirl", script), String)) isa Expr
+    end
+    for file in ("axisym_mesh.png", "axisym_core.png", "axisym_swirl.fnv1a", "axisym_swirl.gif", "axisym_swirl_animation.fnv1a")
         @test isfile(joinpath(assets, file))
     end
     if figure_sources_hash() != strip(read(joinpath(assets, "axisym_swirl.fnv1a"), String))
         error(
             "the sources of the axisymmetric swirl figures changed; regenerate docs/src/assets/axisym_mesh.png, " *
                 "axisym_core.png and axisym_swirl.fnv1a with `julia --project=docs examples/axisym_swirl/figures.jl`"
+        )
+    end
+    if animation_sources_hash() != strip(read(joinpath(assets, "axisym_swirl_animation.fnv1a"), String))
+        error(
+            "the sources of the axisymmetric swirl animation changed; regenerate docs/src/assets/axisym_swirl.gif " *
+                "and axisym_swirl_animation.fnv1a with `julia --project=docs examples/axisym_swirl/animation.jl`"
         )
     end
 end
