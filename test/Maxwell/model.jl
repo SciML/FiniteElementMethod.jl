@@ -49,6 +49,12 @@ end
         maxwell_operator!(B, model, ω)
         @test nonzeros(B) === nz && B == A
     end
+    # Integer frequencies are promoted before squaring: (10^10)^2 overflows Int64.
+    @test maxwell_operator(model, 10_000_000_000) == maxwell_operator(model, 1.0e10)
+    @test FiniteElementMethod.maxwell_rhs(model, 10_000_000_000, x -> [1.0, 0.0, 0.0]) ==
+        FiniteElementMethod.maxwell_rhs(model, 1.0e10, x -> [1.0, 0.0, 0.0])
+    @test solve_driven(model, 10_000_000_000, x -> [1.0, 0.0, 0.0]).u ==
+        solve_driven(model, 1.0e10, x -> [1.0, 0.0, 0.0]).u
     # A further term with a general coefficient function, as boundary blocks are added.
     extra = copy(model.blocks.sigma)
     nonzeros(extra) .= rand(nnz(extra))

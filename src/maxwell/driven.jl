@@ -20,6 +20,7 @@ the PEC constraints. `J` is either a function of the mesh coordinate `x::Vec{3}`
 dictionary from cell set names to constant 3-vectors (zero outside the named sets).
 """
 function maxwell_rhs(model::MaxwellModel, ω::Number, J)
+    ω = float(ω)
     current = _current_density(J, model.grid)
     cv = model.cellvalues
     n = Ferrite.getnbasefunctions(cv)
@@ -52,6 +53,7 @@ complex symmetric. Its solution `u` are the edge dofs of `E`; wrap them with
 `MaxwellSolution(model, ω, u)` to evaluate the field.
 """
 function driven_problem(model::MaxwellModel, ω::Real, J)
+    ω = float(ω)
     A = maxwell_operator(model, ω)
     b = maxwell_rhs(model, ω, J)
     Ferrite.apply!(A, b, model.ch)
@@ -76,6 +78,7 @@ end
 Solve [`driven_problem`](@ref) with a sparse direct factorisation and return the [`MaxwellSolution`](@ref).
 """
 function solve_driven(model::MaxwellModel, ω::Real, J)
+    ω = float(ω)
     prob = driven_problem(model, ω, J)
     return MaxwellSolution(model, ω, prob.A \ prob.b)
 end
