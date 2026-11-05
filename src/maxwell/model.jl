@@ -212,6 +212,7 @@ Overwrite the nonzero values of the complex sparse matrix `A`, which must have t
 function maxwell_operator!(A::SparseMatrixCSC{<:Complex}, model::MaxwellModel, ω::Number)
     _same_pattern(A, model.blocks.curlcurl) ||
         throw(ArgumentError("A must have the sparsity pattern of the model's blocks"))
+    ω = float(ω)  # an integer ω^2 overflows above ~3e9 rad/s
     nz = nonzeros(A)
     fill!(nz, 0)
     for term in model.terms
