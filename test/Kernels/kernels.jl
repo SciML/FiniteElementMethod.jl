@@ -3,7 +3,10 @@
 import FiniteElementMethod
 using FiniteElementMethod: weak_form, emit_kernels, emit_dirichlet, WeakForm, VolumeTerm, FacetTerm, TestSlots,
     StructuralZero, emit_strong
-using Ferrite: Vec
+using FiniteElementMethod: AssemblyContext, assemble_linear
+using Ferrite: Ferrite, Vec, Triangle, RefTriangle, Lagrange, DofHandler, CellValues, FacetValues, QuadratureRule,
+    FacetQuadratureRule, generate_grid, add!, close!
+using LinearAlgebra: norm
 using Symbolics
 using Test
 
@@ -166,6 +169,44 @@ number(x) = x isa StructuralZero ? 0.0 : x
         @test (@inferred kernel.coeffs(X, T, N, P)) isa Tuple
         @test measure_alloc(kernel.coeffs, X, T, N, P) == 0
     end
+end
+
+# A long raw source (the residual of a manufactured solution) is linear in V, but `expand(ex - linear)` does not
+# cancel its quotients term by term, so it used to fall back to `f` once per test function and quadrature point.
+@testset "a long raw symbolic source takes the coefficient path" begin
+    uex = exp(-t) * sum(1:4) do j
+        sin((1 + 0.3j) * x + t) * cos((1 + 0.2j) * y) * exp(-0.05j * x * y) * (1 + x^2 * y)^(0.5 + 0.1j) / j
+    end
+    fsym = expand_derivatives(Dt(uex) - Dx(Dx(uex)) - Dy(Dy(uex)))
+    an = analyse([Dt(U) ~ Dx(Dx(U)) + Dy(Dy(U)) + fsym], [BC("left", U ~ 0)]; depvars = [U], t, sivs = [x, y])
+    wf = weak_form(an)
+    kernels = emit_kernels(wf)
+    plain = emit_kernels(wf; coeffs = false)
+    source = only(filter(kernel -> kernel.kind === :source, kernels))
+    @test source.coeffs !== nothing
+
+    grid = generate_grid(Triangle, (4, 4))
+    ip = Lagrange{RefTriangle, 2}()
+    dh = DofHandler(grid)
+    add!(dh, :u, ip)
+    close!(dh)
+    ctx = AssemblyContext(dh, [:u], CellValues(QuadratureRule{RefTriangle}(6), ip), FacetValues(FacetQuadratureRule{RefTriangle}(6), ip))
+    F = assemble_linear(ctx, kernels, Float64[]; t = 0.3).F
+    Fref = assemble_linear(ctx, plain, Float64[]; t = 0.3).F
+    @test norm(F) > 0
+    @test norm(F - Fref) ≤ 1.0e-12 * norm(Fref)
+end
+
+@testset "sources that are not linear in the test slots keep the per-test-function path" begin
+    wf = weak_form(case_i())
+    s, test = wf.analysis.slots, wf.test
+    V, W = test.V, test.W[1]
+    X = s.X[1]
+    # `sign` has a zero derivative and vanishes at 0 but is not linear
+    for ex in (V^2, V * W, V * X + 1, V * s.U[1], X + V * X, V + sign(V) - substitute(sign(V), V => 0))
+        @test FiniteElementMethod.compile_coeffs(:source, ex, s, test) === nothing
+    end
+    @test FiniteElementMethod.compile_coeffs(:source, V * (X + 1)^2 / (1 + X^3)^1.5, s, test) !== nothing
 end
 
 @testset "one kernel per equation, kind and piece" begin
