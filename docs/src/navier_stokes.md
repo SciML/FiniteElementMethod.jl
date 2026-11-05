@@ -46,10 +46,12 @@ sol = solve(prob, DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0), linsolve = UMFP
 ![Speed and vorticity of the flow past a cylinder at the final time](assets/ns_showcase.png)
 
 The same formulation with the inflow of DFG case 2D-2 (peak 1.5, Reynolds number 100) is the second
-code block of the [README](https://github.com/SciML/FiniteElementMethod.jl#navierstokes). The
-documentation build runs that block and renders the figure and the animation above with
-[`examples/ns_showcase.jl`](https://github.com/SciML/FiniteElementMethod.jl/blob/master/examples/ns_showcase.jl):
-the velocity is sampled on a regular grid with `sol(ts, xs, ys; dv)`, which returns `NaN`
+code block of the [README](https://github.com/SciML/FiniteElementMethod.jl#navierstokes), and the
+figure and the animation above are rendered by its third block, the plotting, with
+[`examples/ns_showcase.jl`](https://github.com/SciML/FiniteElementMethod.jl/blob/master/examples/ns_showcase.jl).
+They are committed copies in `docs/src/assets`, the same files the README links to; a test fails
+when the blocks change without them being regenerated, and the documentation build re-runs both blocks to check
+that they still run. The velocity is sampled on a regular grid with `sol(ts, xs, ys; dv)`, which returns `NaN`
 inside the cylinder, and the vorticity is a central difference of the sampled velocity. The flow
 starts at rest, the wake behind the cylinder turns unstable and a von Kármán vortex street has
 formed by `t = 6`. It is a showcase, not a validated 2D-2 run: the mesh is the coarse `h = 0.04`

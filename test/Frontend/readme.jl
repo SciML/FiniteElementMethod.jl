@@ -38,3 +38,19 @@ end
     half_period = (crossings[end] - crossings[1]) / (length(crossings) - 1)
     @test 0.25 <= 0.1 / (2half_period) <= 0.35
 end
+
+@testset "README Navier–Stokes images are current" begin
+    assets = joinpath(@__DIR__, "..", "..", "docs", "src", "assets")
+    # The plotting block needs CairoMakie, which is not a test dependency: it must at least parse.
+    @test Meta.parseall(readme_code(; block = 3)) isa Expr
+    for file in ("ns_showcase.gif", "ns_showcase.png", "ns_showcase.fnv1a")
+        @test isfile(joinpath(assets, file))
+    end
+    recorded = strip(read(joinpath(assets, "ns_showcase.fnv1a"), String))
+    if ns_blocks_hash() != recorded
+        error(
+            "the README Navier–Stokes blocks changed; regenerate docs/src/assets/ns_showcase.gif, " *
+                "ns_showcase.png and ns_showcase.fnv1a with `julia --project=docs examples/ns_showcase.jl` from the repository root"
+        )
+    end
+end

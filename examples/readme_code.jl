@@ -20,3 +20,14 @@ function run_readme(
     Base.include_string(mod, readme_code(readme; block), readme)
     return NamedTuple{names}(map(name -> Base.invokelatest(getglobal, mod, name), names))
 end
+
+# FNV-1a (64 bit) checksum of the README's Navier–Stokes blocks (the simulation and the plotting block), in plain Julia
+# so that it needs no package: the images rendered from the blocks are committed with this checksum next to them, and a
+# test fails when the blocks change without a re-render.
+function ns_blocks_hash(readme = joinpath(@__DIR__, "..", "README.md"))
+    checksum = 0xcbf29ce484222325
+    for byte in codeunits(readme_code(readme; block = 2) * readme_code(readme; block = 3))
+        checksum = (checksum ⊻ byte) * 0x00000100000001b3
+    end
+    return string(checksum; base = 16, pad = 16)
+end
