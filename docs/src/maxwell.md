@@ -55,6 +55,34 @@ sweep.S[2, 1, 5]  # S21 at 10 GHz: |S21| ≈ 1, angle ≈ -93.3°
 are normalised to power waves through the TE10 wave impedance `ωμ0μr/β`. Below cutoff the propagation
 constant is `β = -iα`, the evanescent branch.
 
+## Perfectly matched layers
+
+A [`CartesianPML`](@ref) on the `pml` keyword turns the cells of named cell sets, outside an axis-aligned
+inner box (by default the bounding box of the other cells), into the uniaxial absorber
+`εr Λ`, `σ Λ`, `μr Λ` with `Λ = diag(s_y s_z/s_x, s_x s_z/s_y, s_x s_y/s_z)` and `s_j = 1 - iα_j`. On each face
+of the box, `α` grows as `α_max (ξ/d)^order` with the depth `ξ` into a layer of thickness `d`, and
+`α_max = -(order + 1) ln R / (2 k_ref d)` sets the normal-incidence round-trip reflection `R` of a PEC-backed
+layer at the reference angular frequency `omega`. Name the outer faces of the layer in `pec`.
+
+The stretching is frequency-independent (the usual `s = 1 - iσ/ω` frozen at `ω = omega`), so the layer is a
+fixed set of real blocks with polynomial coefficients in `ω`, like the rest of the operator, and a sweep still
+only recombines them. The price is that the attenuation scales with the wavenumber: at `ω` the layer
+reflects about `R^(k/k_ref)` (`R^(β/k_ref)` for a guided mode), which is stronger above the reference and
+weaker below it. In practice the mesh reflection of the graded layer, not `R`, sets the floor: on the WR-90
+example below, `|S11|` stays between 0.002 and 0.004 from 8 to 12 GHz with the reference at 10 GHz, within
+about 20 % of a layer re-tuned to each frequency, and falls with the cells across the layer (0.018, 0.009, 0.004 and
+0.002 for 4, 6, 10 and 15 cells). A layer of only a few cells absorbs better with a milder `R` (`1e-3`).
+
+```julia
+grid = generate_grid(Tetrahedron, (12, 6, 20), Vec(0.0, 0.0, 0.0), Vec(22.86, 10.16, 40.0))
+addcellset!(grid, "pml", x -> x[3] >= 19.99)  # the last 20 mm absorb
+model = MaxwellModel(
+    grid; pec = ["left", "right", "front", "back", "top"], ports = [WavePort("bottom"; a_direction = (1, 0, 0))],
+    pml = CartesianPML("pml"; omega = 2π * 10.0e9, R = 1.0e-6), length_scale = 1.0e-3,
+)
+abs(only(solve_sweep(model, [2π * 10.0e9]).S))  # |S11| ≈ 0.004, against 0.1396 for the first-order ABC
+```
+
 ```@docs
 MaxwellModel
 MaxwellMaterial
@@ -77,6 +105,7 @@ FiniteElementMethod.port_excitations
 FiniteElementMethod.s_parameters
 FiniteElementMethod.propagation_constant
 FiniteElementMethod.cutoff_frequency
+CartesianPML
 FiniteElementMethod.EPS0
 FiniteElementMethod.MU0
 FiniteElementMethod.C0
