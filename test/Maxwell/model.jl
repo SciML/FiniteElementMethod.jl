@@ -92,10 +92,10 @@ end
     worst = 0.0
     for name in CUBE_FACES, fc in FacetIterator(model.dh, getfacetset(model.grid, name))
         reinit!(fv, fc)
-        ue = sol.u[celldofs(fc)]
+        u_cell = sol.u[celldofs(fc)]
         for q in 1:getnquadpoints(fv)
             n = getnormal(fv, q)
-            worst = max(worst, norm(collect(n × function_value(fv, q, ue))))
+            worst = max(worst, norm(collect(n × function_value(fv, q, u_cell))))
         end
     end
     @test worst < 1.0e-12 * maximum(abs, sol.u)

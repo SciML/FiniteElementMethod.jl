@@ -93,15 +93,14 @@ function tangential_mass(model, facetsets; weight = Returns(1.0))
     return _tangential_mass(model.dh, model.blocks.curlcurl, names, weight)
 end
 
-# First-order absorbing boundary n × (μr⁻¹ ∇ × E) = -i k0 ηr⁻¹ n × (n × E), ηr⁻¹ = sqrt(εr / μr) of the
-# adjacent cell: the term +i k0 L ηr⁻¹ ∮ (n × E)⋅(n × v) dS, split into real blocks for real and imaginary ηr⁻¹.
+# First-order absorbing boundary n × (μr⁻¹ ∇ × E) = -i k0 ηr⁻¹ n × (n × E), with ηr⁻¹ = sqrt(εc / μr) and
+# εc = εr - iσ/(ωε0) of the adjacent cell: the term +i k0 L ηr⁻¹ ∮ (n × E)⋅(n × v) dS, one block per material.
 function _absorbing_terms(dh, pattern, names, cell_materials, mu0, eps0, L)
-    y(cell) = sqrt(cell_materials[cell].eps_r / cell_materials[cell].mu_r)
-    k0L(ω) = ω * sqrt(mu0 * eps0) * L
-    terms = [MaxwellTerm(_tangential_mass(dh, pattern, names, real ∘ y), ω -> im * k0L(ω))]
-    imag_block = _tangential_mass(dh, pattern, names, imag ∘ y)
-    any(!iszero, nonzeros(imag_block)) && push!(terms, MaxwellTerm(imag_block, ω -> -k0L(ω) + 0im))
-    return terms
+    materials = unique(cell_materials[facet[1]] for name in names for facet in Ferrite.getfacetset(dh.grid, name))
+    return map(materials) do m
+        block = _tangential_mass(dh, pattern, names, cell -> Float64(cell_materials[cell] == m))
+        MaxwellTerm(block, ω -> im * ω * sqrt(mu0 * eps0) * L * sqrt((m.eps_r - im * m.sigma / (ω * eps0)) / m.mu_r))
+    end
 end
 
 function _port_frame(port, normal)
@@ -171,8 +170,20 @@ function _wave_port(port::WavePort, dh, pattern, cell_materials, length_scale, c
         Ferrite.assemble!(profile, Ferrite.celldofs(fc), pe)
     end
     block = _tangential_mass(dh, pattern, [port.facetset], Returns(1.0))
+    # The TE10 mode needs a PEC rim: every edge dof on just one port facet must be constrained.
+    count = Dict{Int, Int}()
+    for (cell, local_facet) in facets
+        cell_dofs = Ferrite.celldofs(dh, cell)
+        for i in Ferrite.dirichlet_facetdof_indices(_NEDELEC)[local_facet]
+            count[cell_dofs[i]] = get(count, cell_dofs[i], 0) + 1
+        end
+    end
+    all(dof -> count[dof] > 1 || dof in constrained, keys(count)) ||
+        throw(ArgumentError("the rim of port $(repr(port.facetset)) is not PEC; name the guide walls in `pec`"))
     free = setdiff(_pec_dofs(dh, grid, [port.facetset]), constrained)
+    isempty(free) && throw(ArgumentError("every edge dof of port $(repr(port.facetset)) is PEC-constrained; a port face cannot also be in `pec`"))
     norm_h = dot(profile[free], block[free, free] \ profile[free])
+    norm_h > 0 || throw(ArgumentError("the TE10 mode of port $(repr(port.facetset)) has no projection onto its free edge dofs"))
     return WavePortData(port, block, profile, norm_h, normal, a, b, π / (a * length_scale), material.eps_r, material.mu_r)
 end
 

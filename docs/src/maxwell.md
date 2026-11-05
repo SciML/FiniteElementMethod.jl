@@ -35,7 +35,7 @@ that is a function of `ω`, so a frequency sweep only recombines nonzero values 
 Rectangular-waveguide ports and first-order absorbing boundaries are model keywords. A [`WavePort`](@ref)
 on a planar boundary facet set launches and absorbs the TE10 mode of the rectangle it spans; `a_direction`
 names the broad wall. Facet sets in `absorbing` get the first-order Silver-Müller condition
-`n × (μr⁻¹ ∇ × E) = -i k0 sqrt(εr/μr) n × (n × E)`, exact for a plane wave at normal incidence (a TE10 wave
+`n × (μr⁻¹ ∇ × E) = -i k0 sqrt(εc/μr) n × (n × E)` (`εc = εr - iσ/(ωε0)` of the adjacent material), exact for a plane wave at normal incidence (a TE10 wave
 reflects `Γ = (β - k0)/(β + k0)` from it). [`solve_sweep`](@ref) returns the scattering matrix at each
 angular frequency; it keeps one operator matrix and one factorisation pattern, and solves every port's
 excitation from a single factorisation per frequency. The linear solver is the `solver` keyword (see

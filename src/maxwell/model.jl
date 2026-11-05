@@ -53,7 +53,7 @@ The time-harmonic electric-field model on a Ferrite `grid` of `Tetrahedron` cell
 
 with `n × E = 0` on the facet sets named in `pec` and the natural condition `n × (μr⁻¹ ∇ × E) = 0` on the
 rest of the boundary, except for the facet sets named in `absorbing`, which carry the first-order
-Silver-Müller absorbing condition `n × (μr⁻¹ ∇ × E) = -i k0 sqrt(εr/μr) n × (n × E)`, and the
+Silver-Müller absorbing condition `n × (μr⁻¹ ∇ × E) = -i k0 sqrt(εc/μr) n × (n × E)` with `εc = εr - iσ/(ωε0)`, and the
 [`WavePort`](@ref)s and [`LumpedPort`](@ref)s in `ports`, numbered in the order given.
 
 `materials` maps cell set names of `grid` (as `FerriteGmsh.togrid` makes from Gmsh physical groups) to
@@ -68,7 +68,7 @@ sparse blocks on one sparsity pattern, each with a complex coefficient that is a
 
 `Kc = ∫ μr⁻¹ ∇×Nᵢ ⋅ ∇×Nⱼ`, `Mε' = ∫ Re(εr) Nᵢ⋅Nⱼ`, `Mε'' = ∫ Im(εr) Nᵢ⋅Nⱼ` and `Mσ = ∫ σ Nᵢ⋅Nⱼ` over the
 mesh (so `Im(εr) = -ε''` gives the `+iω²μ0ε0L² ε''` loss term). The absorbing boundary adds
-`+i k0 L ∮ sqrt(εr/μr) (n × Nᵢ)⋅(n × Nⱼ) dS` (`k0 = ω sqrt(μ0 ε0)`, material of the adjacent cell) and each
+`+i k0 L ∮ sqrt(εc/μr) (n × Nᵢ)⋅(n × Nⱼ) dS` (`k0 = ω sqrt(μ0 ε0)`, material of the adjacent cell) and each
 wave port `+i (β(ω)/μr) L ∮ (n × Nᵢ)⋅(n × Nⱼ) dS` over its face; each lumped port adds
 `+iω μ0 L / (w² Z0) g gᵀ` (see [`FiniteElementMethod.LumpedPortData`](@ref)), whose dof pairs widen the
 cell-based sparsity pattern. `A` is complex symmetric, not Hermitian.

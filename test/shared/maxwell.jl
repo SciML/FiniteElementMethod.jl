@@ -38,13 +38,13 @@ function hcurl_errors(model, u, F; order = 4)
     e2 = c2 = 0.0
     for cc in CellIterator(model.dh)
         reinit!(cv, cc)
-        ue = u[celldofs(cc)]
+        u_cell = u[celldofs(cc)]
         x = getcoordinates(cc)
         for q in 1:getnquadpoints(cv)
             xq = spatial_coordinate(cv, q, x)
             dΩ = getdetJdV(cv, q)
-            e2 += sum(abs2, collect(function_value(cv, q, ue)) .- F(xq)) * dΩ
-            c2 += sum(abs2, collect(function_curl(cv, q, ue)) .- curl_exact(F, xq)) * dΩ
+            e2 += sum(abs2, collect(function_value(cv, q, u_cell)) .- F(xq)) * dΩ
+            c2 += sum(abs2, collect(function_curl(cv, q, u_cell)) .- curl_exact(F, xq)) * dΩ
         end
     end
     return (l2 = sqrt(e2), hcurl = sqrt(e2 + c2))
