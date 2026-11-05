@@ -91,6 +91,9 @@ function _lumped_port_geometry(port::LumpedPort, dh)
     t̂ = cross(normal, l̂)
     (s0, s1), (t0, t1) = extrema(dot(x, l̂) for x in nodes), extrema(dot(x, t̂) for x in nodes)
     len, width = s1 - s0, t1 - t0
+    heights = [dot(x, normal) for x in nodes]
+    maximum(heights) - minimum(heights) <= 1.0e-8 * max(len, width) ||
+        throw(ArgumentError("port facet set $(repr(port.facetset)) is not planar"))
     abs(area - len * width) <= 1.0e-6 * len * width ||
         throw(ArgumentError("port facet set $(repr(port.facetset)) is not a rectangle with a side along direction"))
     dofs = sort!(unique(Ferrite.celldofs(dh, f[1])[i] for f in facets for i in local_dofs[f[2]]))

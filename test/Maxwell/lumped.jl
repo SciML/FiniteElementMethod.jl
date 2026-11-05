@@ -170,6 +170,14 @@ end
     @test_throws "must be positive" LumpedPort("bottom"; direction = (0, 1, 0), Z0 = 0)
     @test_throws "not in the port plane" MaxwellModel(grid; ports = [LumpedPort("bottom"; direction = (0, 0, 1))])
     @test_throws "not a rectangle" MaxwellModel(grid; ports = [LumpedPort("bottom"; direction = (1, 1, 0))])
+    # Parallel normals and a matching projected area, but two halves at different heights.
+    split = generate_grid(Tetrahedron, (2, 1, 1))
+    halves = [
+        [f for f in getfacetset(split, "bottom") if all(x -> x[1] <= 0, getcoordinates(split, f[1])[collect(Ferrite.reference_facets(RefTetrahedron)[f[2]])])];
+        [f for f in getfacetset(split, "top") if all(x -> x[1] >= 0, getcoordinates(split, f[1])[collect(Ferrite.reference_facets(RefTetrahedron)[f[2]])])]
+    ]
+    addfacetset!(split, "steps", halves)
+    @test_throws "not planar" MaxwellModel(split; ports = [LumpedPort("steps"; direction = (0, 1, 0))])
     @test_throws "no facet set" MaxwellModel(grid; ports = [LumpedPort("nope"; direction = (0, 1, 0))])
     # Lumped ports widen the pattern; every block and further term shares it.
     model = MaxwellModel(grid; ports = [LumpedPort("bottom"; direction = (0, 1, 0))])
