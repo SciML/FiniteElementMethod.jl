@@ -164,33 +164,53 @@ end
         Threads.nthreads() > 1 || @info "the remakes were solved on one thread, so this test cannot see a race; run with JULIA_NUM_THREADS > 1"
     end
 
-    @testset "states other than Float64 and Dual{Float64} are rejected" begin
+    @testset "AbstractFloat states and their Duals are evaluated, nested Duals are rejected" begin
         Ω = square()
         eq = Dt(U) ~ Dx((1 + U^2) * Dx(U)) + Dy(Dy(U)) + (1 + x + 2y) - 2 * ustar * (1 + t)^2
         prob = DAEProblem(pdesystem([eq], [dirichlet(Ω); ic], Ω), FEMDiscretization(Ω, t))
         n = length(prob.u0)
         Dual = FiniteElementMethod.ForwardDiff.Dual
-        states = (
-            Float32.(prob.u0), big.(prob.u0), Dual{Nothing}.(Float32.(prob.u0), 1.0f0),
-            Dual{:outer}.(Dual{:inner}.(prob.u0, 1.0), Dual{:inner}(1.0, 0.0)),
-        )
-        for u in states
-            T = eltype(u)
-            msg = "the nonlinear operator evaluates Float64 states and first-order ForwardDiff Duals of Float64; got $T"
-            @test_throws ArgumentError(msg) prob.f(zeros(T, n), zeros(T, n), u, prob.p, 0.0)
-        end
-        @test_throws ArgumentError("the nonlinear operator evaluates Float64 states and first-order ForwardDiff Duals of Float64; got Float32") prob.f(
-            zeros(Float32, n), zeros(Float32, n), Float32.(prob.u0), prob.p, 0.0
-        )
-        @test_throws ArgumentError("the nonlinear operator's Jacobian evaluates Float64 states; got Float32") prob.f.jac(
-            copy(prob.f.jac_prototype), zeros(n), Float32.(prob.u0), prob.p, 1.0, 0.0
-        )
-        # The supported states still evaluate: Float64 and a first-order Dual of Float64.
+        value = FiniteElementMethod.ForwardDiff.value
+        u0 = prob.u0 .+ 0.1 .* sin.(1:n)
+        du = cos.(1:n)
         r = zeros(n)
-        prob.f(r, zeros(n), prob.u0, prob.p, 0.0)
-        rd = zeros(Dual{Nothing, Float64, 1}, n)
-        prob.f(rd, zeros(n), Dual{Nothing}.(prob.u0, 1.0), prob.p, 0.0)
-        @test FiniteElementMethod.ForwardDiff.value.(rd) ≈ r
+        prob.f(r, du, u0, prob.p, 0.5)
+        @test norm(r) > 0
+        J = copy(prob.f.jac_prototype)
+        prob.f.jac(J, du, u0, prob.p, 2.0, 0.5)
+
+        # The residual and Jacobian at a Float32 state, stored as Float32, are the Float64 ones rounded.
+        r32 = zeros(Float32, n)
+        prob.f(r32, Float32.(du), Float32.(u0), prob.p, 0.5)
+        @test norm(r32 - r) / norm(r) ≤ 1.0e-5
+        J32 = copy(prob.f.jac_prototype)
+        prob.f.jac(J32, Float32.(du), Float32.(u0), prob.p, 2.0, 0.5)
+        @test norm(J32 - J) / norm(J) ≤ 1.0e-5
+        rbig = zeros(BigFloat, n)
+        prob.f(rbig, big.(du), big.(u0), prob.p, 0.5)
+        @test rbig ≈ r
+        # Duals of either, as the default initializer passes them: the values are the residual at the values, and
+        # the partials along the unit direction are J_N + K times it, the Jacobian at γ = 0.
+        J0 = copy(prob.f.jac_prototype)
+        prob.f.jac(J0, du, u0, prob.p, 0.0, 0.5)
+        r0 = zeros(n)
+        prob.f(r0, zeros(n), u0, prob.p, 0.5)
+        for V in (Float64, Float32)
+            rd = zeros(Dual{Nothing, V, 1}, n)
+            prob.f(rd, zeros(V, n), Dual{Nothing}.(V.(u0), one(V)), prob.p, 0.5)
+            @test norm(value.(rd) - r0) ≤ 1.0e-5 * norm(r0)
+            ∂r = [FiniteElementMethod.ForwardDiff.partials(d, 1) for d in rd]
+            @test norm(∂r - J0 * ones(n)) ≤ 1.0e-5 * norm(J0 * ones(n))
+        end
+
+        nested = Dual{:outer}.(Dual{:inner}.(u0, 1.0), Dual{:inner}(1.0, 0.0))
+        T = eltype(nested)
+        @test_throws ArgumentError("the nonlinear operator evaluates AbstractFloat states and first-order ForwardDiff Duals of them; got $T") prob.f(
+            zeros(T, n), zeros(T, n), nested, prob.p, 0.0
+        )
+        @test_throws ArgumentError("the nonlinear operator's Jacobian evaluates AbstractFloat states; got $T") prob.f.jac(
+            copy(prob.f.jac_prototype), zeros(n), nested, prob.p, 1.0, 0.0
+        )
     end
 
     @testset "steady nonlinear diffusion, dirichlet = $dirichlet" for dirichlet in (:algebraic, :eliminate)

@@ -134,7 +134,7 @@ function assemble_linear!(M, K, F, ctx::AssemblyContext, kernels, p; t = 0.0, ki
     aM = Ferrite.start_assemble(M; fillzero = :mass in kinds)
     aK = Ferrite.start_assemble(K; fillzero = :bilinear in kinds)
     :source in kinds && fill!(F, 0)
-    op = LinearOp(aM, aK, F, zeros(ne, ne), zeros(ne, ne), zeros(ne))
+    op = LinearOp(aM, aK, F, zeros(eltype(M), ne, ne), zeros(eltype(K), ne, ne), zeros(eltype(F), ne))
     _assemble!(op, ctx, _split(ctx, kernels, kinds)..., p, t)
     return M, K, F
 end
@@ -155,22 +155,23 @@ end
 function assemble_nonlinear!(r, J, ctx::AssemblyContext, kernels, u, p; t = 0.0)
     ne = _max_ndofs(ctx.dh)
     fill!(r, 0)
-    op = NonlinearOp(Ferrite.start_assemble(J), r, zeros(ne, ne), zeros(ne), u, zeros(ne))
+    T = eltype(r)
+    op = NonlinearOp(Ferrite.start_assemble(J), r, zeros(eltype(J), ne, ne), zeros(T, ne), u, zeros(T, ne))
     _assemble!(op, ctx, _split(ctx, kernels, (:nonlinear,))..., p, t)
     return r, J
 end
 
-struct LinearOp{AM, AK, FV <: AbstractVector{Float64}, ME <: AbstractMatrix{Float64}, FE <: AbstractVector{Float64}}
+struct LinearOp{AM, AK, FV <: AbstractVector{<:AbstractFloat}, ME <: AbstractMatrix{<:AbstractFloat}, KE <: AbstractMatrix{<:AbstractFloat}, FE <: AbstractVector{<:AbstractFloat}}
     aM::AM
     aK::AK
     F::FV
     Me::ME
-    Ke::ME
+    Ke::KE
     Fe::FE
 end
 
 # `aJ === nothing` assembles the residual only.
-struct NonlinearOp{AJ, R <: AbstractVector{Float64}, U, JE <: AbstractMatrix{Float64}, RE <: AbstractVector{Float64}}
+struct NonlinearOp{AJ, R <: AbstractVector{<:AbstractFloat}, U, JE <: AbstractMatrix{<:AbstractFloat}, RE <: AbstractVector{<:AbstractFloat}}
     aJ::AJ
     r::R
     Je::JE
