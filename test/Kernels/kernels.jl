@@ -303,3 +303,21 @@ end
         @test isapprox(kernel.f(args...), symbolic_value(term.integrand, wf, args); rtol = 1.0e-12)
     end
 end
+
+guarded_root(z) = sqrt(z)
+@register_symbolic guarded_root(z)
+
+@testset "a guarded source keeps its conditional branches lazy" begin
+    guarded = ifelse(x > 0, guarded_root(x), 0.0) + 2 * ifelse(x > 0, guarded_root(x), 0.0) * y
+    an = analyse([Dt(U) ~ Dx(k * Dx(U)) + Dy(k * Dy(U)) + guarded], BC[]; depvars = [U], t, sivs = [x, y], params = [k, α, β, h])
+    X = Vec(-1.0, 0.3)
+    for kernel in emit_kernels(weak_form(an)), kind in (:source,)
+        kernel.kind === kind || continue
+        @test all(c -> c isa StructuralZero || iszero(c), kernel.coeffs(X, 0.0, Vec(1.0, 0.0), [2.0, 3.0, 0.5, 1.5]))
+    end
+    for kernel in emit_kernels(weak_form(an); coeffs = false)
+        kernel.kind === :source || continue
+        args = random_args(an)
+        @test kernel.f(args[1:5]..., X, args[7:9]...) == 0.0
+    end
+end

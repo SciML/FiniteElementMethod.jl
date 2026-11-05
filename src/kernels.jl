@@ -16,6 +16,15 @@ function build(ex, slots, ::Val{E}; cse = false) where {E}
     return E ? code : RuntimeGeneratedFunctions.RuntimeGeneratedFunction(@__MODULE__, @__MODULE__, code)
 end
 
+# `ifelse` compiles to a conditional whose branches are lazy, and `cse` would hoist the calls of both in front of it,
+# so a guarded `sqrt` or registered function can throw where it would not have been reached.
+function has_ifelse(ex)
+    ex = Symbolics.unwrap(ex)
+    SU.iscall(ex) || return false
+    SU.operation(ex) === ifelse && return true
+    return any(has_ifelse, SU.arguments(ex))
+end
+
 # The numeric temporaries `var"##cse#k" = 2` that are assigned once, substituted into their uses and dropped, and
 # `NaNMath.pow(x, 2)` with an integer literal exponent back as `Base.literal_pow(^, x, Val(2))`.
 function inline_literals(code)
@@ -157,7 +166,7 @@ function compile_coeffs(kind, ex, s, test; expression = Val(false))
     end
     isequal(Symbolics.expand(ex - linear), 0) || return nothing
     any(e -> depends(e, [s.U; s.G; s.Ud; H; w]), exs) && return nothing
-    cse = kind === :source
+    cse = kind === :source && !has_ifelse(ex)
     cell || return compile_tuple(exs, (s.X, s.T, s.N, s.P); zero = StructuralZero(), expression, cse)
     dim2 = length(s.X)^2
     fields = Tuple(b for b in eachindex(s.U) if depends(ex, H[((b - 1) * dim2 + 1):min(b * dim2, length(H))]))
@@ -176,7 +185,7 @@ function kernel(eq, kind, piece, integrand, wf::WeakForm; coeffs = true, express
         )
     )
     tangent = kind === :nonlinear ? compile_tangent(integrand, s, slots; expression) : nothing
-    f = c === nothing ? compile(integrand, slots; expression, cse = kind === :source) : nothing
+    f = c === nothing ? compile(integrand, slots; expression, cse = kind === :source && !has_ifelse(integrand)) : nothing
     return KernelSpec(eq, kind, piece, f, tangent, c)
 end
 
