@@ -169,9 +169,10 @@ function maxwell_eigenmodes(
             _eigsolve(KrylovKitEigensolver(), op, x0, howmany; krylovdim = dim, tol, maxiter)
         λ = σ .+ 1 ./ θ
         lossy || (λ = real.(λ))
-        # The dense spectrum also holds the projected-out gradients, at θ = 0 up to roundoff.
-        θmax = maximum(abs, θ)
-        keep = findall(j -> abs(θ[j]) > 1.0e-8 * θmax && abs(λ[j]) >= nullspace_tol * σ, eachindex(λ))
+        # The dense spectrum also holds the projected-out gradients (θ = 0): their eigenvectors lie in the range of
+        # G, which the projection annihilates, while every other eigenvector is left unchanged by it.
+        physical(v) = norm(project(v)) > norm(v) / 2
+        keep = findall(j -> physical(vecs[j]) && abs(λ[j]) >= nullspace_tol * σ, eachindex(λ))
         dist = abs.(sqrt.(complex.(λ[keep]) ./ scale) .- ωt)
         keep = keep[sortperm(dist)]
         length(keep) < nev && break

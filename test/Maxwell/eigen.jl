@@ -149,6 +149,14 @@ end
     dense = maxwell_eigenmodes(small; nev = 4, target_frequency = 0.9, krylovdim = 10_000)
     krylov = maxwell_eigenmodes(small; nev = 4, target_frequency = 0.9, krylovdim = 30)
     @test dense.frequency ≈ krylov.frequency rtol = 1.0e-8
+    # A target on a resonance makes one θ huge; the gradient modes are still told apart by their eigenvectors.
+    cube2 = MaxwellModel(generate_grid(Tetrahedron, (2, 2, 2)); pec = CUBE_FACES, eps0 = 1.0, mu0 = 1.0)
+    f0 = maxwell_eigenmodes(cube2; nev = 3, target_frequency = 0.3, krylovdim = 10_000).frequency
+    ft = f0[1] * (1 + 1.0e-10)
+    near = maxwell_eigenmodes(cube2; nev = 3, target_frequency = ft, krylovdim = 10_000).frequency
+    @test length(near) == 3
+    @test near ≈ maxwell_eigenmodes(cube2; nev = 3, target_frequency = ft, krylovdim = 30).frequency rtol = 1.0e-8
+    @test near[1] ≈ f0[1] rtol = 1.0e-10
     # A single tetrahedron with every face PEC has no free dof at all.
     nodes = Node.([Vec(0.0, 0.0, 0.0), Vec(1.0, 0.0, 0.0), Vec(0.0, 1.0, 0.0), Vec(0.0, 0.0, 1.0)])
     tet = Grid([Tetrahedron((1, 2, 3, 4))], nodes)
