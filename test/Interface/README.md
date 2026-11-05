@@ -1,0 +1,112 @@
+# Interface tests
+
+End-to-end tests written the way a user writes a script, in the style of MethodOfLines.jl's interface
+tests: build a `PDESystem`, choose a `FEMDiscretization`, `discretize`, `solve`, and compare with the exact
+(manufactured) solution. They use the exported and documented API only: no internals such as
+`sol.disc_data` or `FiniteElementMethod.rectangle_grid`. Meshes come from `Ferrite.generate_grid`, as in
+the documentation.
+
+Run the group with `GROUP=Interface julia --project=. -e 'using Pkg; Pkg.test()'`. Every `*.jl` file in this
+directory runs in its own `@safetestset`, so each file is self-contained.
+
+## Conventions
+
+1. **One narrated testset per case.** The name reads as a sentence stating the result
+   (`"P1 elements on a line converge at rate 2 for ..."`).
+2. **The comment block opens every testset** and states, in this order: `PDE`, `Domain`, `BCs` (boundary and
+   initial conditions), `Exact` (the manufactured solution) and `Shows` (what the case demonstrates).
+   A testset that loops over variants uses `$name` in its title and one comment block for all of them.
+3. **Short.** A case is about 40 lines at most. If it needs more, move the repeated PDE setup into a small
+   function above the testset (see `heat_1d_error` in `heat_1d.jl`) or split the case.
+4. **Cheap.** Meshes and time spans are small; a case takes seconds after compilation.
+5. **Exact comparison.** Choose a solution inside the element space (error at solver tolerance, tolerance
+   `1e-7`) or compare against a smooth one with a stated tolerance, or check the convergence rate with
+   `observed_rate` over a refinement sequence. Compare through `sol(t, x, y; dv)` using `l2_error`.
+6. **Unsupported inputs** go in `rejections.jl` with `@test_throws "message text" expr`. Do not add `@test_broken`.
+7. Shared code is in `test/shared/interface_helpers.jl` (`sample_points`, `l2_error`, `observed_rate`); add to it
+   only what two files need.
+
+## Adding a case
+
+Copy the nearest testset, change the PDE, boundary conditions and exact solution, update the comment block,
+and add a row to the table below. A new theme is a new file in this directory; nothing needs registering.
+The mesh of a box is `MeshDomain(generate_grid(Triangle, (n, n), Vec(0.0, 0.0), Vec(1.0, 1.0)))`; its
+boundary pieces are `boundarypiece.(Ω, (:left, :right, :bottom, :top))` in 2D and `(:left, :right)` in 1D.
+
+## Cases
+
+| File | Case | PDE | Dim | Order | Boundary conditions |
+|------|------|-----|-----|-------|---------------------|
+| `heat_1d.jl` | P1 convergence rate 2 | heat | 1 | P1 | constant Dirichlet |
+| `heat_1d.jl` | P2 convergence rate 3 | heat | 1 | P2 | constant Dirichlet |
+| `heat_2d.jl` | eigenmode decay on triangles and quadrilaterals | heat | 2 | P1, P2 | zero Dirichlet |
+| `heat_2d.jl` | exact reproduction by P2 | heat | 2 | P2 | time-dependent Dirichlet |
+| `heat_2d.jl` | P1 convergence rate 2 | heat | 2 | P1 | time-dependent Dirichlet |
+| `neumann_robin.jl` | Neumann on three sides | heat | 2 | P2 | Dirichlet and Neumann |
+| `neumann_robin.jl` | Robin with parameters `k`, `α` | heat | 2 | P2 | Dirichlet and Robin |
+| `neumann_robin.jl` | Dirichlet, Neumann and Robin together | heat | 2 | P2 | all three |
+| `neumann_robin.jl` | insulated box | heat | 2 | P1 | zero Neumann |
+| `solution_access.jl` | `sol[u]`, `sol[x]`, `sol[y]` shapes | heat with parameter `D` | 2 | P2 | Dirichlet |
+| `solution_access.jl` | `sol(t, x, y; dv)` points, grids, outside the mesh | heat | 2 | P2 | Dirichlet |
+| `solution_access.jl` | derivative and trace keys | heat | 2 | P2 | Dirichlet |
+| `solution_access.jl` | parameter values set the diffusivity | heat | 2 | P2 | Dirichlet |
+| `heat_3d.jl` | eigenmode decay on hexahedra and tetrahedra | heat | 3 | P1, P2 | zero Dirichlet |
+| `heat_3d.jl` | exact reproduction by P2 | heat | 3 | P2 | time-dependent Dirichlet |
+| `heat_3d.jl` | P1 hexahedra rate 2, P2 tetrahedra rate 3 | heat | 3 | P1, P2 | zero Dirichlet |
+| `element_order.jl` | line P1, P2 rates 2 and 3 | heat | 1 | P1, P2 | zero Dirichlet |
+| `element_order.jl` | triangle and quadrilateral P1, P2, P3 rates 2, 3, 4 | heat | 2 | P1, P2, P3 | zero Dirichlet |
+| `solver_choices.jl` | DFBDF, DABDF2, DImplicitEuler, DFBDF order 2 | heat | 1 | P2 | constant Dirichlet |
+| `solver_choices.jl` | tolerances and `saveat` | heat | 1 | P2 | constant and time-dependent Dirichlet |
+| `solver_choices.jl` | ODE solver refused for the DAE problem | heat | 1 | P2 | time-dependent Dirichlet |
+| `advection_diffusion.jl` | exact reproduction with constant velocity | advection-diffusion with source | 1 | P2 | time-dependent Dirichlet |
+| `advection_diffusion.jl` | P2 convergence rate 3 with manufactured source on a line | advection-diffusion with source | 1 | P2 | zero Dirichlet |
+| `advection_diffusion.jl` | exact reproduction with velocity vector on triangles and quadrilaterals | advection-diffusion with source | 2 | P2 | time-dependent Dirichlet |
+| `advection_diffusion.jl` | P2 convergence rate 3 with manufactured source on triangles | advection-diffusion with source | 2 | P2 | zero Dirichlet |
+| `reaction_diffusion.jl` | linear reaction with source on triangles and quadrilaterals | reaction-diffusion | 2 | P2 | zero Dirichlet |
+| `reaction_diffusion.jl` | decay reaction, P2 convergence rate 3 | reaction-diffusion | 1 | P2 | zero Dirichlet |
+| `reaction_diffusion.jl` | two linearly coupled fields, exact | coupled reaction-diffusion | 1 | P2 | time-dependent Dirichlet |
+| `reaction_diffusion.jl` | logistic reaction, manufactured source, rate 3 | nonlinear reaction-diffusion | 1 | P2 | zero Dirichlet |
+| `variable_coefficient_diffusion.jl` | `Dx(a Dx(u))`, rate 3 | divergence-form diffusion | 1 | P2 | zero Dirichlet |
+| `variable_coefficient_diffusion.jl` | `a Dxx(u)`, rate 3 | non-divergence-form diffusion | 1 | P2 | zero Dirichlet |
+| `variable_coefficient_diffusion.jl` | `Dx(a Dx(u)) + Dy(a Dy(u))`, rate 3, triangles and quadrilaterals | divergence-form diffusion | 2 | P2 | zero Dirichlet |
+| `variable_coefficient_diffusion.jl` | `a (Dxx(u) + Dyy(u))`, rate 3, triangles and quadrilaterals | non-divergence-form diffusion | 2 | P2 | zero Dirichlet |
+| `source_terms.jl` | manufactured source, rates 2 and 3 | heat with source | 1 | P1, P2 | time-dependent Dirichlet |
+| `source_terms.jl` | manufactured source, rate 3, triangles and quadrilaterals | heat with source | 2 | P2 | time-dependent Dirichlet |
+| `source_terms.jl` | polynomial solution, exact | heat with source | 2 | P2 | time-dependent Dirichlet |
+| `coupled_systems.jl` | bidirectionally coupled pair, exact in P2 | two coupled reaction-diffusion fields | 2 | P2 | Dirichlet |
+| `coupled_systems.jl` | coupled eigenmode pair (cosh, sinh) on triangles and quadrilaterals | two coupled heat fields | 2 | P2 | zero Dirichlet |
+| `coupled_systems.jl` | both fields converge at rate 2 | two coupled heat fields | 2 | P1 | time-dependent Dirichlet |
+| `coupled_systems.jl` | different boundary condition kinds per field | two coupled reaction-diffusion fields | 2 | P2 | Dirichlet on u; Dirichlet and Neumann on v |
+| `wave_first_order.jl` | convergence of u and v on a line | wave as a first-order system | 1 | P1, P2 | zero Dirichlet |
+| `wave_first_order.jl` | wave speed `c` in `ps` | wave as a first-order system | 1 | P2 | zero Dirichlet |
+| `wave_first_order.jl` | 2D standing wave | wave as a first-order system | 2 | P2 | zero Dirichlet |
+| `mesh_domains.jl` | side split into two named pieces | heat | 2 | P2 | Dirichlet, Neumann and Robin on five pieces |
+| `mesh_domains.jl` | L-shaped Gmsh mesh read from a file | heat with parameters `k`, `α` | 2 | P2 | Dirichlet on inlet and wall, Robin on outlet |
+| `curved_geometry.jl` | optimal rates on a quarter annulus with `QuadraticTriangle` cells | heat with source | 2 | P1, P2 | Dirichlet on the arcs, Neumann |
+| `parameters.jl` | `D`, `A`, `g` from `ps` for three parameter sets | heat with source | 2 | P2 | Dirichlet with parameter |
+| `parameters.jl` | Neumann flux `q` from `ps` | heat | 2 | P2 | Dirichlet and Neumann with parameter |
+| `parameters.jl` | `D` and reaction rate `λ` from `ps` | heat with decay | 2 | P2 | zero Dirichlet |
+| `steady.jl` | steady Poisson on a line, rates 2 and 3 | Poisson, no time variable | 1 | P1, P2 | constant Dirichlet |
+| `steady.jl` | steady Poisson with Dirichlet and Neumann sides, rates 2 and 3 | Poisson | 2 | P1, P2 | Dirichlet and Neumann |
+| `steady.jl` | steady nonlinear diffusion `k(u) = 1 + u^2`, rate 3 | nonlinear diffusion, Newton | 2 | P2 | zero Dirichlet |
+| `time_last_variables.jl` | `u(x, y, t)` and `u(t, x, y)` give the same solution, time axis last | heat | 2 | P2 | zero Dirichlet |
+| `time_last_variables.jl` | time-last traces, Dirichlet and Neumann data, exact | heat with time-dependent source | 2 | P2 | Dirichlet and Neumann |
+| `observed_expressions.jl` | `sol[expr]` and `sol(t, x, y; dv = expr)` | heat with parameter `D` | 2 | P2 | Dirichlet |
+| `eliminate.jl` | `dirichlet = :eliminate` against `:algebraic` | heat | 2 | P2 | space-dependent Dirichlet, constant in time |
+| `eliminate.jl` | `dirichlet = :eliminate` on a steady problem | Laplace | 2 | P1 | Dirichlet |
+| `nonlinear.jl` | viscous Burgers `u u_x`, rate 3 | Burgers with source | 1 | P2 | zero Dirichlet |
+| `nonlinear.jl` | nonlinear diffusion `k(u) = 1 + u^2`, rate 3 | nonlinear diffusion with source | 2 | P2 | zero Dirichlet |
+| `multifield_spaces.jl` | P2 and P1 fields in one system, rates 3 and 2 | two coupled heat fields | 2 | P2, P1 | Dirichlet |
+| `multifield_spaces.jl` | a field restricted to a region reads NaN outside it | two heat fields, one on a half | 2 | P2 | Dirichlet; natural on the region's other sides |
+| `supg.jl` | Galerkin oscillates, SUPG with the optimal `τ` is nodally exact | convection-diffusion boundary layer | 1 | P1 | Dirichlet |
+| `supg.jl` | constant `τ` with explicit velocity, and `τ(hK, b)` | convection-diffusion boundary layer | 1 | P1 | Dirichlet |
+| `navier_stokes.jl` | Kovasznay flow, Taylor-Hood, rates 3 and 2 | steady incompressible Navier-Stokes | 2 | P2/P1 | Dirichlet velocity, Dirichlet pressure on one side |
+| `metadata_and_operators.jl` | `facet_dofs`, `dof_coordinates`, `cell_dofs` | heat | 2 | P1, P2 | zero Dirichlet |
+| `metadata_and_operators.jl` | `operators` gives the matrices for a hand-made steady solve | heat at its steady state | 2 | P2 | Dirichlet |
+| `rejections.jl` | rejected boundary conditions, equations, options, domains, shared facets, SUPG with a nonlinear term, observed expressions, `operators` | heat and others | 1 to 2 | | |
+
+## Not covered
+
+The DFG cylinder (Navier-Stokes, about 149 000 unknowns) is the `NavierStokes` group. Periodic conditions, `codegen = :mtk`,
+time-dependent coefficients in the mass or stiffness operator, third-order and second-order-in-time equations are
+rejected, and `rejections.jl` asserts the messages.

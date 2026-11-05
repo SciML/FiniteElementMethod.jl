@@ -44,6 +44,8 @@ end
         @test sort(ops.prescribed) == sort([facet_dofs(md, left, u); facet_dofs(md, right, u)])
         @test maximum(abs, ops.K * ones(size(ops.K, 1))) < 1.0e-12
         @test ops.u0[facet_dofs(md, left, u)] ≈ fill(2.0, 4)
+        # u0 is the full dof vector, so it lines up with the rows of M and K.
+        @test length(ops.u0) == size(ops.K, 1)
         # Off the Dirichlet rows the operators are those of the DAEProblem.
         prob = DAEProblem(pdesys, disc)
         free = setdiff(1:size(ops.K, 1), ops.prescribed)
@@ -51,6 +53,21 @@ end
         du = randn(length(prob.u0))
         prob.f(res, du, prob.u0, prob.p, 0.0)
         @test res[free] ≈ (ops.M * du + ops.K * prob.u0 - ops.F)[free]
+    end
+
+    @testset "dirichlet = :eliminate still returns the full dof vector" begin
+        Ω = MeshDomain(rectangle_grid(Quadrilateral, (4, 3)))
+        left, right = boundarypiece.(Ω, (:left, :right))
+        pdesys = heat_system(Ω, [u(t, left) ~ 2.0, u(t, right) ~ 0.0])
+        disc = FEMDiscretization(Ω, t; dirichlet = :eliminate, natural = [:top, :bottom])
+        ops = FiniteElementMethod.operators(pdesys, disc)
+        # operators ignores the elimination: all dofs, with the Dirichlet values on the prescribed ones.
+        @test length(ops.u0) == size(ops.K, 1) == 5 * 4
+        @test ops.u0[facet_dofs(ops.metadata, left, u)] ≈ fill(2.0, 4)
+        @test ops.u0[facet_dofs(ops.metadata, right, u)] ≈ zeros(4)
+        # The eliminated problem drops exactly the prescribed dofs.
+        prob = DAEProblem(pdesys, disc)
+        @test length(prob.u0) == length(ops.u0) - length(ops.prescribed)
     end
 
     @testset "facet_dofs, dof_coordinates and cell_dofs" begin
@@ -81,6 +98,9 @@ end
         msg(f) = errmsg(f)
         nonlinear = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) - u(t, x, y)^3
         @test occursin("nonlinear", msg(() -> FiniteElementMethod.operators(heat_system(Ω, [u(t, left) ~ 0]; eq = nonlinear), FEMDiscretization(Ω, t; natural = [:right, :top, :bottom]))))
+        @test_throws "operators returns linear operators only" FiniteElementMethod.operators(
+            heat_system(Ω, [u(t, left) ~ 0]; eq = nonlinear), FEMDiscretization(Ω, t; natural = [:right, :top, :bottom])
+        )
         @test occursin("constant in time", msg(() -> FiniteElementMethod.operators(heat_system(Ω, [u(t, left) ~ sin(t)]), FEMDiscretization(Ω, t; natural = [:right, :top, :bottom]))))
         sourced = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + t
         @test occursin("time-independent", msg(() -> FiniteElementMethod.operators(heat_system(Ω, [u(t, left) ~ 0]; eq = sourced), FEMDiscretization(Ω, t; natural = [:right, :top, :bottom]))))
