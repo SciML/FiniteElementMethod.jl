@@ -5,8 +5,11 @@ kernel_slots(s, test) = (s.U, s.G, s.Ud, test.V, test.W, s.X, s.T, s.N, s.P)
 
 # `expression = Val(true)` returns the generated `Expr` instead of the compiled function. `build_function` tests
 # `expression == Val{true}`, the type, so the instance is converted.
-build(ex, slots, ::Val{E}) where {E} = Symbolics.build_function(ex, slots...; expression = Val{E}, expression_module = @__MODULE__)
-compile(ex, slots; expression = Val(false)) = build(ex, slots, expression)
+# `cse` shares repeated subexpressions, which pays for the long manufactured sources. It also hoists numeric literals
+# into temporaries, so `u^2` becomes a slow `NaNMath.pow(u, 2)` call instead of `literal_pow`: only the `:source`
+# kernels use it, which are evaluated once per quadrature point and not per shape function.
+build(ex, slots, ::Val{E}; cse = false) where {E} = Symbolics.build_function(ex, slots...; expression = Val{E}, cse, expression_module = @__MODULE__)
+compile(ex, slots; expression = Val(false), cse = false) = build(ex, slots, expression; cse)
 
 "The first unevaluated `Differential` call in `ex`, or `nothing`."
 function find_differential(ex)
@@ -79,14 +82,14 @@ hessian_slots(s) = hasproperty(s, :H) && s.H !== nothing ? collect(Num, s.H) : N
 
 # A tuple-valued function of `slots`, allocation-free with `Vec` and tuple arguments. Constant entries are
 # compiled as `Float64`, constant zeros as `zero`.
-function compile_tuple(exs, slots; zero = 0.0, expression = Val(false))
+function compile_tuple(exs, slots; zero = 0.0, expression = Val(false), cse = false)
     entries = map(exs) do ex
         x = Symbolics.unwrap(ex)
         SU.isconst(x) || return x
         value = SU.unwrap_const(x)
         return iszero(value) ? zero : Float64(value)
     end
-    return build(SU.Code.MakeTuple(entries), slots, expression)
+    return build(SU.Code.MakeTuple(entries), slots, expression; cse)
 end
 
 function compile_tangent(ex, s, slots; expression = Val(false))
@@ -122,10 +125,11 @@ function compile_coeffs(kind, ex, s, test; expression = Val(false))
     end
     isequal(Symbolics.expand(ex - linear), 0) || return nothing
     any(e -> depends(e, [s.U; s.G; s.Ud; H; w]), exs) && return nothing
-    cell || return compile_tuple(exs, (s.X, s.T, s.N, s.P); zero = StructuralZero(), expression)
+    cse = kind === :source
+    cell || return compile_tuple(exs, (s.X, s.T, s.N, s.P); zero = StructuralZero(), expression, cse)
     dim2 = length(s.X)^2
     fields = Tuple(b for b in eachindex(s.U) if depends(ex, H[((b - 1) * dim2 + 1):min(b * dim2, length(H))]))
-    return CellCoeffs(compile_tuple(exs, (s.X, s.T, s.N, s.P, test.hK); zero = StructuralZero(), expression), fields)
+    return CellCoeffs(compile_tuple(exs, (s.X, s.T, s.N, s.P, test.hK); zero = StructuralZero(), expression, cse), fields)
 end
 
 # `f` is compiled only when the driver will call it: without `coeffs`, or for `:nonlinear` terms.
@@ -140,7 +144,7 @@ function kernel(eq, kind, piece, integrand, wf::WeakForm; coeffs = true, express
         )
     )
     tangent = kind === :nonlinear ? compile_tangent(integrand, s, slots; expression) : nothing
-    f = c === nothing ? compile(integrand, slots; expression) : nothing
+    f = c === nothing ? compile(integrand, slots; expression, cse = kind === :source) : nothing
     return KernelSpec(eq, kind, piece, f, tangent, c)
 end
 
