@@ -224,8 +224,12 @@ end
     @test worst ≤ 1.0e-13
 end
 
-# The name of the function a generated call applies: Symbolics embeds the function objects.
-callee_name(x) = x isa Expr && x.head === :call ? (x.args[1] isa Function ? nameof(x.args[1]) : x.args[1]) : nothing
+# The name of the function a generated call applies: Symbolics embeds function objects and global references.
+function callee_name(x)
+    x isa Expr && x.head === :call || return nothing
+    callee = x.args[1]
+    return callee isa Function ? nameof(callee) : callee isa GlobalRef ? callee.name : callee
+end
 # Calls of `^` or `NaNMath.pow` in a generated `Expr` whose exponent is a temporary bound to a number, which is what
 # common-subexpression elimination makes of a literal exponent (`literal_pow` becomes a libm `pow` call).
 function hoisted_exponents(ex)
@@ -244,13 +248,12 @@ function hoisted_exponents(ex)
 end
 count_calls(ex, name) = ex isa Expr ? (callee_name(ex) === name) + sum(a -> count_calls(a, name), ex.args; init = 0) : 0
 
-@testset "only the source kernels share subexpressions: a literal power stays a literal_pow" begin
+@testset "no kernel turns a literal power into a pow call on a hoisted exponent" begin
     for (name, case) in ("(iii)" => case_iii, "two-field" => two_field)
         kernels = emit_kernels(weak_form(case()); expression = Val(true))
         @test any(k -> k.kind === :nonlinear, kernels)
         for k in kernels, ex in (k.f, k.tangent, k.coeffs)
             ex === nothing && continue
-            k.kind === :source && continue
             @test isempty(hoisted_exponents(ex))
         end
         # not vacuous: the squares are there, as `literal_pow` calls
@@ -259,8 +262,11 @@ count_calls(ex, name) = ex isa Expr ? (callee_name(ex) === name) + sum(a -> coun
     end
     @variables ξ η
     squares = ξ^2 * η + 2 * ξ * η + ξ^2
-    @test isempty(hoisted_exponents(build(squares, (ξ, η), Val(true))))
-    @test !isempty(hoisted_exponents(build(squares, (ξ, η), Val(true); cse = true)))  # the hazard the default avoids
+    for cse in (false, true)
+        code = build(squares, (ξ, η), Val(true); cse)
+        @test isempty(hoisted_exponents(code))
+        @test count_calls(code, :literal_pow) > 0
+    end
 end
 
 @testset "common-subexpression elimination of a source agrees with the plain code generator" begin
@@ -284,6 +290,9 @@ end
             @test isapprox(cse(point...), reference(point...); rtol = 1.0e-12)
         end
     end
+    # it does share: the long source evaluates fewer sin calls
+    shared, plain_code = build(long, slots, Val(true); cse = true), Symbolics.build_function(long, slots...; expression = Val{true}, cse = false, expression_module = FiniteElementMethod)
+    @test count_calls(shared, :sin) < count_calls(plain_code, :sin)
     # through the emitters: a long source gives the same value as the symbolic integrand
     an = analyse([Dt(U) ~ Dx(k * Dx(U)) + Dy(k * Dy(U)) + sum(j -> sin(j * x + t) * cos(j * y)^2 * exp(-j * x * y) * (1 + x^2 * y)^(0.5 + 0.1j), 1:4)], BC[]; depvars = [U], t, sivs = [x, y], params = [k, α, β, h])
     wf = weak_form(an)

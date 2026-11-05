@@ -6,9 +6,41 @@ kernel_slots(s, test) = (s.U, s.G, s.Ud, test.V, test.W, s.X, s.T, s.N, s.P)
 # `expression = Val(true)` returns the generated `Expr` instead of the compiled function. `build_function` tests
 # `expression == Val{true}`, the type, so the instance is converted.
 # `cse` shares repeated subexpressions, which pays for the long manufactured sources. It also hoists numeric literals
-# into temporaries, so `u^2` becomes a slow `NaNMath.pow(u, 2)` call instead of `literal_pow`: only the `:source`
-# kernels use it, which are evaluated once per quadrature point and not per shape function.
-build(ex, slots, ::Val{E}; cse = false) where {E} = Symbolics.build_function(ex, slots...; expression = Val{E}, cse, expression_module = @__MODULE__)
+# into temporaries, so `u^2` becomes a libm `NaNMath.pow(u, 2)` call instead of `literal_pow`, 2× to 10× slower on a
+# polynomial source and 25 to 45 percent on the nonlinear residual and Jacobian: `inline_literals` puts the literals back.
+# Only the `:source` kernels use `cse`, which are evaluated once per quadrature point and not per shape function.
+function build(ex, slots, ::Val{E}; cse = false) where {E}
+    cse || return Symbolics.build_function(ex, slots...; expression = Val{E}, expression_module = @__MODULE__)
+    code = Symbolics.build_function(ex, slots...; expression = Val{true}, cse, expression_module = @__MODULE__)
+    code = inline_literals(code)
+    return E ? code : RuntimeGeneratedFunctions.RuntimeGeneratedFunction(@__MODULE__, @__MODULE__, code)
+end
+
+# The numeric temporaries `var"##cse#k" = 2` that are assigned once, substituted into their uses and dropped, and
+# `NaNMath.pow(x, 2)` with an integer literal exponent back as `Base.literal_pow(^, x, Val(2))`.
+function inline_literals(code)
+    literals = Dict{Symbol, Union{Number, Missing}}()
+    collect_literals!(literals, code)
+    filter!(p -> !ismissing(p.second), literals)
+    return substitute_literals(code, literals)
+end
+collect_literals!(literals, x) = nothing
+function collect_literals!(literals, ex::Expr)
+    if ex.head === :(=) && ex.args[1] isa Symbol
+        literals[ex.args[1]] = haskey(literals, ex.args[1]) || !(ex.args[2] isa Number) ? missing : ex.args[2]
+    end
+    foreach(arg -> collect_literals!(literals, arg), ex.args)
+    return nothing
+end
+substitute_literals(x, literals) = x isa Symbol ? get(literals, x, x) : x
+function substitute_literals(ex::Expr, literals)
+    isliteral(arg) = arg isa Expr && arg.head === :(=) && haskey(literals, arg.args[1])
+    args = Any[substitute_literals(arg, literals) for arg in ex.args if !isliteral(arg)]
+    if ex.head === :call && length(args) == 3 && args[1] isa Function && nameof(args[1]) === :pow && args[3] isa Integer
+        return Expr(:call, Base.literal_pow, ^, args[2], Expr(:call, Val, args[3]))
+    end
+    return Expr(ex.head, args...)
+end
 compile(ex, slots; expression = Val(false), cse = false) = build(ex, slots, expression; cse)
 
 "The first unevaluated `Differential` call in `ex`, or `nothing`."
