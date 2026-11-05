@@ -84,7 +84,10 @@ differential_abstol(prob, abstol) = [d ? abstol : 1.0e8 for d in prob.differenti
 # pattern as the analyzed matrix" on these Newton matrices, as it does on Ferrite's own ns_vs_diffeq tutorial.
 # Naming it also removes the default's silent fall-back to sparse QR when a Newton matrix is singular, which
 # for this index-2 system took tens of GB: a singular matrix now fails the step, and `check_solved` raises.
-const DFG_ALG = DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0), linsolve = UMFPACKFactorization())
+# UMFPACK's default has no iterative refinement and its residual grows above ~60k dofs; at this size (16,430) it is
+# accurate. Above about 60k dofs use KLUFactorization() until pivot_tolerance/strategy are available in a released
+# LinearSolve, then UMFPACKFactorization(control = (; strategy = 3, irstep = 2)).
+const DFG_ALG = DFBDF(linsolve = UMFPACKFactorization())
 
 "Raise unless `sol` succeeded and reached its final time (a callback can stop it early with `Terminated`, a success code); a DAE solve that stopped early must not report coefficients."
 function check_solved(sol)
