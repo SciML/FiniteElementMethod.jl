@@ -298,6 +298,8 @@ end
 @testset "cold latency: time to first assembly with and without the precompile workload" begin
     with, without = time_to_first_assembly(; workload = true), time_to_first_assembly(; workload = false)
     @info "time to first assembly in a fresh process (s)" with without ratio = with / without
-    @test with ≤ 0.5 * without        # measured 0.51 s against 14.4 s (0.04); slack for a busy box
-    @test with ≤ 10.0
+    # Coverage instrumentation (the child inherits it) invalidates the cached specializations: 33 s against 35 s on 1.12
+    # and 18 s against 23 s on 1.10, but 0.6 s against 6 to 13 s uninstrumented on both.
+    @test with ≤ 0.5 * without skip = INSTRUMENTED        # measured 0.51 s against 14.4 s (0.04); slack for a busy box
+    @test with ≤ 10.0 skip = INSTRUMENTED
 end
