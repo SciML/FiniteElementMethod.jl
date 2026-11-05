@@ -20,3 +20,43 @@ using SciMLBase: SciMLBase
     @test sol(6.0, 1.0, 0.9; dv = u(t, x, y)) > 0.1
     @test isnan(sol(6.0, 0.65, 0.55; dv = u(t, x, y)))   # the centre of the heated hole
 end
+
+@testset "README Navier–Stokes" begin
+    m = Base.invokelatest(run_readme; block = 2, names = (:sol, :u, :v, :x, :y, :t, :tend, :Γ_in, :Γ_cyl))
+    sol, u, v, x, y, t = m.sol, m.u, m.v, m.x, m.y, m.t
+    @test SciMLBase.successful_retcode(sol)
+    @test sol.t[end] == m.tend == 6.0
+    # No slip on the cylinder, and the parabolic inflow of peak 1.5 once the ramp 1 - exp(-t²) has saturated.
+    @test maximum(abs, sol[u(t, m.Γ_cyl)]) <= 1.0e-6 && maximum(abs, sol[v(t, m.Γ_cyl)]) <= 1.0e-6
+    @test maximum(sol[u(t, m.Γ_in)][end, :]) ≈ 1.5 atol = 1.0e-3
+    # The wake sheds: the cross-stream velocity behind the cylinder alternates sign with the DFG 2D-2
+    # Strouhal number f D / Ū ≈ 0.3 (measured 0.28-0.31 on this mesh; D = 0.1, mean inflow Ū = 1).
+    times = 4.0:0.01:6.0
+    probe = sol(collect(times), [0.6], [0.2]; dv = v(t, x, y))[:, 1, 1]
+    crossings = [times[k] for k in 1:(length(times) - 1) if probe[k] * probe[k + 1] < 0]
+    @test length(crossings) >= 8
+    half_period = (crossings[end] - crossings[1]) / (length(crossings) - 1)
+    @test 0.25 <= 0.1 / (2half_period) <= 0.35
+end
+
+@testset "README images are current" begin
+    assets = joinpath(@__DIR__, "..", "..", "docs", "src", "assets")
+    # The plotting block needs CairoMakie, which is not a test dependency: it must at least parse.
+    @test Meta.parseall(readme_code(; block = 3)) isa Expr
+    images = (
+        (name = "showcase", blocks = 1:1, files = ["showcase.gif"]),
+        (name = "ns_showcase", blocks = 2:3, files = ["ns_showcase.gif", "ns_showcase.png"]),
+    )
+    for (; name, blocks, files) in images
+        for file in [files; "$name.fnv1a"]
+            @test isfile(joinpath(assets, file))
+        end
+        recorded = strip(read(joinpath(assets, "$name.fnv1a"), String))
+        if blocks_hash(blocks) != recorded
+            error(
+                "the README code blocks $(collect(blocks)) changed; regenerate docs/src/assets/$(join(files, ", ")) " *
+                    "and $name.fnv1a with `julia --project=docs examples/$name.jl` from the repository root"
+            )
+        end
+    end
+end
