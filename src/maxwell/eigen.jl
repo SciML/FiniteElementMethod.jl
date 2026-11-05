@@ -47,20 +47,52 @@ function _discrete_gradient(model)
     return G, dhn
 end
 
+# The potential dofs whose hat-function gradients span the gradient null space on the free edge dofs, without
+# dependence: every node off the PEC facets, less one node of each connected part of the mesh with no PEC node
+# (there the gradients of all its hat functions sum to zero).
+function _potential_dofs(dhn, grid, pec)
+    on_pec = falses(Ferrite.ndofs(dhn))
+    on_pec[_pec_dofs(dhn, grid, pec, Ferrite.Lagrange{RefTetrahedron, 1}())] .= true
+    root = collect(1:Ferrite.ndofs(dhn))
+    find(i) = (
+        while root[i] != i
+            i = root[i] = root[root[i]]
+        end; i
+    )
+    for cell in 1:Ferrite.getncells(grid)
+        dofs = Ferrite.celldofs(dhn, cell)
+        for d in dofs
+            root[find(d)] = find(dofs[1])
+        end
+    end
+    pinned = falses(length(root))
+    for i in eachindex(root)
+        on_pec[i] && (pinned[find(i)] = true)
+    end
+    drop = copy(on_pec)
+    for i in eachindex(root)
+        r = find(i)
+        pinned[r] || (drop[i] = pinned[r] = true)  # the first node met in an unpinned part
+    end
+    return findall(!, drop)
+end
+
 """
     maxwell_eigenmodes(model::MaxwellModel; nev, target_frequency, krylovdim = max(30, 2nev + 10),
                        tol = 1e-10, maxiter = 300, nullspace_tol = 1e-6)
 
-The `nev` resonant modes of `model` with eigenfrequencies nearest `target_frequency` (Hz, real and positive),
-sorted by frequency. Requires `using KrylovKit`.
+The `nev` resonant modes of `model` with eigenfrequencies `Re(ω) / 2π` nearest `target_frequency` (Hz, real and
+positive), sorted by frequency. Requires `using KrylovKit`.
 
 Source-free modes satisfy `Kc u = λ (Mε' + i Mε'') u` (see [`MaxwellModel`](@ref)) on the dofs off the PEC
 facets, which are eliminated rather than constrained, with `λ = ω² μ0 ε0 L²`. The problem is solved by
 shift-invert Arnoldi: one sparse LU of `Kc - σ Mε` at `σ` from `target_frequency` (complex when a material is
-lossy), with KrylovKit's `eigsolve` on `u ↦ (Kc - σ Mε) \\ (Mε u)`.
+lossy), with KrylovKit's `eigsolve` on `u ↦ (Kc - σ Mε) \\ (Mε u)`. Shift-invert ranks modes by distance in
+`λ ∝ ω²`, so it computes at least `2nev` candidates, enough to contain the `nev` nearest in frequency, and
+returns those; `krylovdim` grows with the candidate count.
 
 Edge elements carry the gradients of the nodal hat functions as an exact `λ = 0` null space (one mode per node
-off the PEC facets), which would swamp the shift-invert for any target below the lowest physical mode. Every
+off the PEC facets, less one per connected part of the mesh without PEC), which would swamp the shift-invert for any target below the lowest physical mode. Every
 Krylov vector is therefore projected, along those gradients, onto the discretely divergence-free fields, so the
 null space never enters; eigenvalues with `|λ| < nullspace_tol |σ|` (such as the one constant mode of each
 further disconnected PEC body) are dropped as well.
@@ -95,20 +127,34 @@ function maxwell_eigenmodes(
     # The gradients of the hat functions of nodes off the PEC facets vanish on the PEC edges; project along them
     # with x ↦ x - G (GᵀMG)⁻¹ GᵀM x (transposes, not adjoints: M is complex symmetric when lossy).
     Gfull, dhn = _discrete_gradient(model)
-    nodes = setdiff(1:Ferrite.ndofs(dhn), _pec_dofs(dhn, model.grid, model.pec, Ferrite.Lagrange{RefTetrahedron, 1}()))
-    G = Gfull[free, nodes]
+    G = Gfull[free, _potential_dofs(dhn, model.grid, model.pec)]
     GtM = sparse(transpose(G) * M)
     FG = lu(GtM * G)
     project(x) = x - G * (FG \ (GtM * x))
     op(x) = project(F \ (M * x))
 
     x0 = project(T.(sin.(1.3 .* (1:length(free)) .^ 1.1)))
-    θ, vecs = _eigsolve(KrylovKitEigensolver(), op, x0, nev; krylovdim, tol, maxiter)
-    λ = σ .+ 1 ./ θ
-    lossy || (λ = real.(λ))
-    keep = findall(l -> abs(l) >= nullspace_tol * σ, λ)
+    # Shift-invert finds the modes nearest σ in λ ∝ ω², which favours those below the target. Every mode within
+    # frequency distance d of the target lies within λ distance (2ωt + d) d scale of σ, so the candidates (all
+    # modes within the largest λ distance R found) hold the nev nearest in frequency once R reaches that bound.
+    ωt = 2π * target_frequency
+    howmany = 2nev
+    local λ, vecs, keep
+    while true
+        θ, vecs = _eigsolve(KrylovKitEigensolver(), op, x0, howmany; krylovdim = max(krylovdim, howmany + 20), tol, maxiter)
+        λ = σ .+ 1 ./ θ
+        lossy || (λ = real.(λ))
+        keep = findall(l -> abs(l) >= nullspace_tol * σ, λ)
+        dist = abs.(real.(sqrt.(complex.(λ[keep]) ./ scale)) .- ωt)
+        keep = keep[sortperm(dist)]
+        length(keep) < nev && break
+        d = sort(dist)[nev]
+        maximum(l -> abs(l - σ), λ[keep]) >= (2ωt + d) * d * scale && break
+        howmany >= length(free) && break
+        howmany = min(2howmany, length(free))
+    end
     length(keep) < nev && @warn "maxwell_eigenmodes found $(length(keep)) of $nev modes"
-    keep = keep[sortperm(abs.(θ[keep]); rev = true)][1:min(nev, end)]  # nearest the shift
+    keep = keep[1:min(nev, end)]
     keep = keep[sortperm(real.(λ[keep]))]
 
     omega = sqrt.(complex.(λ[keep])) ./ sqrt(scale)

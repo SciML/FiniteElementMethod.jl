@@ -56,6 +56,19 @@ end
     @test length(modes.frequency) == 4
     # The four exact modes nearest 1.3: 1.2019 (x2) and 1.3017 (x2).
     @test modes.frequency ≈ EXACT[3:6] rtol = 0.02
+    # Nearest in frequency, not in ω²: from 0.98, TM110 (1.118, 0.138 away) beats TE101 (0.833, 0.147 away).
+    @test maxwell_eigenmodes(box_model(3); nev = 1, target_frequency = 0.98).frequency[1] ≈ EXACT[2] rtol = 0.01
+end
+
+@testset "no PEC: the constant potential is removed from the gradient basis" begin
+    # Natural (magnetic-wall) conditions everywhere: the dual of the PEC cube, lowest at √2/2 (x3).
+    single = MaxwellModel(generate_grid(Tetrahedron, (1, 1, 1)); eps0 = 1.0, mu0 = 1.0)
+    @test length(maxwell_eigenmodes(single; nev = 1, target_frequency = 0.4).frequency) == 1
+    f = maxwell_eigenmodes(MaxwellModel(unit_cube(4); eps0 = 1.0, mu0 = 1.0); nev = 3, target_frequency = 0.4).frequency
+    @test f ≈ fill(sqrt(2) / 2, 3) rtol = 0.02
+    # PEC on one face only: the potential is pinned there, so no node is removed and the basis is still full.
+    f = maxwell_eigenmodes(MaxwellModel(unit_cube(4); pec = ["left"], eps0 = 1.0, mu0 = 1.0); nev = 2, target_frequency = 0.4).frequency
+    @test length(f) == 2 && all(>(0.1), f)
 end
 
 @testset "eigenvectors are fields: PEC trace, field_values, residual" begin
