@@ -22,9 +22,11 @@ Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
 
 [weakdeps]
 FerriteGmsh = "4f95f4f8-b27c-4ae5-9a39-ea55e634e36b"
+KrylovKit = "0b1a1467-8014-51b9-945f-bf0ae24f4b77"
 
 [extensions]
 FiniteElementMethodFerriteGmshExt = "FerriteGmsh"
+FiniteElementMethodKrylovKitExt = "KrylovKit"
 
 [compat]
 ADTypes = "1.24"
@@ -35,6 +37,7 @@ Ferrite = "1.7"
 FerriteGmsh = "1.5"
 ForwardDiff = "1.4"
 Gmsh = "0.3"
+KrylovKit = "0.9, 0.10"
 LinearAlgebra = "1.10"
 ModelingToolkit = "11.34"
 LinearSolve = "5"
@@ -58,6 +61,7 @@ julia = "1.10"
 AllocCheck = "9b6a8646-10ed-4001-bbdc-1d2f46dfbb1a"
 FerriteGmsh = "4f95f4f8-b27c-4ae5-9a39-ea55e634e36b"
 Gmsh = "705231aa-382f-11e9-3f0c-b7cb4346fdeb"
+KrylovKit = "0b1a1467-8014-51b9-945f-bf0ae24f4b77"
 LinearSolve = "7ed4a6bd-45f5-4d41-b270-4a48e9bafcae"
 OrdinaryDiffEqBDF = "6ad6398a-0878-4a85-9266-38940aa047c8"
 OrdinaryDiffEqNonlinearSolve = "127b3ac7-2247-4354-8eb6-78cf4e7c58e8"
@@ -67,4 +71,4 @@ SciMLTesting = "09d9d899-5365-40a9-917a-5f67fddea283"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["AllocCheck", "FerriteGmsh", "Gmsh", "LinearSolve", "OrdinaryDiffEqBDF", "OrdinaryDiffEqNonlinearSolve", "Random", "SafeTestsets", "SciMLTesting", "Test"]
+test = ["AllocCheck", "FerriteGmsh", "Gmsh", "KrylovKit", "LinearSolve", "OrdinaryDiffEqBDF", "OrdinaryDiffEqNonlinearSolve", "Random", "SafeTestsets", "SciMLTesting", "Test"]

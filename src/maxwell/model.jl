@@ -143,9 +143,10 @@ function _cell_materials(grid, materials)
     return cell_materials
 end
 
-# The edge dofs on the PEC facets: the tangential traces there are exactly these dofs.
-function _pec_dofs(dh, grid, pec)
-    local_dofs = Ferrite.dirichlet_facetdof_indices(_NEDELEC)
+# The edge dofs on the PEC facets: the tangential traces there are exactly these dofs. With another
+# interpolation `ip` of the single field of `dh`, its dofs on those facets.
+function _pec_dofs(dh, grid, pec, ip = _NEDELEC)
+    local_dofs = Ferrite.dirichlet_facetdof_indices(ip)
     dofs = Set{Int}()
     cell_dofs = zeros(Int, Ferrite.ndofs_per_cell(dh))
     for name in pec, facet in Ferrite.getfacetset(grid, name)
