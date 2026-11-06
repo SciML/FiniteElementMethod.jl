@@ -29,6 +29,16 @@ pec_conditions(Ω, names = Symbol.(CUBE_FACES)) =
     reduce(vcat, [cross(facet_normal(Γ), [E(t, Γ)[c] for c in 1:3]) .~ 0 for Γ in boundarypiece.(Ref(Ω), names)])
 
 relerr(a, b) = norm(a - b) / norm(b)
+# The message of the ArgumentError that `f()` throws.
+function message(f)
+    try
+        f()
+    catch err
+        err isa ArgumentError && return err.msg
+        rethrow()
+    end
+    return "no error"
+end
 
 @testset "curl and the omega keyword" begin
     @test isequal(curl([y, z, x], X), [Differential(y)(x) - Differential(z)(z), Differential(z)(y) - Differential(x)(x), Differential(x)(z) - Differential(y)(y)])
@@ -146,7 +156,8 @@ end
     # ∂ₓ∂ₓ(x Eᶜ) - ∂ₓ(x ∂ₓEᶜ) leaves the flux Eᶜ, which is first order.
     err("equation 1 has a first-order term inside a derivative; $form"; extra = c -> D[1](D[1](x * Ev[c])) - D[1](x * D[1](Ev[c])))
     err("the zeroth-order term of equation 1 couples the components of E; the coefficients of E and its time derivatives must be scalars"; extra = c -> Ev[mod1(c + 1, 3)])
-    err("the coefficient of E differs between the component equations, so the medium is anisotropic; the coefficients must be scalars"; extra = c -> c * Ev[c])
+    anisotropic = "differs between the component equations at x = "
+    @test occursin(anisotropic, message(() -> discretize(maxwell_system(Ω; extra = c -> c * Ev[c]), maxwell_disc(Ω, 1.0))))
     err("the Maxwell front end discretizes linear equations only, but equation 1 is nonlinear in E"; extra = c -> Ev[c]^3)
     err("the Maxwell front end discretizes linear equations only, but equation 1 is nonlinear in E"; nu = 1 + Ev[1]^2)
     err("the coefficient of E is nonlinear in its time derivatives"; a2 = 0, extra = c -> Dt(Ev[c]) * Dt(Ev[c]) / Ev[c])
@@ -154,6 +165,20 @@ end
     err("a coefficient of the Maxwell equation depends on time; with omega the coefficients and sources are time-independent, and a source is the phasor amplitude"; a2 = 1 + t)
     err("ν = 0.0 in cell 1; ν = 1/μ must be nonzero"; nu = 0)
     @test_throws ArgumentError discretize(maxwell_system(Ω; extra = c -> Dt(Dt(Dt(Ev[c])))), maxwell_disc(Ω, 1.0))
+
+    # Terms confined to a small ball around one interior centroid are seen: every centroid is checked.
+    grid = unit_cube(3)
+    Ωf = MeshDomain(grid)
+    cell = getncells(grid) ÷ 2 + 1
+    xc = sum(getcoordinates(grid, cell)) / 4
+    h = ifelse((x - xc[1])^2 + (y - xc[2])^2 + (z - xc[3])^2 < 1.0e-4, 1.0, 0.0)
+    local_term(extra) = message(() -> discretize(maxwell_system(Ωf; extra), maxwell_disc(Ωf, 1.0)))
+    @test local_term(c -> c == 2 ? h * Ev[2] : 0) ==
+        "the coefficient of E differs between the component equations at x = $(Tuple(xc)), so the medium is anisotropic; the coefficients must be scalars"
+    @test local_term(c -> h * D[1](Ev[c])) ==
+        "equation 1 has a first-order term in the derivatives of E, which curl(ν*curl(E)) does not have; $form"
+    @test local_term(c -> c == 1 ? h * Ev[2] : 0) ==
+        "the zeroth-order term of equation 1 couples the components of E; the coefficients of E and its time derivatives must be scalars"
 end
 
 @testset "rejections of the unknowns, spaces and mesh" begin
@@ -187,6 +212,12 @@ end
     )
     two = PDESystem(cc[1:2] .+ Dt.(Dt.(Ev[1:2])) .~ 0, Equation[], [t ∈ Interval(0.0, 1.0), (x, y, z) ∈ Ω], [t, x, y, z], [E(t, x, y, z)], []; name = :two)
     @test_throws ArgumentError("the system has 2 equations for the 3 components of the vector unknown") discretize(two, maxwell_disc(Ω, 1.0))
+
+    for ip in (Nedelec{RefTriangle, 2}(), Nedelec{RefTriangle, 1}())
+        @test_throws ArgumentError("omega supports the space Nedelec{RefTetrahedron, 1}() only, got $ip") discretize(
+            sys, FEMDiscretization(Ω, t; omega = 1.0, spaces = Dict(E => ip))
+        )
+    end
 
     hexes = MeshDomain(generate_grid(Hexahedron, (1, 1, 1)))
     @test_throws ArgumentError("omega needs a mesh of Tetrahedron cells, got Hexahedron") discretize(

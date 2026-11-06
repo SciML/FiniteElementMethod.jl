@@ -33,34 +33,10 @@ end
 # PDEBase's facet normal operator, absent before SciML/PDEBase.jl#164.
 const _FacetNormal = isdefined(PDEBase, :FacetNormal) ? getfield(PDEBase, :FacetNormal) : Nothing
 
-# A fixed, well-spread sequence in (0, 1) for the sample points of the coefficient checks.
+# A fixed, well-spread sequence in (0, 1) for the generic normals of the conductor check.
 _spread(k) = mod(0.5 + k * 0.6180339887498949, 1.0)
 
 const _MAXWELL_FORM = "write the operator as curl(ν*curl(E)) with curl(F, (x, y, z)), as in curl(curl(E, X) / μ, X)"
-
-# Sample points of the coefficient checks: cell centroids spread through the mesh, with generic values of the
-# state, gradient, time and frequency slots.
-function _sample_values(grid, an, pvals, t0, scale; n = 4)
-    (; slots) = an
-    cells = unique(round.(Int, range(1, Ferrite.getncells(grid); length = n)))
-    k = 0
-    next() = (k += 1; _spread(k))
-    return map(cells) do cell
-        x = sum(Ferrite.getcoordinates(grid, cell)) / 4
-        vals = Dict{Any, Any}(unwrap(slots.X[d]) => x[d] for d in 1:3)
-        vals[unwrap(slots.T)] = t0 + next()
-        for (p, value) in zip(slots.P, pvals)
-            vals[unwrap(p)] = value
-        end
-        for s in [slots.U; slots.G]
-            vals[unwrap(s)] = 2 * next() - 1
-        end
-        for s in scale
-            vals[unwrap(s)] = 1 + next()
-        end
-        vals
-    end
-end
 
 function _number(ex, vals)
     value = SymbolicUtils.unwrap_const(unwrap(substitute(ex, vals; fold = Val(true))))
@@ -99,6 +75,8 @@ function _maxwell_components(fields, replaced, disc)
         ArgumentError("omega needs one vector unknown with a Nédélec space and no other spaces, as spaces = Dict(E => Nedelec{RefTetrahedron, 1}())")
     )
     E = only(nedelec)
+    disc.spaces[E] == _NEDELEC ||
+        throw(ArgumentError("omega supports the space Nedelec{RefTetrahedron, 1}() only, got $(disc.spaces[E])"))
     return map(fields) do u
         r = get(replaced, unwrap(u), nothing)
         indexed = r === nothing ? nothing : unwrap(r)
@@ -114,43 +92,64 @@ function _maxwell_components(fields, replaced, disc)
     end
 end
 
-# Field `c` of the analysis is component `c` of E. Equation `e` in slot form tests component `comps[e]`; returns ν, the reaction λ and the source in slots,
-# after checking that the second-order part is curl(ν curl E) and the rest is λ E - f.
-function _recognise_volume(an, samples, s)
+# Field `c` of the analysis is component `c` of E. Equation `e` in slot form tests component `comps[e]`;
+# returns ν, a₀, a₁, a₂ and the sources in slots, after checking at every cell centroid `xs`, and for the
+# frequency slots `s` at (0, 0), (1, 0) and (0, 1), that the second-order part is curl(ν curl E) and the
+# rest is λ E - f with the same scalar ν and λ in every equation. `fixed` substitutes the parameter values.
+function _recognise_volume(an, s, fixed, xs)
     (; slots) = an
     Gs(c, b) = slots.G[(c - 1) * 3 + b]
-    derivs = [[Symbolics.derivative(an.flux[e][a], Gs(c, b)) for a in 1:3, c in 1:3, b in 1:3] for e in 1:3]
     state = [slots.U; slots.G]
     nonlinear(e) = ArgumentError("the Maxwell front end discretizes linear equations only, but equation $e is nonlinear in E")
-    comps = zeros(Int, 3)
-    nus, lambdas, sources = Num[], Num[], Num[]
+    timedep(what) = ArgumentError("$what of the Maxwell equation depends on time; with omega the coefficients and sources are time-independent, and a source is the phasor amplitude")
+    B = [[Symbolics.derivative(an.flux[e][a], Gs(c, b)) for a in 1:3, c in 1:3, b in 1:3] for e in 1:3]
+    dU = [[Symbolics.derivative(an.remainder[e], slots.U[c]) for c in 1:3] for e in 1:3]
+    dG = [[Symbolics.derivative(an.remainder[e], g) for g in slots.G] for e in 1:3]
+    dF = [[Symbolics.derivative(an.flux[e][a], slots.U[c]) for a in 1:3, c in 1:3] for e in 1:3]
+    parts(e) = [vec(B[e]); dU[e]; dG[e]; vec(dF[e])]
     for e in 1:3
-        any(ex -> _depends(unwrap(ex), state), derivs[e]) && throw(nonlinear(e))
-        remainder = an.remainder[e]
-        dU = [Symbolics.derivative(remainder, slots.U[c]) for c in 1:3]
-        dG = [Symbolics.derivative(remainder, g) for g in slots.G]
-        any(ex -> _depends(unwrap(ex), state), [dU; dG]) && throw(nonlinear(e))
-        flux0 = [substitute(an.flux[e][a], Dict(unwrap(g) => 0 for g in slots.G)) for a in 1:3]
-        trace = [sum(derivs[e][a, c, a] for a in 1:3) for c in 1:3]
-        for vals in samples
-            B = [_number(ex, vals) for ex in derivs[e]]
-            tr = [_number(ex, vals) for ex in trace]
-            λU = [_number(ex, vals) for ex in dU]
-            scale = max(maximum(abs, B), maximum(abs, λU), 1.0e-300)
-            tol = 1.0e-10 * scale
-            if comps[e] == 0
-                comps[e] = maximum(abs, tr) > tol ? argmax(abs.(tr)) : argmax(abs.(λU))
-                maximum(abs, tr) > tol || maximum(abs, λU) > tol ||
-                    throw(ArgumentError("equation $e has neither a curl-curl nor a reaction term in E"))
-            end
+        any(ex -> _depends(unwrap(ex), state), parts(e)) && throw(nonlinear(e))
+        any(ex -> _depends(unwrap(ex), [slots.T]), parts(e)) && throw(timedep("a coefficient"))
+        any(_depends(unwrap(Symbolics.derivative(ex, si)), s) for ex in dU[e], si in s) &&
+            throw(ArgumentError("the coefficient of E is nonlinear in its time derivatives"))
+    end
+    sources = [-substitute(an.remainder[e], Dict(unwrap(g) => 0 for g in state)) for e in 1:3]
+    any(f -> _depends(unwrap(f), [slots.T]), sources) && throw(timedep("a source"))
+
+    values_at = Symbolics.build_function(
+        [substitute(ex, fixed) for e in 1:3 for ex in parts(e)], slots.X..., s...; expression = Val(false)
+    )[1]
+    points = [(x, sv) for x in xs for sv in ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))]
+    function unpack(x, sv)
+        v = _real_values(values_at(x..., sv...), "a coefficient")
+        return map(0:2) do k
+            w = v[(48k + 1):(48k + 48)]
+            (B = reshape(w[1:27], 3, 3, 3), λU = w[28:30], dG = w[31:39], dF = reshape(w[40:48], 3, 3))
+        end
+    end
+    comps = zeros(Int, 3)
+    for (x, sv) in points, (e, q) in enumerate(unpack(x, sv))
+        all(!iszero, comps) && break
+        comps[e] == 0 || continue
+        tr = [sum(q.B[a, c, a] for a in 1:3) for c in 1:3]
+        tol = 1.0e-10 * max(maximum(abs, q.B), maximum(abs, q.λU), 1.0e-300)
+        comps[e] = maximum(abs, tr) > tol ? argmax(abs.(tr)) : maximum(abs, q.λU) > tol ? argmax(abs.(q.λU)) : 0
+    end
+    e0 = findfirst(iszero, comps)
+    e0 === nothing || throw(ArgumentError("equation $e0 has neither a curl-curl nor a reaction term in E"))
+    sort(comps) == 1:3 || throw(ArgumentError("the equations test the components $comps of E; write one equation per component"))
+    for (x, sv) in points
+        nus, lambdas = zeros(3), zeros(3)
+        for (e, q) in enumerate(unpack(x, sv))
             ce = comps[e]
             other = mod1(ce + 1, 3)
-            α, β, γ = B[other, ce, other], B[other, other, ce], B[ce, other, other]
+            tol = 1.0e-10 * max(maximum(abs, q.B), maximum(abs, q.λU), 1.0e-300)
+            α, β, γ = q.B[other, ce, other], q.B[other, other, ce], q.B[ce, other, other]
             expect = [α * (c == ce) * (a == b) + β * (b == ce) * (a == c) + γ * (a == ce) * (c == b) for a in 1:3, c in 1:3, b in 1:3]
             abs(γ) > tol && throw(
                 ArgumentError("equation $e has a grad div E term, which has no meaning on Nédélec elements; $_MAXWELL_FORM")
             )
-            maximum(abs, B - expect) > tol && throw(
+            maximum(abs, q.B - expect) > tol && throw(
                 ArgumentError("the second-order part of equation $e is anisotropic or couples the components of E differently from curl(ν*curl(E)); $_MAXWELL_FORM")
             )
             abs(β) <= tol && abs(α) > tol && throw(
@@ -159,49 +158,25 @@ function _recognise_volume(an, samples, s)
             abs(α + β) > tol && throw(
                 ArgumentError("the second-order part of equation $e adds a component-wise Laplacian of E to curl(ν*curl(E)), which is not H(curl)-conforming; $_MAXWELL_FORM")
             )
-            any(ex -> abs(_number(ex, vals)) > tol, flux0) && throw(
-                ArgumentError("equation $e has a first-order term inside a derivative; $_MAXWELL_FORM")
-            )
-            any(ex -> abs(_number(ex, vals)) > tol, dG) && throw(
+            maximum(abs, q.dF) > tol && throw(ArgumentError("equation $e has a first-order term inside a derivative; $_MAXWELL_FORM"))
+            maximum(abs, q.dG) > tol && throw(
                 ArgumentError("equation $e has a first-order term in the derivatives of E, which curl(ν*curl(E)) does not have; $_MAXWELL_FORM")
             )
-            maximum(abs, λU[[c for c in 1:3 if c != ce]]; init = 0.0) > tol && throw(
+            maximum(abs, q.λU[[c for c in 1:3 if c != ce]]) > tol && throw(
                 ArgumentError("the zeroth-order term of equation $e couples the components of E; the coefficients of E and its time derivatives must be scalars")
             )
+            nus[e], lambdas[e] = β, q.λU[ce]
         end
-        ce = comps[e]
-        push!(nus, derivs[e][mod1(ce + 1, 3), mod1(ce + 1, 3), ce])
-        push!(lambdas, dU[ce])
-        push!(sources, -substitute(remainder, Dict(unwrap(g) => 0 for g in state)))
+        for (name, v) in (("ν", nus), ("the coefficient of E", lambdas))
+            maximum(abs, v .- v[1]) <= 1.0e-10 * maximum(abs, v) || throw(
+                ArgumentError("$name differs between the component equations at x = $(Tuple(x)), so the medium is anisotropic; the coefficients must be scalars")
+            )
+        end
     end
-    sort(comps) == 1:3 || throw(ArgumentError("the equations test the components $comps of E; write one equation per component"))
-    for vals in samples, (name, exs) in (("ν", nus), ("the coefficient of E", lambdas))
-        v = [_number(ex, vals) for ex in exs]
-        maximum(abs, v .- v[1]) <= 1.0e-10 * maximum(abs, v) || throw(
-            ArgumentError("$name differs between the component equations, so the medium is anisotropic; the coefficients must be scalars")
-        )
-    end
-    order = invperm(comps)
-    λ = lambdas[1]
-    zero_s = Dict(unwrap(x) => 0 for x in s)
-    a = (
-        a0 = substitute(λ, zero_s),
-        a1 = Symbolics.derivative(λ, s[1]), a2 = Symbolics.derivative(λ, s[2]),
-    )
-    for vals in samples
-        v = Dict(vals)
-        lin = _number(a.a0, v) + v[unwrap(s[1])] * _number(a.a1, v) + v[unwrap(s[2])] * _number(a.a2, v)
-        abs(_number(λ, v) - lin) <= 1.0e-10 * max(abs(lin), 1.0) ||
-            throw(ArgumentError("the coefficient of E is nonlinear in its time derivatives"))
-    end
-    nu = nus[1]
-    sources = sources[order]
-    for (what, ex) in ["ν" => nu; ["a coefficient" => c for c in a]; ["a source" => f for f in sources]]
-        _depends(unwrap(ex), [slots.T]) && throw(
-            ArgumentError("$what of the Maxwell equation depends on time; with omega the coefficients and sources are time-independent, and a source is the phasor amplitude")
-        )
-    end
-    return (; nu, a..., sources)
+    ce = comps[1]
+    nu, λ = B[1][mod1(ce + 1, 3), mod1(ce + 1, 3), ce], dU[1][ce]
+    a = (a0 = substitute(λ, Dict(unwrap(x) => 0 for x in s)), a1 = Symbolics.derivative(λ, s[1]), a2 = Symbolics.derivative(λ, s[2]))
+    return (; nu, a..., sources = sources[invperm(comps)])
 end
 
 # n × E = 0 conditions: each residual is linear in the traces and the normal, tangential (C n = 0) and of rank 2
@@ -319,20 +294,18 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
     js = [findfirst(isequal(unwrap(p)), ctx.params) for p in s]
     slot_s = an.slots.P[js]
     keep = setdiff(eachindex(ctx.params), js)
-    t0 = first(pv.intervals[pv.time])
-    samples = _sample_values(grid, an, pvals, t0, slot_s)
-    coeffs = _recognise_volume(an, samples, slot_s)
+    fixed = Dict{Any, Any}(unwrap(an.slots.P[j]) => pvals[j] for j in keep)
+    centroids = [sum(Ferrite.getcoordinates(grid, cell)) / 4 for cell in 1:Ferrite.getncells(grid)]
+    coeffs = _recognise_volume(an, slot_s, fixed, centroids)
     pec = _recognise_pec(sys.bcs, comps, pvals[keep], (; ops, params = ctx.params[keep]), disc.domain)
 
     # Compile the coefficients and sources as functions of the mesh coordinate.
-    fixed = Dict{Any, Any}(unwrap(an.slots.P[j]) => pvals[j] for j in keep)
     X = an.slots.X
     compile(exs) = Symbolics.build_function([substitute(ex, fixed) for ex in exs], X...; expression = Val(false))[1]
     coefficient_at = compile([coeffs.nu, coeffs.a0, coeffs.a1, coeffs.a2])
     source_at = compile(coeffs.sources)
     ω = disc.omega
-    materials = map(1:Ferrite.getncells(grid)) do cell
-        x = sum(Ferrite.getcoordinates(grid, cell)) / length(Ferrite.getcoordinates(grid, cell))
+    materials = map(enumerate(centroids)) do (cell, x)
         nu, a0, a1, a2 = _real_values(coefficient_at(x...), "a coefficient")
         iszero(nu) && throw(ArgumentError("ν = $nu in cell $cell; ν = 1/μ must be nonzero"))
         MaxwellMaterial(; eps_r = a2 - a0 / ω^2, mu_r = 1 / nu, sigma = a1)
