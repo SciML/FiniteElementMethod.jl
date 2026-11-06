@@ -8,7 +8,7 @@ PDEBase.contains_point(grid::Ferrite.Grid, x) = _contains_point(grid, x)
     FEMDiscretization(Ω::MeshDomain, t = nothing; spaces = Dict(), regions = Dict(),
         quadrature = nothing, test_space = Galerkin(), ibp = Dict(), pairing = Dict(),
         codegen = :numeric, dirichlet = :algebraic, algebraic_abstol = :auto, natural = (), boundary_check = :warn,
-        omega = nothing, kwargs...)
+        omega = nothing, ports = [], kwargs...)
 
 Finite-element discretization of a `PDESystem` whose spatial domain is the mesh domain `Ω`
 (of a `Ferrite.Grid`), with time variable `t`. `discretize(pdesys, disc)` assembles the
@@ -81,6 +81,9 @@ gives a `PDENoTimeSolution`.
     see [`maxwell_model`](@ref) for the equations it accepts. `omega` must be positive and finite and
     needs the time variable `t`, which the `PDESystem` is written in; `test_space`, `regions`, `ibp` and
     `pairing` do not apply to it and must keep their defaults. A Nédélec space needs `omega`.
+  - `ports`: [`WavePort`](@ref)s of the frequency-domain Maxwell path (with `omega`), on boundary pieces that
+    have no condition in the `PDESystem`; [`solve_sweep`](@ref) drives them, and `discretize` treats them as
+    matched terminations.
   - `codegen = :mtk` is reserved and raises; remaining keywords are
     passed to the `DAEProblem` (or `NonlinearProblem`), where a keyword given at the
     `discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate`, `name` and `parameters` are set
@@ -118,6 +121,7 @@ struct FEMDiscretization{T} <: PDEBase.AbstractMeshDiscretization
     boundary_check::Symbol
     algebraic_abstol::Union{Symbol, Nothing, Float64}
     omega::Union{Nothing, Float64}
+    ports::Vector{WavePort}
     kwargs::NamedTuple
 end
 
@@ -151,7 +155,7 @@ function FEMDiscretization(
         domain::PDEBase.MeshDomain, time = nothing; spaces = Dict(), regions = Dict(), quadrature = nothing,
         test_space = Galerkin(), ibp = Dict(), pairing = Dict(), codegen::Symbol = :numeric,
         dirichlet::Symbol = :algebraic, algebraic_abstol = :auto, natural = (), boundary_check::Symbol = :warn,
-        omega = nothing, kwargs...
+        omega = nothing, ports = WavePort[], kwargs...
     )
     domain.mesh isa Ferrite.Grid ||
         throw(ArgumentError("FEMDiscretization needs a MeshDomain of a Ferrite.Grid, got a mesh of type $(typeof(domain.mesh))"))
@@ -178,12 +182,16 @@ function FEMDiscretization(
     )
     _check_reserved(kwargs)
     _check_omega(omega, time, spaces, test_space, regions, ibp, pairing)
+    all(p -> p isa WavePort, ports) ||
+        throw(ArgumentError("ports must be WavePorts, as ports = [WavePort(Γ; a_direction = (1, 0, 0))]; got $(repr(ports))"))
+    omega === nothing && !isempty(ports) &&
+        throw(ArgumentError("ports belong to the frequency-domain Maxwell path; give the angular frequency omega"))
     return FEMDiscretization{typeof(time)}(
         domain, time, Dict{Any, Ferrite.Interpolation}(_field_op(k) => ip for (k, ip) in spaces),
         Dict{Any, Any}(_field_op(k) => r for (k, r) in regions),
         quadrature, test_space, Dict{Any, StrongForm.IBPPolicy}(ibp), Dict{Equation, Any}(pairing),
         codegen, dirichlet, unique(natural), boundary_check, algebraic_abstol isa Real ? Float64(algebraic_abstol) : algebraic_abstol,
-        omega === nothing ? nothing : Float64(omega), NamedTuple(kwargs)
+        omega === nothing ? nothing : Float64(omega), WavePort[ports...], NamedTuple(kwargs)
     )
 end
 
@@ -237,6 +245,6 @@ PDEBase.supported_conditions(::FEMDiscretization) = PDEBase.SupportedConditions(
       - Where two Dirichlet pieces of one field meet, the condition listed last in the `PDESystem` wins.
       - Every field with a time derivative needs an initial condition, linear in that one field and finite at every node.
       - Time-dependent mass or stiffness coefficients and `codegen = :mtk` are rejected.
-      - With `omega`, a time-domain curl-curl equation for a 3-component unknown in a Nédélec space becomes a frequency-domain `LinearProblem` (see `maxwell_model`); its only boundary condition is the perfect conductor `n × E = 0`, other pieces get `n × (ν curl E) = 0`, and its coefficients are real.
+      - With `omega`, a time-domain curl-curl equation for a 3-component unknown in a Nédélec space becomes a frequency-domain `LinearProblem` (see `maxwell_model`); its boundary conditions are the perfect conductor `n × E = 0` and the matched first-order absorbing condition `n × (ν curl E) = -sqrt(ε/μ) n × (n × ∂ₜE)` on lossless cells, wave ports are the `ports` keyword, other pieces get `n × (ν curl E) = 0`, and its coefficients are real.
     """
 )

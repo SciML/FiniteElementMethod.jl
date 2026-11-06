@@ -13,7 +13,7 @@ using DiffEqBase: BrownFullBasicInit
 using DomainSets: DomainSets
 using Ferrite: Ferrite, Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexahedron, curl
 using ForwardDiff: ForwardDiff
-using LinearAlgebra: dot, mul!, norm, rank
+using LinearAlgebra: cross, dot, lu, lu!, mul!, norm, rank, svd
 using ModelingToolkit: ModelingToolkit, @parameters, @variables, Differential, MTKParameters,
     ProblemTypeCtx, System, complete, getmetadata
 using NonlinearSolveFirstOrder: NewtonRaphson
@@ -43,6 +43,7 @@ export FieldInfo, FEMMetadata, piece_nodes, normal_flux, write_vtk, facet_dofs, 
 export Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexahedron
 
 using PDEBase: StrongForm, MeshDomain, Region, boundarypiece, boundarypieces, NormalDerivative
+include("maxwell/ports.jl")  # before the discretization, which holds WavePorts
 include("discretization.jl")
 include("frontend.jl")
 _is_normal_derivative(op) = op isa NormalDerivative
@@ -53,9 +54,11 @@ export MeshDomain, Region, boundarypiece, boundarypieces, NormalDerivative
 # from a PDESystem without the scalar weak form.
 include("maxwell/model.jl")
 include("maxwell/driven.jl")
+include("maxwell/sweep.jl")
 include("maxwell/frontend.jl")
 export MaxwellMaterial, MaxwellModel, MaxwellTerm, maxwell_operator, maxwell_operator!
 export MaxwellSolution, driven_problem, solve_driven, field_values
+export WavePort, MaxwellSweep, solve_sweep
 export curl, facet_normal, maxwell_model
 
 include("precompile.jl")

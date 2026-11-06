@@ -33,7 +33,7 @@ Restrictions of this release:
   - Where two Dirichlet pieces of one field meet, the condition listed last in the `PDESystem` wins.
   - Every field with a time derivative needs an initial condition, linear in that one field and finite at every node.
   - Time-dependent mass or stiffness coefficients and `codegen = :mtk` are rejected.
-  - With `omega`, a time-domain curl-curl equation for a 3-component unknown in a Nédélec space becomes a frequency-domain `LinearProblem` (see `maxwell_model`); its only boundary condition is the perfect conductor `n × E = 0`, other pieces get `n × (ν curl E) = 0`, and its coefficients are real.
+  - With `omega`, a time-domain curl-curl equation for a 3-component unknown in a Nédélec space becomes a frequency-domain `LinearProblem` (see `maxwell_model`); its boundary conditions are the perfect conductor `n × E = 0` and the matched first-order absorbing condition `n × (ν curl E) = -sqrt(ε/μ) n × (n × ∂ₜE)` on lossless cells, wave ports are the `ports` keyword, other pieces get `n × (ν curl E) = 0`, and its coefficients are real.
 
 "Time-dependent" means boundary data that varies with time, for every condition kind.
 
