@@ -64,7 +64,7 @@ for the equivalent `MaxwellModel` (in units with `ε0 = μ0 = 1`). The operator 
 and the perfect conductor with [`facet_normal`](@ref), which needs a PDEBase with facet normals.
 
 ```julia
-using FiniteElementMethod, Ferrite, ModelingToolkit, LinearAlgebra, LinearSolve
+using FiniteElementMethod, Ferrite, ModelingToolkit, DomainSets, LinearAlgebra, LinearSolve
 grid = generate_grid(Tetrahedron, (8, 8, 8), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0))
 Ω = MeshDomain(grid)
 @parameters x y z t
@@ -81,7 +81,38 @@ field_values(MaxwellSolution(model, omega, sol.u), [Vec(0.5, 0.5, 0.5)]).E
 ```
 
 Coefficients are real, so a complex permittivity `ε' - iε''` is only available on the operator-level
-`MaxwellModel`. Absorbing boundaries and ports are not yet part of the `PDESystem` path.
+`MaxwellModel`.
+
+### Absorbing boundaries, ports and sweeps
+
+The first-order absorbing condition is written in its time-domain form,
+`n × (ν ∇ × E) = -sqrt(ε/μ) n × (n × ∂ₜE)` with `ε = a₂` and `ν = 1/μ` of the cells next to the piece. With
+`∂ₜ = iω` and `ε0 = μ0 = 1` this is the model's `n × (μr⁻¹ ∇ × E) = -i k0 sqrt(εr/μr) n × (n × E)`, so the
+piece goes to `absorbing`. Any equivalent set of equations is accepted; at the actual normal of every facet the
+conditions must span exactly the two tangential equations of this one, and a different coefficient of
+`curl E`, a different impedance, the opposite sign or an added term is an error. The cells next to the piece
+must be lossless (`a₁ = a₀ = 0`); a lossy one has no time-domain form here and needs `MaxwellModel`'s
+`absorbing` keyword.
+
+A [`WavePort`](@ref) is modal data rather than a local condition, so ports are the `ports` keyword of
+`FEMDiscretization`, on pieces without a condition in the `PDESystem`. `discretize` treats them as matched
+terminations of the source problem; `solve_sweep(pdesys, disc, omegas)` drives them and returns the scattering
+matrices, as `solve_sweep(maxwell_model(pdesys, disc).model, omegas)` does. With ports `a₀` must be zero, so
+that the model does not depend on `omega`, and a sweep rejects a volume source.
+
+```julia
+grid = generate_grid(Tetrahedron, (12, 6, 15), Vec(0.0, 0.0, 0.0), Vec(22.86, 10.16, 30.0))  # WR-90, mm
+Ω = MeshDomain(grid)
+n, Eb = facet_normal(boundarypiece(Ω, :top)), [E(t, boundarypiece(Ω, :top))[c] for c in 1:3]
+abc = cross(n, curl(Eb, X)) .~ -cross(n, cross(n, Dt.(Eb)))
+pec = reduce(vcat, [cross(facet_normal(Γ), [E(t, Γ)[c] for c in 1:3]) .~ 0 for Γ in boundarypiece.(Ref(Ω), [:left, :right, :front, :back])])
+eqs = [curl(curl(Ev, X), X)[c] + Dt(Dt(Ev[c])) ~ 0 for c in 1:3]
+@named sys = PDESystem(eqs, [pec; abc], [t ∈ Interval(0.0, 1.0), (x, y, z) ∈ Ω], [t, x, y, z], [E(t, x, y, z)])
+k0 = 2π * 10.0e9 / FiniteElementMethod.C0 * 1.0e-3  # 10 GHz in rad/mm
+ports = [WavePort(boundarypiece(Ω, :bottom); a_direction = (1, 0, 0))]
+disc = FEMDiscretization(Ω, t; omega = k0, spaces = Dict(E => Nedelec{RefTetrahedron, 1}()), ports)
+solve_sweep(sys, disc, k0 .* [0.8, 1.0, 1.2]).S  # |S11| ≈ 0.14 at 10 GHz, the reflection of the absorbing end
+```
 
 ```@docs
 curl(::AbstractVector, ::NTuple{3, Any})
