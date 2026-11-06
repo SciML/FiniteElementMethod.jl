@@ -46,5 +46,10 @@ versions = ["lts", "1"]
 in_all = false
 versions = ["lts", "1"]
 
+# Device kernels on KernelAbstractions.CPU() and JLArrays; Julia 1 only, for the `[sources]` path in test/GPU.
+[GPU]
+in_all = false
+versions = ["1"]
+
 [NavierStokes]
 versions = ["lts", "1", "pre"]

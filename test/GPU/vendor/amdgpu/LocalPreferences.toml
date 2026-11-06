@@ -1,0 +1,3 @@
+[AMDGPU]
+soft_memory_limit = "6 GiB"
+hard_memory_limit = "8 GiB"
