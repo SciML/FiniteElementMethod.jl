@@ -459,7 +459,12 @@ _state_count(::CellCoeffs, ::Val{NF}, ::NTuple{NW}) where {NF, NW} = Val(NF * (N
 _trial_coeffs(::Nothing, ψ::NTuple{NW}, ::Val{NS}) where {NW, NS} = nothing
 _test_contract(::Nothing, ψ::NTuple{NW}) where {NW} = StructuralZero()
 
-function _kernel!(op::LinearOp, blk::LinearBlock, ::Val{E}, vals, xs, ranges::NTuple{NF}, p, t) where {E, NF}
+# The element routines write only the element buffers they are passed (arrays or views, e.g. one worker's slab of a
+# 3D array) and read only the values, coordinates and dof ranges of one cell, so a device kernel can call them as
+# the host driver does.
+_kernel!(op::LinearOp, k, e::Val, vals, xs, ranges, p, t) = _linear_element!(op.Me, op.Ke, op.Fe, k, e, vals, xs, ranges, p, t)
+
+function _linear_element!(Me, Ke, Fe, blk::LinearBlock, ::Val{E}, vals, xs, ranges::NTuple{NF}, p, t) where {E, NF}
     rows = ranges[E]
     isempty(rows) && return nothing
     ve = vals[E]
@@ -471,10 +476,10 @@ function _kernel!(op::LinearOp, blk::LinearBlock, ::Val{E}, vals, xs, ranges::NT
         cM, cK, cF = _coeffs(blk.mass, X, t, N, p, hK), _coeffs(blk.bilinear, X, t, N, p, hK), _coeffs(blk.source, X, t, N, p, hK)
         for i in eachindex(rows)
             ψ = _test_basis(ve, q, i)
-            op.Fe[rows[i]] -= _test_contract(cF, ψ) * dΩ
-            _mass_row!(op.Me, rows[i], ranges, _trial_coeffs(cM, ψ, Val(NF)), vals, q, dΩ)
+            Fe[rows[i]] -= _test_contract(cF, ψ) * dΩ
+            _mass_row!(Me, rows[i], ranges, _trial_coeffs(cM, ψ, Val(NF)), vals, q, dΩ)
             tt = _trial_coeffs(cK, ψ, _state_count(blk.bilinear, Val(NF), ψ))
-            _state_row!(op.Ke, rows[i], ranges, tt, vals, q, dΩ, blk.bilinear, Val(length(ψ) - 1))
+            _state_row!(Ke, rows[i], ranges, tt, vals, q, dΩ, blk.bilinear, Val(length(ψ) - 1))
         end
     end
     return nothing
@@ -482,12 +487,12 @@ end
 
 # A kernel without `coeffs`: evaluate `f` with a unit trial function, exact because these kinds are linear in the
 # state.
-function _kernel!(op::LinearOp, k::KernelSpec, ::Val{E}, vals, xs, ranges::NTuple{NF}, p, t) where {E, NF}
+function _linear_element!(Me, Ke, Fe, k::KernelSpec, ::Val{E}, vals, xs, ranges::NTuple{NF}, p, t) where {E, NF}
     rows = ranges[E]
     isempty(rows) && return nothing
     ve = vals[E]
     mass = k.kind === :mass
-    Ae = mass ? op.Me : op.Ke
+    Ae = mass ? Me : Ke
     U0 = ntuple(_ -> 0.0, Val(NF))
     for q in 1:Ferrite.getnquadpoints(ve)
         dΩ = Ferrite.getdetJdV(ve, q)
@@ -497,7 +502,7 @@ function _kernel!(op::LinearOp, k::KernelSpec, ::Val{E}, vals, xs, ranges::NTupl
         for i in eachindex(rows)
             V, W = Ferrite.shape_value(ve, q, i), Ferrite.shape_gradient(ve, q, i)
             if k.kind === :source
-                op.Fe[rows[i]] -= k.f(U0, G0, U0, V, W, X, t, N, p) * dΩ
+                Fe[rows[i]] -= k.f(U0, G0, U0, V, W, X, t, N, p) * dΩ
                 continue
             end
             _fields!(_unit_trial_block!, Val(NF), Ae, rows[i], ranges, vals, k, mass, (V, W, X, t, N, p), q, dΩ)
@@ -547,11 +552,16 @@ _field_gradients(::Tuple{}, q, u, ::Tuple{}, X) = ()
     return (_field_gradient(first(vals), q, u, first(ranges), X), _field_gradients(Base.tail(vals), q, u, Base.tail(ranges), X)...)
 end
 
-function _kernel!(op::NonlinearOp, k::KernelSpec, ::Val{E}, vals, xs, ranges::NTuple{NF}, p, t) where {E, NF}
+function _kernel!(op::NonlinearOp, k, e::Val, vals, xs, ranges, p, t)
+    Je = op.aJ === nothing ? nothing : op.Je
+    return _nonlinear_element!(Je, op.re, op.u_elem, k, e, vals, xs, ranges, p, t)
+end
+
+# `Je === nothing` computes the residual only.
+function _nonlinear_element!(Je, re, u_elem, k::KernelSpec, ::Val{E}, vals, xs, ranges::NTuple{NF}, p, t) where {E, NF}
     rows = ranges[E]
     isempty(rows) && return nothing
     ve = vals[E]
-    u_elem = op.u_elem
     Ud0 = ntuple(_ -> 0.0, Val(NF))
     for q in 1:Ferrite.getnquadpoints(ve)
         dΩ = Ferrite.getdetJdV(ve, q)
@@ -563,12 +573,12 @@ function _kernel!(op::NonlinearOp, k::KernelSpec, ::Val{E}, vals, xs, ranges::NT
         G = ntuple(m -> grads[cld(m, DIM)][mod1(m, DIM)], Val(NF * length(X)))
         for i in eachindex(rows)
             V, W = Ferrite.shape_value(ve, q, i), Ferrite.shape_gradient(ve, q, i)
-            op.re[rows[i]] += k.f(U, G, Ud0, V, W, X, t, N, p) * dΩ
-            op.aJ === nothing && continue
+            re[rows[i]] += k.f(U, G, Ud0, V, W, X, t, N, p) * dΩ
+            Je === nothing && continue
             # promote: a hand-built tangent may return literal `0` (Int) entries, and indexing a mixed tuple with a
             # runtime index allocates
             dI = promote(k.tangent(U, G, Ud0, V, W, X, t, N, p)...)
-            _fields!(_tangent_block!, Val(NF), op.Je, rows[i], ranges, vals, dI, q, dΩ)
+            _fields!(_tangent_block!, Val(NF), Je, rows[i], ranges, vals, dI, q, dΩ)
         end
     end
     return nothing
