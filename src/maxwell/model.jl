@@ -44,7 +44,7 @@ end
 
 """
     MaxwellModel(grid; materials = Dict(), pec = String[], absorbing = String[], ports = WavePort[],
-                 length_scale = 1.0, eps0 = EPS0, mu0 = MU0, quadrature = 2)
+                 pml = nothing, length_scale = 1.0, eps0 = EPS0, mu0 = MU0, quadrature = 2)
 
 The time-harmonic electric-field model on a Ferrite `grid` of `Tetrahedron` cells, with the field `:E` in
 `Nedelec{RefTetrahedron, 1}`. The equation, for fields varying as `exp(+iωt)`, is
@@ -54,7 +54,8 @@ The time-harmonic electric-field model on a Ferrite `grid` of `Tetrahedron` cell
 with `n × E = 0` on the facet sets named in `pec` and the natural condition `n × (μr⁻¹ ∇ × E) = 0` on the
 rest of the boundary, except for the facet sets named in `absorbing`, which carry the first-order
 Silver-Müller absorbing condition `n × (μr⁻¹ ∇ × E) = -i k0 sqrt(εc/μr) n × (n × E)` with `εc = εr - iσ/(ωε0)`, and the
-[`WavePort`](@ref)s in `ports`.
+[`WavePort`](@ref)s in `ports`. `pml` is `nothing` or a [`CartesianPML`](@ref), whose cells become an anisotropic
+absorbing layer.
 
 `materials` maps cell set names of `grid` (as `FerriteGmsh.togrid` makes from Gmsh physical groups) to
 [`MaxwellMaterial`](@ref)s; cells in no named set are vacuum, and a cell in two named sets is an error.
@@ -95,7 +96,7 @@ end
 
 function MaxwellModel(
         grid::Ferrite.Grid; materials = Dict{String, MaxwellMaterial}(), pec = String[], absorbing = String[],
-        ports = WavePort[], length_scale::Real = 1.0, eps0::Real = EPS0, mu0::Real = MU0, quadrature::Int = 2
+        ports = WavePort[], pml = nothing, length_scale::Real = 1.0, eps0::Real = EPS0, mu0::Real = MU0, quadrature::Int = 2
     )
     Ferrite.getcelltype(grid) === Ferrite.Tetrahedron ||
         throw(ArgumentError("MaxwellModel needs a grid of Tetrahedron cells, got $(Ferrite.getcelltype(grid))"))
@@ -126,6 +127,10 @@ function MaxwellModel(
         MaxwellTerm(blocks.sigma, ω -> im * mu0 * L2 * ω),
     ]
     L = float(length_scale)
+    if pml !== nothing
+        boundary_sets = ("absorbing" => absorbing, "wave port" => [port.facetset for port in ports])
+        append!(terms, _pml_terms(pml, dh, cv, blocks.curlcurl, cell_materials, mu0, eps0, L, boundary_sets))
+    end
     isempty(absorbing) || append!(terms, _absorbing_terms(dh, blocks.curlcurl, absorbing, cell_materials, mu0, eps0, L))
     port_data = WavePortData[_wave_port(port, dh, blocks.curlcurl, cell_materials, L, ch.prescribed_dofs) for port in ports]
     append!(terms, [_port_term(data, mu0 * eps0, L) for data in port_data])
