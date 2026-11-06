@@ -7,7 +7,8 @@ PDEBase.contains_point(grid::Ferrite.Grid, x) = _contains_point(grid, x)
 """
     FEMDiscretization(Ω::MeshDomain, t = nothing; spaces = Dict(), regions = Dict(),
         quadrature = nothing, test_space = Galerkin(), ibp = Dict(), pairing = Dict(),
-        codegen = :numeric, dirichlet = :algebraic, algebraic_abstol = :auto, natural = (), boundary_check = :warn, kwargs...)
+        codegen = :numeric, dirichlet = :algebraic, algebraic_abstol = :auto, natural = (), boundary_check = :warn,
+        backend = nothing, precision = nothing, assembly = :colored, kwargs...)
 
 Finite-element discretization of a `PDESystem` whose spatial domain is the mesh domain `Ω`
 (of a `Ferrite.Grid`), with time variable `t`. `discretize(pdesys, disc)` assembles the
@@ -74,6 +75,27 @@ gives a `PDENoTimeSolution`.
     still returns full fields, with `g` at the prescribed nodes, through `sol[u]`,
     `sol(t, x, y)`, traces and `write_vtk`; only `sol.original_sol` and the array unknowns
     hold the free dofs alone. `:algebraic` is recommended.
+  - `backend`: a KernelAbstractions backend, such as `ROCBackend()` or `KernelAbstractions.CPU()`, on
+    which the mass matrix, the stiffness matrix and the load are assembled; `nothing` (default)
+    assembles on the host. Only the assembly runs on the device: the operators are copied back as
+    `Float64` `SparseMatrixCSC`s, `discretize` returns the same host problem as without a backend,
+    and its solve runs on the host. It needs KernelAbstractions, Adapt, GPUArrays and GPUArraysCore
+    loaded (with the vendor package, e.g. AMDGPU for `ROCBackend()`, or GenericSparseArrays for a
+    backend without one) and a Ferrite with GPU support (Ferrite.jl PR #1496); otherwise the
+    constructor or `discretize` raises an `ArgumentError` saying what to load. Device assembly covers
+    volume terms of linear problems with sources constant in time and Dirichlet conditions (constant
+    or time-dependent, applied on the host); facet terms (Neumann and Robin conditions), nonlinear
+    terms, time-dependent sources, `SUPG` and `dirichlet = :eliminate` raise an `ArgumentError` naming
+    the feature. Generated kernels that call registered functions need those functions to be
+    GPU-compilable. `KernelAbstractions.CPU()` and JLArrays are tested in CI, AMDGPU is tested on a
+    Radeon 8060S (gfx1151), and CUDA, oneAPI and Metal are untested.
+  - `precision`: the floating-point type of device assembly, `Float32` or `Float64`; `nothing`
+    (default) is `Float64`. `Float32` operators agree with the host assembly to about `1e-6`
+    relative before they are converted to `Float64`. It needs a `backend`.
+  - `assembly`: how cells are scattered on the device. `:colored` (default) makes one launch per
+    color of cells that share no dof, so the result is deterministic; `:atomic` makes one launch
+    per `SubDofHandler` with atomic additions, whose summation order, and so the rounding, can vary
+    between runs.
   - `codegen = :mtk` is reserved and raises; remaining keywords are
     passed to the `DAEProblem` (or `NonlinearProblem`), where a keyword given at the
     `discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate`, `name` and `parameters` are set
@@ -110,6 +132,9 @@ struct FEMDiscretization{T} <: PDEBase.AbstractMeshDiscretization
     natural::Vector{Symbol}
     boundary_check::Symbol
     algebraic_abstol::Union{Symbol, Nothing, Float64}
+    backend::Any
+    precision::Union{Nothing, DataType}
+    assembly::Symbol
     kwargs::NamedTuple
 end
 
@@ -142,7 +167,8 @@ end
 function FEMDiscretization(
         domain::PDEBase.MeshDomain, time = nothing; spaces = Dict(), regions = Dict(), quadrature = nothing,
         test_space = Galerkin(), ibp = Dict(), pairing = Dict(), codegen::Symbol = :numeric,
-        dirichlet::Symbol = :algebraic, algebraic_abstol = :auto, natural = (), boundary_check::Symbol = :warn, kwargs...
+        dirichlet::Symbol = :algebraic, algebraic_abstol = :auto, natural = (), boundary_check::Symbol = :warn,
+        backend = nothing, precision = nothing, assembly::Symbol = :colored, kwargs...
     )
     domain.mesh isa Ferrite.Grid ||
         throw(ArgumentError("FEMDiscretization needs a MeshDomain of a Ferrite.Grid, got a mesh of type $(typeof(domain.mesh))"))
@@ -167,12 +193,19 @@ function FEMDiscretization(
             "algebraic_abstol applies to time-dependent problems (the DAE path); a steady FEMDiscretization has no time stepper"
         )
     )
+    backend === nothing || is_device_backend(backend) || throw(backend_error(backend))
+    precision === nothing || precision in (Float32, Float64) ||
+        throw(ArgumentError("precision must be Float32, Float64 or nothing, got $(repr(precision))"))
+    precision !== nothing && backend === nothing &&
+        throw(ArgumentError("precision = $precision sets the precision of device assembly, so it needs a backend"))
+    assembly in (:colored, :atomic) || throw(ArgumentError("assembly must be :colored or :atomic, got $(repr(assembly))"))
     _check_reserved(kwargs)
     return FEMDiscretization{typeof(time)}(
         domain, time, Dict{Any, Ferrite.Interpolation}(_field_op(k) => ip for (k, ip) in spaces),
         Dict{Any, Any}(_field_op(k) => r for (k, r) in regions),
         quadrature, test_space, Dict{Any, StrongForm.IBPPolicy}(ibp), Dict{Equation, Any}(pairing),
-        codegen, dirichlet, unique(natural), boundary_check, algebraic_abstol isa Real ? Float64(algebraic_abstol) : algebraic_abstol, NamedTuple(kwargs)
+        codegen, dirichlet, unique(natural), boundary_check, algebraic_abstol isa Real ? Float64(algebraic_abstol) : algebraic_abstol,
+        backend, precision, assembly, NamedTuple(kwargs)
     )
 end
 
