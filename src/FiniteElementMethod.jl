@@ -13,7 +13,7 @@ using DiffEqBase: BrownFullBasicInit
 using DomainSets: DomainSets
 using Ferrite: Ferrite, Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexahedron, curl
 using ForwardDiff: ForwardDiff
-using LinearAlgebra: dot, mul!, norm, rank
+using LinearAlgebra: cross, dot, lu, lu!, mul!, norm, rank
 using ModelingToolkit: ModelingToolkit, @parameters, @variables, Differential, MTKParameters,
     ProblemTypeCtx, System, complete, getmetadata
 using NonlinearSolveFirstOrder: NewtonRaphson
@@ -51,11 +51,14 @@ export MeshDomain, Region, boundarypiece, boundarypieces, NormalDerivative
 
 # Frequency-domain Maxwell: a separate entry point assembled directly on Ferrite; `FEMDiscretization(…; omega)` reaches it
 # from a PDESystem without the scalar weak form.
+include("maxwell/ports.jl")
 include("maxwell/model.jl")
 include("maxwell/driven.jl")
+include("maxwell/sweep.jl")
 include("maxwell/frontend.jl")
 export MaxwellMaterial, MaxwellModel, MaxwellTerm, maxwell_operator, maxwell_operator!
 export MaxwellSolution, driven_problem, solve_driven, field_values
+export WavePort, MaxwellSweep, solve_sweep
 export curl, facet_normal, maxwell_model
 
 include("precompile.jl")
