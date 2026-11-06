@@ -255,8 +255,20 @@ end
         pform = "write the perfect conductor as cross(facet_normal(Γ), [E(t, Γ)[c] for c in 1:3]) .~ 0"
         bad(bcs) = discretize(maxwell_system(Ω; bcs), maxwell_disc(Ω, 1.0))
         @test bad(cross(Etr, n) .~ 0) isa LinearProblem
-        @test_throws ArgumentError("the conditions on left are not tangential for every normal direction, as n × E = 0 is; $pform") bad([Etr[1] ~ 0])
-        @test_throws ArgumentError("the conditions on left constrain 1 of the two tangential components of E; $pform") bad([cross(n, Etr)[1] ~ 0])
+        # The facets of `left` have the normal -e₁, on which E₂ ~ 0 is tangential but E₁ ~ 0 is not.
+        @test occursin(r"^the conditions on left at facet \(\d+, \d+\) with normal \(-1\.0, -?0\.0, -?0\.0\) constrain the normal component of E", message(() -> bad([Etr[1] ~ 0])))
+        @test occursin(r"^the conditions on left at facet .* constrain 1 of the two tangential components of E", message(() -> bad([cross(n, Etr)[2] ~ 0])))
+        # (n × E)₁ = n₂E₃ - n₃E₂ vanishes identically where n = -e₁.
+        @test occursin(r"constrain 0 of the two tangential components", message(() -> bad([cross(n, Etr)[1] ~ 0])))
+        @test occursin(r"constrain 1 of the two tangential components", message(() -> bad([Etr[2] ~ 0])))
+        # Codex r3: a factor that vanishes on the actual normal of the piece is no conductor there.
+        Γt = boundarypiece(Ω, :top)
+        top(bcs) = discretize(maxwell_system(Ω; bcs), maxwell_disc(Ω, 1.0))
+        @test occursin(
+            r"^the conditions on top at facet .* constrain 0 of the two tangential components of E",
+            message(() -> top(facet_normal(Γt)[1] .* cross(facet_normal(Γt), [E(t, Γt)[c] for c in 1:3]) .~ 0))
+        )
+        @test top(facet_normal(Γt)[3] .* cross(facet_normal(Γt), [E(t, Γt)[c] for c in 1:3]) .~ 0) isa LinearProblem
         @test_throws ArgumentError("the conditions on left prescribe a nonzero tangential field, which is not supported; $pform") bad(cross(n, Etr) .~ [1.0, 0, 0])
         @test_throws ArgumentError("the conditions on left are nonlinear in E; $pform") bad(cross(n, Etr .^ 2) .~ 0)
         @test_throws ArgumentError("the conditions on left prescribe a nonzero tangential field, which is not supported; $pform") bad(cross(n, Etr) .~ cross(n, [1.0, 0, 0]))

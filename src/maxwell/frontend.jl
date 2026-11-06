@@ -33,17 +33,16 @@ end
 # PDEBase's facet normal operator, absent before SciML/PDEBase.jl#164.
 const _FacetNormal = isdefined(PDEBase, :FacetNormal) ? getfield(PDEBase, :FacetNormal) : Nothing
 
-# A fixed, well-spread sequence in (0, 1) for the generic normals of the conductor check.
-_spread(k) = mod(0.5 + k * 0.6180339887498949, 1.0)
+# The outward unit normal of every facet of the facet set `name`, with the facet.
+function _facet_normals(grid, name)
+    fv = Ferrite.FacetValues(Ferrite.FacetQuadratureRule{RefTetrahedron}(1), Lagrange{RefTetrahedron, 1}())
+    return map(collect(Ferrite.getfacetset(grid, name))) do facet
+        Ferrite.reinit!(fv, Ferrite.getcells(grid, facet[1]), Ferrite.getcoordinates(grid, facet[1]), facet[2])
+        (collect(Ferrite.getnormal(fv, 1)), facet)
+    end
+end
 
 const _MAXWELL_FORM = "write the operator as curl(ν*curl(E)) with curl(F, (x, y, z)), as in curl(curl(E, X) / μ, X)"
-
-function _number(ex, vals)
-    value = SymbolicUtils.unwrap_const(unwrap(substitute(ex, vals; fold = Val(true))))
-    value isa Number || throw(ArgumentError("a coefficient of the Maxwell equation does not evaluate to a number: $ex"))
-    value isa Real || throw(ArgumentError("coefficients and sources of the Maxwell equation must be real, got $value in $ex"))
-    return Float64(value)
-end
 
 # `Dt(E_c)` becomes `s₁ E_c` and `Dt(Dt(E_c))` `s₂ E_c` (the phasor of exp(+iωt) has s₁ = iω, s₂ = -ω²).
 _phasor(ex, t, isfield, s) = substitute(ex, _phasor_rules!(Dict{Any, Any}(), unwrap(ex), t, isfield, s))
@@ -235,28 +234,25 @@ function _recognise_pec(bcs, fields, pvals, ctx, domain)
         isempty(extra) || throw(ArgumentError("$eq depends on $(join(Num.(extra), ", ")); $pform"))
         push!(get!(byp, Γ.name, Num[]), B)
     end
+    check_facetsets(domain.mesh, collect(keys(byp)); disjoint = false)
     for (name, Bs) in byp
         C = [Symbolics.derivative(B, u) for B in Bs, u in U]
         any(ex -> _depends(unwrap(ex), U), C) && throw(ArgumentError("the conditions on $name are nonlinear in E; $pform"))
         any(B -> !_iszero_expr(substitute(B, Dict(unwrap(u) => 0 for u in U))), Bs) &&
             throw(ArgumentError("the conditions on $name prescribe a nonzero tangential field, which is not supported; $pform"))
-        for k in 1:3
-            n = [2 * _spread(3k + d) - 1 for d in 1:3]
-            n ./= norm(n)
-            vals = Dict{Any, Any}(unwrap(N[d]) => n[d] for d in 1:3)
-            merge!(vals, Dict(unwrap(u) => 0.0 for u in U))
-            Cn = [_number(ex, vals) for ex in C]
-            maximum(abs, Cn * n) > 1.0e-10 * maximum(abs, Cn) && throw(
-                ArgumentError("the conditions on $name are not tangential for every normal direction, as n × E = 0 is; $pform")
+        C_at = Symbolics.build_function(vec(C), N...; expression = Val(false))[1]
+        for (n, facet) in _facet_normals(domain.mesh, String(name))
+            Cn = reshape(_real_values(C_at(n...), "a coefficient of the condition"), length(Bs), 3)
+            where = "on $name at facet $((facet[1], facet[2])) with normal $(Tuple(round.(n; digits = 6)))"
+            maximum(abs, Cn * n; init = 0.0) > 1.0e-10 * maximum(abs, Cn; init = 0.0) && throw(
+                ArgumentError("the conditions $where constrain the normal component of E, unlike n × E = 0; $pform")
             )
             rank(Cn) == 2 || throw(
-                ArgumentError("the conditions on $name constrain $(rank(Cn)) of the two tangential components of E; $pform")
+                ArgumentError("the conditions $where constrain $(rank(Cn)) of the two tangential components of E; $pform")
             )
         end
     end
-    pec = sort!(String.(collect(keys(byp))))
-    check_facetsets(domain.mesh, Symbol.(pec); disjoint = false)
-    return pec
+    return sort!(String.(collect(keys(byp))))
 end
 
 """
