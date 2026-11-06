@@ -469,7 +469,9 @@ state, with its symbolic tangent) and the `FEMMetadata` as its `problem_type`, s
 `PDETimeSeriesSolution` (`SciMLBase.wrap_sol` of the solver's solution). Nothing calls
 `mtkcompile`; anything it cannot discretize raises. A `disc` without a time variable lowers instead to the steady
 `NonlinearProblem` documented under `NonlinearProblem(pdesys, disc)`. Keywords are passed to
-the `DAEProblem` after `disc.kwargs`, so a keyword given here wins; the keywords the discretization sets (`iv`, `unknowns`, `du0`, `coordinate`,
+the `DAEProblem` after `disc.kwargs`, so a keyword given here wins. A `disc` with `omega` returns the complex
+`LinearProblem` of the frequency-domain Maxwell path instead, documented under [`maxwell_model`](@ref), with the
+keywords passed to the `LinearProblem`; the keywords the discretization sets (`iv`, `unknowns`, `du0`, `coordinate`,
 `name`, `parameters`) are rejected, and so are `tspan` (the `PDESystem`'s time domain), `u0` (its
 initial conditions; use `remake(prob; u0)`), `p` (its parameter defaults) and `differential_vars`
 (computed from the weak form). The problem carries an `abstol` vector when `disc.algebraic_abstol`
@@ -488,6 +490,7 @@ size change and holds `u(t, Γ) ~ g(t)` to round-off.
 """
 function SciMLBase.discretize(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
     _check_reserved(kwargs)
+    disc.omega === nothing || return _maxwell_problem(pdesys, disc; kwargs...)
     parts = _lower(pdesys, disc)
     disc.time === nothing && return _steady_problem(parts; disc.kwargs..., kwargs...)
     kwargs = merge(disc.kwargs, values(kwargs))
@@ -526,14 +529,24 @@ function _abstol(algebraic, ops, selfnonlinear, abstol)
     return (; abstol = [d ? differential : algebraic for d in ops.differential_vars])
 end
 
-SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...) =
-    disc.time === nothing ?
-    throw(
+# The problem constructors with no frequency-domain form.
+function _reject_omega(disc, what)
+    disc.omega === nothing || throw(
+        ArgumentError("$what has no frequency-domain form; a FEMDiscretization with omega lowers to a LinearProblem through discretize(pdesys, disc)")
+    )
+    return nothing
+end
+
+function SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
+    _reject_omega(disc, "DAEProblem")
+    disc.time === nothing && throw(
         ArgumentError(
             "the FEMDiscretization has no time variable, so it lowers to a NonlinearProblem, not a DAEProblem; " *
-            "call discretize(pdesys, disc) or NonlinearProblem(pdesys, disc)"
+                "call discretize(pdesys, disc) or NonlinearProblem(pdesys, disc)"
         )
-    ) : SciMLBase.discretize(pdesys, disc; kwargs...)
+    )
+    return SciMLBase.discretize(pdesys, disc; kwargs...)
+end
 
 """
     NonlinearProblem(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
@@ -555,6 +568,7 @@ Keywords are passed to the `NonlinearProblem` after `disc.kwargs`; the keywords
 `differential_vars` are rejected, as for the `DAEProblem`.
 """
 function SciMLBase.NonlinearProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
+    _reject_omega(disc, "NonlinearProblem")
     disc.time === nothing || throw(
         ArgumentError(
             "the FEMDiscretization has the time variable $(disc.time), so it lowers to a DAEProblem; " *
@@ -593,6 +607,7 @@ function SciMLBase.symbolic_discretize(pdesys::ModelingToolkit.PDESystem, disc::
             "symbolic_discretize(pdesys, disc; kwargs...) takes no further positional arguments; got $(length(args))"
         )
     )
+    _reject_omega(disc, "symbolic_discretize")
     disc.time === nothing && throw(
         ArgumentError(
             "a steady FEMDiscretization builds no symbolic System, so it has no symbolic_discretize; " *
@@ -629,6 +644,7 @@ depends on time") and time-dependent Dirichlet data ("operators needs Dirichlet 
 constant in time"). Parameters are substituted by their values, as for the `DAEProblem`.
 """
 function operators(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
+    _reject_omega(disc, "operators")
     parts = _lower(pdesys, disc)
     (; M, K, load, nonlinear, prescribed, dirichlet_values, timedep_dirichlet) = parts.raw
     nonlinear && throw(ArgumentError("operators returns linear operators only, but the PDESystem has nonlinear terms"))
