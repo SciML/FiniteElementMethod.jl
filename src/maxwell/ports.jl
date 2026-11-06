@@ -193,6 +193,12 @@ function _propagation_constant(data::WavePortData, mu0eps0, ω)
     return imag(β) > 0 ? -β : β
 end
 
+function _wave(model, port::Integer)
+    data = model.ports[port]
+    data isa WavePortData || throw(ArgumentError("port $port of the model is not a wave port"))
+    return data
+end
+
 """
     propagation_constant(model::MaxwellModel, port, ω)
 
@@ -200,7 +206,7 @@ The TE10 propagation constant `β` (rad/m) of wave port number `port` of `model`
 Below cutoff `β = -iα` with `α > 0`, so the mode `exp(-iβζ)` decays away from the port.
 """
 propagation_constant(model, port::Integer, ω::Real) =
-    _propagation_constant(model.ports[port], model.mu0 * model.eps0, float(ω))
+    _propagation_constant(_wave(model, port), model.mu0 * model.eps0, float(ω))
 
 """
     cutoff_frequency(model::MaxwellModel, port)
@@ -208,49 +214,71 @@ propagation_constant(model, port::Integer, ω::Real) =
 The TE10 cutoff frequency in Hz, `kc / (2π sqrt(μ0 ε0 Re(εr) μr))`, of wave port number `port` of `model`.
 """
 function cutoff_frequency(model, port::Integer)
-    data = model.ports[port]
+    data = _wave(model, port)
     return data.kc / (2π * sqrt(model.mu0 * model.eps0 * real(data.eps_r) * data.mu_r))
 end
 
 # n × μr⁻¹∇ × E = -(iβ/μr) n × (n × E) - 2(iβ/μr) E0 e on the port gives +(iβ/μr) L B on the operator and
 # +2(iβ/μr) L E0 p on the load, with E0 = 1.
-function _port_term(data::WavePortData, mu0eps0, L)
-    return MaxwellTerm(data.block, ω -> im * _propagation_constant(data, mu0eps0, ω) * L / data.mu_r)
+function _port_term(data::WavePortData, mu0, eps0, L)
+    return MaxwellTerm(data.block, ω -> im * _propagation_constant(data, mu0 * eps0, ω) * L / data.mu_r)
 end
+
+_excitation(model, data::WavePortData, ω) =
+    (2im * _propagation_constant(data, model.mu0 * model.eps0, ω) * model.length_scale / data.mu_r) .* data.profile
+# A 1 A Norton source, -(1/w) l̂ sheet current, gives +iωμ0 L² g / (w L) after division by L.
+_excitation(model, data::LumpedPortData, ω) = (im * ω * model.mu0 / data.width) .* data.profile
 
 """
     port_excitations(model::MaxwellModel, ω)
 
-The load vectors of the wave ports of `model` at `ω`, one column per port: the TE10 mode of unit amplitude
-incident on that port, without the PEC constraints.
+The load vectors of the ports of `model` at `ω`, one column per port, without the PEC constraints: for a
+wave port the TE10 mode of unit amplitude (1 V/m) incident on it, for a lumped port a 1 A current source in
+parallel with its `Z0`.
 """
 function port_excitations(model, ω::Real)
     B = zeros(ComplexF64, Ferrite.ndofs(model.dh), length(model.ports))
     for (j, data) in pairs(model.ports)
-        β = _propagation_constant(data, model.mu0 * model.eps0, float(ω))
-        B[:, j] .= (2im * β * model.length_scale / data.mu_r) .* data.profile
+        B[:, j] .= _excitation(model, data, float(ω))
     end
     return B
+end
+
+# Power waves (peak phasors, |a|²/2 watts) of a port for the excitation of `port_excitations`: the incident
+# wave `a` when the port is driven and the outgoing wave `b` in the solution `u`, `driven` or not.
+function _power_waves(model, data::WavePortData, ω, u, driven::Bool)
+    β = _propagation_constant(data, model.mu0 * model.eps0, ω)
+    # sqrt(∮ e⋅e dS / Z) with the TE10 wave impedance Z = ωμ0μr / β.
+    w = sqrt(data.norm * model.length_scale^2 * β / (ω * model.mu0 * data.mu_r))
+    shift = exp(im * β * data.port.deembed * model.length_scale)
+    return w / shift, (dot(data.profile, u) / data.norm - driven) * w * shift
+end
+function _power_waves(model, data::LumpedPortData, ω, u, driven::Bool)
+    # a = (V + Z0 I)/(2 sqrt Z0) with I = driven - V/Z0 delivered into the structure.
+    Z0 = data.port.Z0
+    V = model.length_scale * dot(data.profile, u) / data.width
+    return sqrt(Z0) / 2, (2V - Z0 * driven) / (2 * sqrt(Z0))
 end
 
 """
     s_parameters(model::MaxwellModel, ω, U)
 
-The scattering matrix from the solutions `U[:, j]` with port `j` driven by [`port_excitations`](@ref):
-`Sᵢⱼ = (pᵢᵀ uⱼ / Pᵢ - δᵢⱼ) sqrt(Pᵢ Zⱼ / (Pⱼ Zᵢ)) exp(iβᵢdᵢ + iβⱼdⱼ)`, with `Pᵢ = ∮ e⋅e dS`, the TE10 wave
-impedance `Zᵢ = ωμ0μr / βᵢ` and the de-embedding distances `dᵢ`.
+The scattering matrix `Sᵢⱼ = bᵢ / aⱼ` from the solutions `U[:, j]` with port `j` driven by
+[`port_excitations`](@ref), in power waves. A wave port has `aⱼ = sqrt(Pⱼ / Zⱼ) exp(-iβⱼdⱼ)` and
+`bᵢ = (pᵢᵀuⱼ / Pᵢ - δᵢⱼ) sqrt(Pᵢ / Zᵢ) exp(iβᵢdᵢ)`, with `Pᵢ = ∮ e⋅e dS`, the TE10 wave impedance
+`Zᵢ = ωμ0μr / βᵢ` and the de-embedding distances `dᵢ`. A lumped port has `aⱼ = sqrt(Z0ⱼ) / 2` and
+`bᵢ = (2Vᵢ - Z0ᵢ δᵢⱼ) / (2 sqrt(Z0ᵢ))`, so between lumped ports `Sᵢⱼ = 2Vᵢ / sqrt(Z0ᵢ Z0ⱼ) - δᵢⱼ`.
 """
 function s_parameters(model, ω::Real, U::AbstractMatrix)
-    mu0eps0 = model.mu0 * model.eps0
+    ω = float(ω)
     ports = model.ports
-    β = [_propagation_constant(data, mu0eps0, float(ω)) for data in ports]
-    # Power-wave scale: |a|² P / Z, with Z ∝ μr / β.
-    w = [sqrt(data.norm * β[i] / data.mu_r) for (i, data) in pairs(ports)]
-    shift = [exp(im * β[i] * data.port.deembed * model.length_scale) for (i, data) in pairs(ports)]
     np = length(ports)
     S = zeros(ComplexF64, np, np)
-    for j in 1:np, i in 1:np
-        S[i, j] = (dot(ports[i].profile, view(U, :, j)) / ports[i].norm - (i == j)) * w[i] / w[j] * shift[i] * shift[j]
+    for j in 1:np
+        a = first(_power_waves(model, ports[j], ω, view(U, :, j), true))
+        for i in 1:np
+            S[i, j] = last(_power_waves(model, ports[i], ω, view(U, :, j), i == j)) / a
+        end
     end
     return S
 end

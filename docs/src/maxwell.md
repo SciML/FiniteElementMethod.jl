@@ -55,6 +55,30 @@ sweep.S[2, 1, 5]  # S21 at 10 GHz: |S21| ≈ 1, angle ≈ -93.3°
 are normalised to power waves through the TE10 wave impedance `ωμ0μr/β`. Below cutoff the propagation
 constant is `β = -iα`, the evanescent branch.
 
+## Lumped ports
+
+A [`LumpedPort`](@ref) is a rectangular facet sheet bridging a gap between two conductors, of length `l`
+along `direction` and width `w` across it, on the boundary or inside the mesh. It carries a uniform sheet
+current `I/w` along `direction`; its voltage is the sheet average of the line integral of `E` across the gap,
+`V = (1/w) ∮ E⋅l̂ dS`. Every port is loaded by its reference impedance `Z0`, which adds
+`iωμ0 L/(w² Z0) g gᵀ` (`gᵢ = ∮ l̂⋅Nᵢ dS`) to the operator, and the driven port adds a 1 A current source in
+parallel, so `Sᵢⱼ = 2Vᵢ/sqrt(Z0ᵢZ0ⱼ) - δᵢⱼ`. Because the load, the source and the voltage use the same `g`,
+these circuit identities hold exactly for the discrete system: a lossless structure gives a unitary `S`.
+Wave and lumped ports can share one model and one sweep, both normalised to power waves.
+
+```julia
+using FiniteElementMethod, Ferrite
+# A parallel-plate line (PEC plates at y = 0 and y = 5 mm, open sides) with a 50 Ω port at each end.
+grid = generate_grid(Tetrahedron, (2, 2, 20), Vec(0.0, 0.0, 0.0), Vec(10.0, 5.0, 20.0))
+ports = [LumpedPort("bottom"; direction = (0, 1, 0)), LumpedPort("top"; direction = (0, 1, 0))]
+model = MaxwellModel(grid; pec = ["front", "back"], ports, length_scale = 1.0e-3)
+S = solve_sweep(model, [2π * 3.0e9]).S[:, :, 1]  # S11 ≈ 0.846 + 0.136i, S21 ≈ 0.082 - 0.508i
+Z = FiniteElementMethod.z_parameters(model, S)
+```
+
+The port couples all its edge dofs to each other, which widens the sparsity pattern, so keep the sheet a
+few elements across.
+
 ```@docs
 MaxwellModel
 MaxwellMaterial
@@ -69,6 +93,11 @@ FiniteElementMethod.maxwell_rhs
 FiniteElementMethod.add_term!
 WavePort
 FiniteElementMethod.WavePortData
+LumpedPort
+FiniteElementMethod.LumpedPortData
+FiniteElementMethod.port_voltage
+FiniteElementMethod.port_current
+FiniteElementMethod.z_parameters
 solve_sweep
 MaxwellSweep
 FiniteElementMethod.umfpack_solver
