@@ -7,7 +7,8 @@ PDEBase.contains_point(grid::Ferrite.Grid, x) = _contains_point(grid, x)
 """
     FEMDiscretization(Ω::MeshDomain, t = nothing; spaces = Dict(), regions = Dict(),
         quadrature = nothing, test_space = Galerkin(), ibp = Dict(), pairing = Dict(),
-        codegen = :numeric, dirichlet = :algebraic, algebraic_abstol = :auto, natural = (), boundary_check = :warn, kwargs...)
+        codegen = :numeric, dirichlet = :algebraic, algebraic_abstol = :auto, natural = (), boundary_check = :warn,
+        omega = nothing, kwargs...)
 
 Finite-element discretization of a `PDESystem` whose spatial domain is the mesh domain `Ω`
 (of a `Ferrite.Grid`), with time variable `t`. `discretize(pdesys, disc)` assembles the
@@ -74,6 +75,12 @@ gives a `PDENoTimeSolution`.
     still returns full fields, with `g` at the prescribed nodes, through `sol[u]`,
     `sol(t, x, y)`, traces and `write_vtk`; only `sol.original_sol` and the array unknowns
     hold the free dofs alone. `:algebraic` is recommended.
+  - `omega`: an angular frequency in rad/s for the frequency-domain Maxwell path. With `omega`,
+    `discretize` returns the complex `LinearProblem` of [`driven_problem`](@ref) for a time-domain
+    curl-curl `PDESystem` with a vector unknown `E` in `spaces = Dict(E => Nedelec{RefTetrahedron, 1}())`;
+    see [`maxwell_model`](@ref) for the equations it accepts. `omega` must be positive and finite and
+    needs the time variable `t`, which the `PDESystem` is written in; `test_space`, `regions`, `ibp` and
+    `pairing` do not apply to it and must keep their defaults. A Nédélec space needs `omega`.
   - `codegen = :mtk` is reserved and raises; remaining keywords are
     passed to the `DAEProblem` (or `NonlinearProblem`), where a keyword given at the
     `discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate`, `name` and `parameters` are set
@@ -110,6 +117,7 @@ struct FEMDiscretization{T} <: PDEBase.AbstractMeshDiscretization
     natural::Vector{Symbol}
     boundary_check::Symbol
     algebraic_abstol::Union{Symbol, Nothing, Float64}
+    omega::Union{Nothing, Float64}
     kwargs::NamedTuple
 end
 
@@ -142,7 +150,8 @@ end
 function FEMDiscretization(
         domain::PDEBase.MeshDomain, time = nothing; spaces = Dict(), regions = Dict(), quadrature = nothing,
         test_space = Galerkin(), ibp = Dict(), pairing = Dict(), codegen::Symbol = :numeric,
-        dirichlet::Symbol = :algebraic, algebraic_abstol = :auto, natural = (), boundary_check::Symbol = :warn, kwargs...
+        dirichlet::Symbol = :algebraic, algebraic_abstol = :auto, natural = (), boundary_check::Symbol = :warn,
+        omega = nothing, kwargs...
     )
     domain.mesh isa Ferrite.Grid ||
         throw(ArgumentError("FEMDiscretization needs a MeshDomain of a Ferrite.Grid, got a mesh of type $(typeof(domain.mesh))"))
@@ -168,12 +177,32 @@ function FEMDiscretization(
         )
     )
     _check_reserved(kwargs)
+    _check_omega(omega, time, spaces, test_space, regions, ibp, pairing)
     return FEMDiscretization{typeof(time)}(
         domain, time, Dict{Any, Ferrite.Interpolation}(_field_op(k) => ip for (k, ip) in spaces),
         Dict{Any, Any}(_field_op(k) => r for (k, r) in regions),
         quadrature, test_space, Dict{Any, StrongForm.IBPPolicy}(ibp), Dict{Equation, Any}(pairing),
-        codegen, dirichlet, unique(natural), boundary_check, algebraic_abstol isa Real ? Float64(algebraic_abstol) : algebraic_abstol, NamedTuple(kwargs)
+        codegen, dirichlet, unique(natural), boundary_check, algebraic_abstol isa Real ? Float64(algebraic_abstol) : algebraic_abstol,
+        omega === nothing ? nothing : Float64(omega), NamedTuple(kwargs)
     )
+end
+
+function _check_omega(omega, time, spaces, test_space, regions, ibp, pairing)
+    if omega === nothing
+        any(ip -> ip isa Ferrite.Nedelec, values(spaces)) && throw(
+            ArgumentError("a Nédélec space is discretized by the frequency-domain Maxwell path; give the angular frequency, as FEMDiscretization(Ω, t; omega, spaces)")
+        )
+        return nothing
+    end
+    omega isa Real && isfinite(omega) && omega > 0 ||
+        throw(ArgumentError("omega must be a positive, finite angular frequency in rad/s, got $(repr(omega))"))
+    time === nothing && throw(
+        ArgumentError("omega needs the time variable of the time-domain PDESystem, as FEMDiscretization(Ω, t; omega)")
+    )
+    for (name, unset) in (("test_space", test_space isa Galerkin), ("regions", isempty(regions)), ("ibp", isempty(ibp)), ("pairing", isempty(pairing)))
+        unset || throw(ArgumentError("`$name` does not apply to the frequency-domain Maxwell path (omega); leave it at its default"))
+    end
+    return nothing
 end
 
 # `u`, `u(..)` and `u(t, x, y)` all name the dependent variable `u`.
@@ -208,5 +237,6 @@ PDEBase.supported_conditions(::FEMDiscretization) = PDEBase.SupportedConditions(
       - Where two Dirichlet pieces of one field meet, the condition listed last in the `PDESystem` wins.
       - Every field with a time derivative needs an initial condition, linear in that one field and finite at every node.
       - Time-dependent mass or stiffness coefficients and `codegen = :mtk` are rejected.
+      - With `omega`, a time-domain curl-curl equation for a 3-component unknown in a Nédélec space becomes a frequency-domain `LinearProblem` (see `maxwell_model`); its only boundary condition is the perfect conductor `n × E = 0`, other pieces get `n × (ν curl E) = 0`, and its coefficients are real.
     """
 )

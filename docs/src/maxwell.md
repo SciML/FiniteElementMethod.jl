@@ -30,6 +30,42 @@ that is a function of `ω`, so a frequency sweep only recombines nonzero values 
 [`maxwell_operator!`](@ref), and further terms (boundary conditions, ports) are added as blocks with
 `FiniteElementMethod.add_term!`.
 
+## From a PDESystem
+
+`FEMDiscretization(Ω, t; omega, spaces = Dict(E => Nedelec{RefTetrahedron, 1}()))` discretizes the
+time-domain equation `curl(ν curl E) + a₂ ∂ₜ²E + a₁ ∂ₜE + a₀ E = f` for a vector unknown `E` at the angular
+frequency `omega`, and `discretize` returns the complex `LinearProblem` that [`driven_problem`](@ref) builds
+for the equivalent `MaxwellModel` (in units with `ε0 = μ0 = 1`). The operator is written with [`curl`](@ref)
+and the perfect conductor with [`facet_normal`](@ref), which needs a PDEBase with facet normals.
+
+```julia
+using FiniteElementMethod, Ferrite, ModelingToolkit, LinearAlgebra, LinearSolve
+grid = generate_grid(Tetrahedron, (8, 8, 8), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0))
+Ω = MeshDomain(grid)
+@parameters x y z t
+@variables E(..)[1:3]
+X, Ev, Dt = (x, y, z), [E(t, x, y, z)[c] for c in 1:3], Differential(t)
+cc = curl(curl(Ev, X) / 2, X)    # μr = 2
+eqs = [cc[c] + 4 * Dt(Dt(Ev[c])) + 0.1 * Dt(Ev[c]) ~ (c == 3) * exp(-10 * ((x - 0.5)^2 + (y - 0.5)^2)) for c in 1:3]
+pec = reduce(vcat, [cross(facet_normal(Γ), [E(t, Γ)[c] for c in 1:3]) .~ 0 for Γ in boundarypieces(Ω)])
+@named sys = PDESystem(eqs, pec, [t ∈ Interval(0.0, 1.0), (x, y, z) ∈ Ω], [t, x, y, z], [E(t, x, y, z)])
+disc = FEMDiscretization(Ω, t; omega = 2.0, spaces = Dict(E => Nedelec{RefTetrahedron, 1}()))
+sol = solve(discretize(sys, disc))
+(; model, omega) = maxwell_model(sys, disc)
+field_values(MaxwellSolution(model, omega, sol.u), [Vec(0.5, 0.5, 0.5)]).E
+```
+
+Coefficients are real, so a complex permittivity `ε' - iε''` is only available on the operator-level
+`MaxwellModel`. Absorbing boundaries and ports are not yet part of the `PDESystem` path.
+
+```@docs
+curl(::AbstractVector, ::NTuple{3, Any})
+facet_normal
+maxwell_model
+```
+
+## Operator level
+
 ```@docs
 MaxwellModel
 MaxwellMaterial

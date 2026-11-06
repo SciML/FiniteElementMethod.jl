@@ -56,6 +56,7 @@ rest of the boundary.
 
 `materials` maps cell set names of `grid` (as `FerriteGmsh.togrid` makes from Gmsh physical groups) to
 [`MaxwellMaterial`](@ref)s; cells in no named set are vacuum, and a cell in two named sets is an error.
+It may also be a vector of `MaxwellMaterial`s, one per cell of `grid` in cell order.
 Mesh coordinates are in units of `length_scale` metres. `eps0` and `mu0` default to their SI values;
 `eps0 = mu0 = 1` with `length_scale = 1` gives normalised units with `c = 1`.
 
@@ -141,6 +142,13 @@ function _cell_materials(grid, materials)
         end
     end
     return cell_materials
+end
+
+function _cell_materials(grid, materials::AbstractVector{MaxwellMaterial})
+    length(materials) == Ferrite.getncells(grid) || throw(
+        ArgumentError("materials has $(length(materials)) entries but the grid has $(Ferrite.getncells(grid)) cells; give one MaxwellMaterial per cell")
+    )
+    return collect(materials)
 end
 
 # The edge dofs on the PEC facets: the tangential traces there are exactly these dofs.
