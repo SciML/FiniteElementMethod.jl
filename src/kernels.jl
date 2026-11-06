@@ -5,8 +5,57 @@ kernel_slots(s, test) = (s.U, s.G, s.Ud, test.V, test.W, s.X, s.T, s.N, s.P)
 
 # `expression = Val(true)` returns the generated `Expr` instead of the compiled function. `build_function` tests
 # `expression == Val{true}`, the type, so the instance is converted.
-build(ex, slots, ::Val{E}) where {E} = Symbolics.build_function(ex, slots...; expression = Val{E}, expression_module = @__MODULE__)
-compile(ex, slots; expression = Val(false)) = build(ex, slots, expression)
+# `cse` shares repeated subexpressions, which pays for the long manufactured sources. It also hoists numeric literals
+# into temporaries, so `u^2` becomes a libm `NaNMath.pow(u, 2)` call instead of `literal_pow`, 2× to 10× slower on a
+# polynomial source and 25 to 45 percent on the nonlinear residual and Jacobian: `inline_literals` puts the literals back.
+# Only the `:source` kernels use `cse`, which are evaluated once per quadrature point and not per shape function.
+function build(ex, slots, ::Val{E}; cse = false) where {E}
+    cse || return Symbolics.build_function(ex, slots...; expression = Val{E}, expression_module = @__MODULE__)
+    code = Symbolics.build_function(ex, slots...; expression = Val{true}, cse, expression_module = @__MODULE__)
+    code = inline_literals(code)
+    return E ? code : RuntimeGeneratedFunctions.RuntimeGeneratedFunction(@__MODULE__, @__MODULE__, code)
+end
+
+# `ifelse` compiles to a conditional whose branches are lazy, and `cse` would hoist the calls of both in front of it,
+# so a guarded `sqrt` or registered function can throw where it would not have been reached.
+function has_ifelse(ex)
+    ex = Symbolics.unwrap(ex)
+    SU.iscall(ex) || return false
+    SU.operation(ex) === ifelse && return true
+    return any(has_ifelse, SU.arguments(ex))
+end
+
+function is_nanmath_pow(f)
+    f isa GlobalRef && return f.name === :pow && nameof(f.mod) === :NaNMath
+    return f isa Function && nameof(f) === :pow && nameof(parentmodule(f)) === :NaNMath
+end
+
+# The numeric temporaries `var"##cse#k" = 2` that are assigned once, substituted into their uses and dropped, and
+# `NaNMath.pow(x, 2)` with an integer literal exponent back as `x^2`, which lowers to `literal_pow`.
+function inline_literals(code)
+    literals = Dict{Symbol, Union{Number, Missing}}()
+    collect_literals!(literals, code)
+    filter!(p -> !ismissing(p.second), literals)
+    return substitute_literals(code, literals)
+end
+collect_literals!(literals, x) = nothing
+function collect_literals!(literals, ex::Expr)
+    if ex.head === :(=) && ex.args[1] isa Symbol
+        literals[ex.args[1]] = haskey(literals, ex.args[1]) || !(ex.args[2] isa Number) ? missing : ex.args[2]
+    end
+    foreach(arg -> collect_literals!(literals, arg), ex.args)
+    return nothing
+end
+substitute_literals(x, literals) = x isa Symbol ? get(literals, x, x) : x
+function substitute_literals(ex::Expr, literals)
+    isliteral(arg) = arg isa Expr && arg.head === :(=) && haskey(literals, arg.args[1])
+    args = Any[substitute_literals(arg, literals) for arg in ex.args if !isliteral(arg)]
+    if ex.head === :call && length(args) == 3 && is_nanmath_pow(args[1]) && args[3] isa Integer
+        return Expr(:call, :^, args[2], args[3])
+    end
+    return Expr(ex.head, args...)
+end
+compile(ex, slots; expression = Val(false), cse = false) = build(ex, slots, expression; cse)
 
 "The first unevaluated `Differential` call in `ex`, or `nothing`."
 function find_differential(ex)
@@ -79,14 +128,14 @@ hessian_slots(s) = hasproperty(s, :H) && s.H !== nothing ? collect(Num, s.H) : N
 
 # A tuple-valued function of `slots`, allocation-free with `Vec` and tuple arguments. Constant entries are
 # compiled as `Float64`, constant zeros as `zero`.
-function compile_tuple(exs, slots; zero = 0.0, expression = Val(false))
+function compile_tuple(exs, slots; zero = 0.0, expression = Val(false), cse = false)
     entries = map(exs) do ex
         x = Symbolics.unwrap(ex)
         SU.isconst(x) || return x
         value = SU.unwrap_const(x)
         return iszero(value) ? zero : Float64(value)
     end
-    return build(SU.Code.MakeTuple(entries), slots, expression)
+    return build(SU.Code.MakeTuple(entries), slots, expression; cse)
 end
 
 function compile_tangent(ex, s, slots; expression = Val(false))
@@ -135,10 +184,11 @@ function compile_coeffs(kind, ex, s, test; expression = Val(false))
         (kind === :source && arithmetic_in(ex, w) && isequal(Symbolics.substitute(ex, Dict(wi => 0 for wi in w)), 0))
     linear_in_w || return nothing
     any(e -> depends(e, [s.U; s.G; s.Ud; H; w]), exs) && return nothing
-    cell || return compile_tuple(exs, (s.X, s.T, s.N, s.P); zero = StructuralZero(), expression)
+    cse = kind === :source && !has_ifelse(ex)
+    cell || return compile_tuple(exs, (s.X, s.T, s.N, s.P); zero = StructuralZero(), expression, cse)
     dim2 = length(s.X)^2
     fields = Tuple(b for b in eachindex(s.U) if depends(ex, H[((b - 1) * dim2 + 1):min(b * dim2, length(H))]))
-    return CellCoeffs(compile_tuple(exs, (s.X, s.T, s.N, s.P, test.hK); zero = StructuralZero(), expression), fields)
+    return CellCoeffs(compile_tuple(exs, (s.X, s.T, s.N, s.P, test.hK); zero = StructuralZero(), expression, cse), fields)
 end
 
 # `f` is compiled only when the driver will call it: without `coeffs`, or for `:nonlinear` terms.
@@ -153,7 +203,7 @@ function kernel(eq, kind, piece, integrand, wf::WeakForm; coeffs = true, express
         )
     )
     tangent = kind === :nonlinear ? compile_tangent(integrand, s, slots; expression) : nothing
-    f = c === nothing ? compile(integrand, slots; expression) : nothing
+    f = c === nothing ? compile(integrand, slots; expression, cse = kind === :source && !has_ifelse(integrand)) : nothing
     return KernelSpec(eq, kind, piece, f, tangent, c)
 end
 
