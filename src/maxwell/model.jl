@@ -43,8 +43,8 @@ struct MaxwellTerm
 end
 
 """
-    MaxwellModel(grid; materials = Dict(), pec = String[], length_scale = 1.0, eps0 = EPS0, mu0 = MU0,
-                 quadrature = 2)
+    MaxwellModel(grid; materials = Dict(), pec = String[], absorbing = String[], ports = WavePort[],
+                 length_scale = 1.0, eps0 = EPS0, mu0 = MU0, quadrature = 2)
 
 The time-harmonic electric-field model on a Ferrite `grid` of `Tetrahedron` cells, with the field `:E` in
 `Nedelec{RefTetrahedron, 1}`. The equation, for fields varying as `exp(+iωt)`, is
@@ -52,7 +52,9 @@ The time-harmonic electric-field model on a Ferrite `grid` of `Tetrahedron` cell
     ∇ × (μr⁻¹ ∇ × E) + iωμ0 σ E - ω² μ0 ε0 εr E = -iωμ0 J,
 
 with `n × E = 0` on the facet sets named in `pec` and the natural condition `n × (μr⁻¹ ∇ × E) = 0` on the
-rest of the boundary.
+rest of the boundary, except for the facet sets named in `absorbing`, which carry the first-order
+Silver-Müller absorbing condition `n × (μr⁻¹ ∇ × E) = -i k0 sqrt(εc/μr) n × (n × E)` with `εc = εr - iσ/(ωε0)`, and the
+[`WavePort`](@ref)s in `ports`.
 
 `materials` maps cell set names of `grid` (as `FerriteGmsh.togrid` makes from Gmsh physical groups) to
 [`MaxwellMaterial`](@ref)s; cells in no named set are vacuum, and a cell in two named sets is an error.
@@ -65,11 +67,14 @@ sparse blocks on one sparsity pattern, each with a complex coefficient that is a
     A(ω) = Kc - ω² μ0 ε0 L² (Mε' + i Mε'') + iω μ0 L² Mσ,
 
 `Kc = ∫ μr⁻¹ ∇×Nᵢ ⋅ ∇×Nⱼ`, `Mε' = ∫ Re(εr) Nᵢ⋅Nⱼ`, `Mε'' = ∫ Im(εr) Nᵢ⋅Nⱼ` and `Mσ = ∫ σ Nᵢ⋅Nⱼ` over the
-mesh (so `Im(εr) = -ε''` gives the `+iω²μ0ε0L² ε''` loss term). `A` is complex symmetric, not Hermitian.
+mesh (so `Im(εr) = -ε''` gives the `+iω²μ0ε0L² ε''` loss term). The absorbing boundary adds
+`+i k0 L ∮ sqrt(εc/μr) (n × Nᵢ)⋅(n × Nⱼ) dS` (`k0 = ω sqrt(μ0 ε0)`, material of the adjacent cell) and each
+wave port `+i (β(ω)/μr) L ∮ (n × Nᵢ)⋅(n × Nⱼ) dS` over its face. `A` is complex symmetric, not Hermitian.
 
 Fields: `grid`, `dh`, `ch` (zero `AffineConstraint`s on the PEC edge dofs), `cellvalues`, `materials` (one
 per cell), `pec`, `eps0`, `mu0`, `length_scale`, `blocks` (the volume blocks `curlcurl`, `eps_real`,
-`eps_imag` and `sigma` above) and `terms`, the [`MaxwellTerm`](@ref)s that [`maxwell_operator!`](@ref)
+`eps_imag` and `sigma` above), `absorbing`, `ports` (the [`FiniteElementMethod.WavePortData`](@ref) in the
+order given) and `terms`, the [`MaxwellTerm`](@ref)s that [`maxwell_operator!`](@ref)
 combines; [`FiniteElementMethod.add_term!`](@ref) appends further blocks, such as boundary terms.
 """
 struct MaxwellModel{G, DH, CH, CV}
@@ -84,19 +89,20 @@ struct MaxwellModel{G, DH, CH, CV}
     length_scale::Float64
     blocks::NamedTuple{(:curlcurl, :eps_real, :eps_imag, :sigma), NTuple{4, SparseMatrixCSC{Float64, Int}}}
     terms::Vector{MaxwellTerm}
+    absorbing::Vector{String}
+    ports::Vector{WavePortData}
 end
 
 function MaxwellModel(
-        grid::Ferrite.Grid; materials = Dict{String, MaxwellMaterial}(), pec = String[],
-        length_scale::Real = 1.0, eps0::Real = EPS0, mu0::Real = MU0, quadrature::Int = 2
+        grid::Ferrite.Grid; materials = Dict{String, MaxwellMaterial}(), pec = String[], absorbing = String[],
+        ports = WavePort[], length_scale::Real = 1.0, eps0::Real = EPS0, mu0::Real = MU0, quadrature::Int = 2
     )
     Ferrite.getcelltype(grid) === Ferrite.Tetrahedron ||
         throw(ArgumentError("MaxwellModel needs a grid of Tetrahedron cells, got $(Ferrite.getcelltype(grid))"))
     pec = String.(collect(pec))
-    for name in pec
-        haskey(grid.facetsets, name) ||
-            throw(ArgumentError("no facet set $(repr(name)) in the grid; it has $(sort!(collect(keys(grid.facetsets))))"))
-    end
+    absorbing = String.(collect(absorbing))
+    foreach(name -> _check_facetset(grid, name), pec)
+    foreach(name -> _check_facetset(grid, name), absorbing)
     cell_materials = _cell_materials(grid, materials)
 
     ip = _NEDELEC
@@ -119,8 +125,12 @@ function MaxwellModel(
         MaxwellTerm(blocks.eps_imag, ω -> -im * k2 * ω^2),
         MaxwellTerm(blocks.sigma, ω -> im * mu0 * L2 * ω),
     ]
+    L = float(length_scale)
+    isempty(absorbing) || append!(terms, _absorbing_terms(dh, blocks.curlcurl, absorbing, cell_materials, mu0, eps0, L))
+    port_data = WavePortData[_wave_port(port, dh, blocks.curlcurl, cell_materials, L, ch.prescribed_dofs) for port in ports]
+    append!(terms, [_port_term(data, mu0 * eps0, L) for data in port_data])
     return MaxwellModel(
-        grid, dh, ch, cv, cell_materials, pec, float(eps0), float(mu0), float(length_scale), blocks, terms
+        grid, dh, ch, cv, cell_materials, pec, float(eps0), float(mu0), L, blocks, terms, absorbing, port_data
     )
 end
 
