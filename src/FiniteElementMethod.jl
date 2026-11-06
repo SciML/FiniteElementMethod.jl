@@ -43,11 +43,14 @@ export FieldInfo, FEMMetadata, piece_nodes, normal_flux, write_vtk, facet_dofs, 
 export Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexahedron
 
 using PDEBase: StrongForm, MeshDomain, Region, boundarypiece, boundarypieces, NormalDerivative
+using PDEBase.StrongForm: Weighted
 include("discretization.jl")
 include("frontend.jl")
 _is_normal_derivative(op) = op isa NormalDerivative
 export FEMDiscretization, Galerkin, SUPG, add_boundary_pieces!
 export MeshDomain, Region, boundarypiece, boundarypieces, NormalDerivative
+# The integration-by-parts policy `ibp = Dict(eq => Weighted(w))` of `FEMDiscretization`.
+export Weighted
 
 include("precompile.jl")
 
