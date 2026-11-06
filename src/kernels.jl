@@ -236,13 +236,14 @@ function emit_kernels(wf::WeakForm; coeffs = true, expression = Val(false))
 end
 
 """
-    emit_dirichlet(analysis)
+    emit_dirichlet(analysis; expression = Val(false))
 
 One `(piece, field, g)` per essential condition of `analysis`, with `g(X, T, P)` the prescribed value.
+`expression = Val(true)` returns the generated `Expr` in place of each `g`.
 """
-function emit_dirichlet(analysis)
+function emit_dirichlet(analysis; expression = Val(false))
     s = analysis.slots
-    return Tuple((bc.piece, bc.field, compile(assert_differentiated(bc.g), (s.X, s.T, s.P))) for bc in analysis.essential)
+    return Tuple((bc.piece, bc.field, compile(assert_differentiated(bc.g), (s.X, s.T, s.P); expression)) for bc in analysis.essential)
 end
 
 """
