@@ -166,6 +166,16 @@ end
     err("ν = 0.0 in cell 1; ν = 1/μ must be nonzero"; nu = 0)
     @test_throws ArgumentError discretize(maxwell_system(Ω; extra = c -> Dt(Dt(Dt(Ev[c])))), maxwell_disc(Ω, 1.0))
 
+    # A second derivative of a field-free expression lands in the flux; it must not vanish from the load.
+    @test_throws ArgumentError("equation 1 has a derivative of an expression without E, a source inside a divergence, which is not integrated by parts; write that source term out explicitly as a function of the coordinates") discretize(
+        maxwell_system(Ω; extra = c -> 3 * D[1](D[1](x^2))), maxwell_disc(Ω, 2.0)
+    )
+    @test discretize(maxwell_system(Ω; f = [6.0, 6.0, 6.0]), maxwell_disc(Ω, 2.0)) isa LinearProblem
+    @test occursin(
+        "is inside a spatial derivative; time derivatives may only multiply E",
+        message(() -> discretize(maxwell_system(Ω; extra = c -> D[1](D[1](Dt(Ev[c])))), maxwell_disc(Ω, 2.0)))
+    )
+
     # Terms confined to a small ball around one interior centroid are seen: every centroid is checked.
     grid = unit_cube(3)
     Ωf = MeshDomain(grid)
@@ -249,6 +259,8 @@ end
         @test_throws ArgumentError("the conditions on left constrain 1 of the two tangential components of E; $pform") bad([cross(n, Etr)[1] ~ 0])
         @test_throws ArgumentError("the conditions on left prescribe a nonzero tangential field, which is not supported; $pform") bad(cross(n, Etr) .~ [1.0, 0, 0])
         @test_throws ArgumentError("the conditions on left are nonlinear in E; $pform") bad(cross(n, Etr .^ 2) .~ 0)
+        @test_throws ArgumentError("the conditions on left prescribe a nonzero tangential field, which is not supported; $pform") bad(cross(n, Etr) .~ cross(n, [1.0, 0, 0]))
+        @test_throws ArgumentError("the conditions on left prescribe a nonzero tangential field, which is not supported; $pform") bad(cross(n, Etr) .+ [n[2] * n[3], 0, 0] .~ 0)
         @test_throws ArgumentError bad([NormalDerivative(Γ)(Etr[1]) ~ 0])
         other = MeshDomain(unit_cube(1))
         @test_throws ArgumentError bad(cross(facet_normal(boundarypiece(other, :left)), [E(t, boundarypiece(other, :left))[c] for c in 1:3]) .~ 0)

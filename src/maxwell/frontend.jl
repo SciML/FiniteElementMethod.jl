@@ -48,10 +48,13 @@ end
 # `Dt(E_c)` becomes `s₁ E_c` and `Dt(Dt(E_c))` `s₂ E_c` (the phasor of exp(+iωt) has s₁ = iω, s₂ = -ω²).
 _phasor(ex, t, isfield, s) = substitute(ex, _phasor_rules!(Dict{Any, Any}(), unwrap(ex), t, isfield, s))
 
-function _phasor_rules!(rules, ex, t, isfield, s)
+function _phasor_rules!(rules, ex, t, isfield, s, inside = false)
     SymbolicUtils.iscall(ex) || return rules
     op = SymbolicUtils.operation(ex)
     if op isa Differential && isequal(op.x, t)
+        inside && throw(
+            ArgumentError("the time derivative $(Num(ex)) is inside a spatial derivative; time derivatives may only multiply E, as in ε ∂ₜ²E + σ ∂ₜE")
+        )
         order, inner = 0, ex
         while SymbolicUtils.iscall(inner) && SymbolicUtils.operation(inner) isa Differential &&
                 isequal(SymbolicUtils.operation(inner).x, t)
@@ -64,7 +67,7 @@ function _phasor_rules!(rules, ex, t, isfield, s)
         rules[ex] = unwrap(s[order] * inner)
         return rules
     end
-    foreach(a -> _phasor_rules!(rules, unwrap(a), t, isfield, s), SymbolicUtils.arguments(ex))
+    foreach(a -> _phasor_rules!(rules, unwrap(a), t, isfield, s, inside || op isa Differential), SymbolicUtils.arguments(ex))
     return rules
 end
 
@@ -92,6 +95,8 @@ function _maxwell_components(fields, replaced, disc)
     end
 end
 
+_iszero_expr(ex) = isequal(Symbolics.simplify(Symbolics.expand(Num(ex))), Num(0))
+
 # Field `c` of the analysis is component `c` of E. Equation `e` in slot form tests component `comps[e]`;
 # returns ν, a₀, a₁, a₂ and the sources in slots, after checking at every cell centroid `xs`, and for the
 # frequency slots `s` at (0, 0), (1, 0) and (0, 1), that the second-order part is curl(ν curl E) and the
@@ -107,9 +112,20 @@ function _recognise_volume(an, s, fixed, xs)
     dG = [[Symbolics.derivative(an.remainder[e], g) for g in slots.G] for e in 1:3]
     dF = [[Symbolics.derivative(an.flux[e][a], slots.U[c]) for a in 1:3, c in 1:3] for e in 1:3]
     parts(e) = [vec(B[e]); dU[e]; dG[e]; vec(dF[e])]
+    # Flux and remainder are then of degree one in U and G, so nothing else of them is left to discard.
+    allslots = Dict(unwrap(g) => 0 for g in [slots.U; slots.G; slots.H; slots.Ud])
     for e in 1:3
+        any(ex -> _depends(unwrap(ex), [slots.H; slots.Ud]), [an.flux[e]; an.remainder[e]; an.mass[e]]) && throw(
+            ArgumentError("equation $e has a term the frequency-domain Maxwell path cannot place (a second derivative outside a divergence or a leftover time derivative); $_MAXWELL_FORM")
+        )
+        any(F -> !_iszero_expr(substitute(substitute(F, allslots), fixed)), an.flux[e]) && throw(
+            ArgumentError("equation $e has a derivative of an expression without E, a source inside a divergence, which is not integrated by parts; write that source term out explicitly as a function of the coordinates")
+        )
         any(ex -> _depends(unwrap(ex), state), parts(e)) && throw(nonlinear(e))
         any(ex -> _depends(unwrap(ex), [slots.T]), parts(e)) && throw(timedep("a coefficient"))
+        any(ex -> _depends(unwrap(ex), s), [vec(B[e]); dG[e]; vec(dF[e])]) && throw(
+            ArgumentError("equation $e has a time derivative inside a spatial derivative; time derivatives may only multiply E, as in ε ∂ₜ²E + σ ∂ₜE")
+        )
         any(_depends(unwrap(Symbolics.derivative(ex, si)), s) for ex in dU[e], si in s) &&
             throw(ArgumentError("the coefficient of E is nonlinear in its time derivatives"))
     end
@@ -222,13 +238,13 @@ function _recognise_pec(bcs, fields, pvals, ctx, domain)
     for (name, Bs) in byp
         C = [Symbolics.derivative(B, u) for B in Bs, u in U]
         any(ex -> _depends(unwrap(ex), U), C) && throw(ArgumentError("the conditions on $name are nonlinear in E; $pform"))
+        any(B -> !_iszero_expr(substitute(B, Dict(unwrap(u) => 0 for u in U))), Bs) &&
+            throw(ArgumentError("the conditions on $name prescribe a nonzero tangential field, which is not supported; $pform"))
         for k in 1:3
             n = [2 * _spread(3k + d) - 1 for d in 1:3]
             n ./= norm(n)
             vals = Dict{Any, Any}(unwrap(N[d]) => n[d] for d in 1:3)
             merge!(vals, Dict(unwrap(u) => 0.0 for u in U))
-            any(B -> abs(_number(B, vals)) > 1.0e-12, Bs) &&
-                throw(ArgumentError("the conditions on $name prescribe a nonzero tangential field, which is not supported; $pform"))
             Cn = [_number(ex, vals) for ex in C]
             maximum(abs, Cn * n) > 1.0e-10 * maximum(abs, Cn) && throw(
                 ArgumentError("the conditions on $name are not tangential for every normal direction, as n × E = 0 is; $pform")
