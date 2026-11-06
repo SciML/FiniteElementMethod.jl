@@ -104,6 +104,7 @@ function MaxwellModel(
     absorbing = String.(collect(absorbing))
     foreach(name -> _check_facetset(grid, name), pec)
     foreach(name -> _check_facetset(grid, name), absorbing)
+    _check_disjoint_boundary_terms(grid, [absorbing; [String(port.facetset) for port in ports]])
     cell_materials = _cell_materials(grid, materials)
 
     ip = _NEDELEC
@@ -133,6 +134,18 @@ function MaxwellModel(
     return MaxwellModel(
         grid, dh, ch, cv, cell_materials, pec, float(eps0), float(mu0), L, blocks, terms, absorbing, port_data
     )
+end
+
+# Each absorbing facet set and port face adds a term over its facets, so a facet in two of them (or a name given
+# twice) would be counted twice.
+function _check_disjoint_boundary_terms(grid, names)
+    for i in eachindex(names), j in (i + 1):lastindex(names)
+        _check_facetset(grid, names[j])
+        isdisjoint(Ferrite.getfacetset(grid, names[i]), Ferrite.getfacetset(grid, names[j])) || throw(
+            ArgumentError("the facet sets $(repr(names[i])) and $(repr(names[j])) of `absorbing` and `ports` share facets, whose boundary terms would be added twice; give each facet one absorbing condition or port")
+        )
+    end
+    return nothing
 end
 
 function _check_cellset(grid, name)

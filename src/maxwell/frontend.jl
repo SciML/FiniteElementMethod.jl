@@ -321,10 +321,14 @@ function _recognise_boundaries(bcs, fields, pvals, ctx, domain, cells)
         end
         push!(isabc ? absorbing : pec, String(name))
     end
+    # Overlapping perfect-conductor pieces only constrain the same dofs again; any other overlap would add a
+    # boundary term twice or give a facet two conditions.
     grid = domain.mesh
-    for a in absorbing, p in pec
-        isdisjoint(Ferrite.getfacetset(grid, a), Ferrite.getfacetset(grid, p)) ||
-            throw(ArgumentError("the absorbing piece $a shares facets with the perfect-conductor piece $p; give each facet one condition"))
+    pieces = [sort(pec); sort(absorbing)]
+    for i in eachindex(pieces), j in (i + 1):lastindex(pieces)
+        a, b = pieces[i], pieces[j]
+        (a in absorbing || b in absorbing) && !isdisjoint(Ferrite.getfacetset(grid, a), Ferrite.getfacetset(grid, b)) &&
+            throw(ArgumentError("the pieces $a and $b share facets and one of them is absorbing; give each facet one condition"))
     end
     return (; pec = sort!(pec), absorbing = sort!(absorbing))
 end

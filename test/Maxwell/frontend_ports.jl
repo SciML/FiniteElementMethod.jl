@@ -160,9 +160,18 @@ end
         # Coefficients of the condition are constants on the piece, checked whole at every facet.
         @test occursin(r"depends on x;", message(() -> bad(cross(n, curl(Eb, X)) .~ -(1 + 0.1x) .* cross(n, cross(n, Dt.(Eb))))))
         # A second piece on the same facets with the other condition.
-        @test_throws ArgumentError("the absorbing piece top shares facets with the perfect-conductor piece lid; give each facet one condition") bad(
-            [abc(Γ); pec(Ω, ["lid"])]
-        )
+        overlap = "the pieces lid and top share facets and one of them is absorbing; give each facet one condition"
+        @test_throws ArgumentError(overlap) bad([abc(Γ); pec(Ω, ["lid"])])
+        # Codex r1: the matched condition on two pieces with the same facets would double the admittance.
+        @test_throws ArgumentError(overlap) bad([abc(Γ); abc(boundarypiece(Ω, :lid))])
+        # Two perfect-conductor pieces on the same facets constrain the same dofs and are fine.
+        @test bad(pec(Ω, ["top", "lid"])) isa LinearProblem
+        # The operator-level model refuses the same overlaps among absorbing sets and ports.
+        twice = "the facet sets \"top\" and \"lid\" of `absorbing` and `ports` share facets, whose boundary terms would be added twice; give each facet one absorbing condition or port"
+        @test_throws ArgumentError(twice) MaxwellModel(grid; pec = WALLS, absorbing = ["top", "lid"])
+        @test_throws ArgumentError(replace(twice, "\"lid\"" => "\"top\"")) MaxwellModel(grid; pec = WALLS, absorbing = ["top", "top"])
+        @test_throws ArgumentError(twice) MaxwellModel(grid; pec = WALLS, absorbing = ["top"], ports = [port("lid")])
+        @test_throws ArgumentError(replace(twice, "\"top\"" => "\"bottom\"", "\"lid\"" => "\"bottom\"")) MaxwellModel(grid; pec = WALLS, ports = [port("bottom"), port("bottom")])
 
         # Ports carry their own condition and need a frequency-independent model.
         portmsg(name) = "the wave port on bottom is the boundary condition of its facets, but the PDESystem also has a condition on $name, which shares facets with it; remove that condition"
