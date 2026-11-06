@@ -3,10 +3,13 @@
 
 Opaque wrapper for an assembled operator, used as a non-tunable `System` parameter so that
 ModelingToolkit neither flattens it into the tunable vector nor scans it element by element.
+`A` keeps its floating-point element type; any other matrix is converted to
+`SparseMatrixCSC{Float64, Int}`.
 """
-struct FEMOp
-    A::SparseMatrixCSC{Float64, Int}
+struct FEMOp{T <: AbstractFloat}
+    A::SparseMatrixCSC{T, Int}
 end
+FEMOp(A) = FEMOp{Float64}(A)
 Base.show(io::IO, ::FEMOp) = print(io, "FEMOp")
 
 """
@@ -107,23 +110,28 @@ so problems sharing this wrapper (remakes, ensembles) can be solved concurrently
 After [`eliminate_dirichlet`](@ref) the wrapper evaluates `N` at the full state rebuilt from
 the free dofs with `u_d = g_d`, and keeps its free rows and its `[free, free]` Jacobian block.
 
-The element pipeline is `Float64`: `N` is evaluated at `Float64` states and at first-order
-`ForwardDiff.Dual`s of `Float64` (as the default initializer passes), whose partials go through
-the analytic tangent. Any other state, such as `Float32`, `BigFloat`, `Dual`s of those or nested
-`Dual`s, throws `ArgumentError("the nonlinear operator evaluates Float64 states and first-order
-ForwardDiff Duals of Float64; got T")` with `T` the state's element type; its Jacobian is
-evaluated at `Float64` states only and otherwise throws `ArgumentError("the nonlinear
-operator's Jacobian evaluates Float64 states; got T")`.
+`N` is evaluated at `AbstractFloat` states, such as `Float64` or `Float32`, and at first-order
+`ForwardDiff.Dual`s of those (as the default initializer passes), whose partials go through the
+analytic tangent; the element buffers of `op` keep their own element type, `Float64` from
+[`NonlinearOperator`](@ref). Any other state, such as nested `Dual`s, throws
+`ArgumentError("the nonlinear operator evaluates AbstractFloat states and first-order
+ForwardDiff Duals of them; got T")` with `T` the state's element type; its Jacobian is
+evaluated at `AbstractFloat` states only and otherwise throws `ArgumentError("the nonlinear
+operator's Jacobian evaluates AbstractFloat states; got T")`. `p` keeps a floating-point
+element type and is converted to `Float64` otherwise.
 """
-struct FEMNonlinear
+struct FEMNonlinear{T <: AbstractFloat}
     op::Any
-    p::Vector{Float64}
+    p::Vector{T}
     prescribed::BitVector
     pool::Vector{Any}
     lock::ReentrantLock
     elimination::Any   # `nothing`, or `(e::DirichletElimination, nzmap)` with `nzmap` the positions of `J_N[free, free]` in `J_N`
 end
-FEMNonlinear(op, p, prescribed = falses(0)) = FEMNonlinear(op, collect(Float64, p), prescribed, Any[], ReentrantLock(), nothing)
+function FEMNonlinear(op, p, prescribed = falses(0))
+    T = eltype(p) <: AbstractFloat ? eltype(p) : Float64
+    return FEMNonlinear(op, collect(T, p), prescribed, Any[], ReentrantLock(), nothing)
+end
 Base.show(io::IO, ::FEMNonlinear) = print(io, "FEMNonlinear")
 
 # `f(op)` with an operator no other running call holds; the pool grows to the number of concurrent calls.
@@ -137,9 +145,9 @@ function with_operator(f, N::FEMNonlinear)
     end
 end
 
-check_state(::AbstractVector{Float64}) = nothing
-check_state(::AbstractVector{<:ForwardDiff.Dual{<:Any, Float64}}) = nothing
-check_state(u) = throw(ArgumentError("the nonlinear operator evaluates Float64 states and first-order ForwardDiff Duals of Float64; got $(eltype(u))"))
+check_state(::AbstractVector{<:AbstractFloat}) = nothing
+check_state(::AbstractVector{<:ForwardDiff.Dual{<:Any, <:AbstractFloat}}) = nothing
+check_state(u) = throw(ArgumentError("the nonlinear operator evaluates AbstractFloat states and first-order ForwardDiff Duals of them; got $(eltype(u))"))
 
 # `r .+= N(u, t)` outside the prescribed rows. After elimination `u` and `r` hold the free dofs only.
 function add_nonlinear!(r, N::FEMNonlinear, u, t)
@@ -161,8 +169,8 @@ function add_full_nonlinear!(r, N::FEMNonlinear, u, t)
 end
 
 # ForwardDiff states, as from the default initializer's NewtonRaphson: the partials are pushed through the
-# analytic tangent, `∂N(u) = J_N(value(u)) ∂u`, since the element buffers hold `Float64`.
-function add_full_nonlinear!(r, N::FEMNonlinear, u::AbstractVector{ForwardDiff.Dual{T, Float64, P}}, t) where {T, P}
+# analytic tangent, `∂N(u) = J_N(value(u)) ∂u`, since the element buffers hold plain floats.
+function add_full_nonlinear!(r, N::FEMNonlinear, u::AbstractVector{ForwardDiff.Dual{T, V, P}}, t) where {T, V <: AbstractFloat, P}
     du = [ForwardDiff.partials(x, k) for x in u, k in 1:P]
     return with_operator(N) do op
         J = jacobian!(op.J, op, ForwardDiff.value.(u), N.p, t)
@@ -178,8 +186,8 @@ nonlinear_residual!(r, N::FEMNonlinear, u, t) = add_nonlinear!(fill!(r, 0), N, u
 
 # `nonzeros(J) .+= nonzeros(∂N/∂u)` outside the prescribed rows; `J` must have the pattern of `N`'s Jacobian.
 function add_nonlinear_jacobian!(J, N::FEMNonlinear, u, t)
-    u isa AbstractVector{Float64} ||
-        throw(ArgumentError("the nonlinear operator's Jacobian evaluates Float64 states; got $(eltype(u))"))
+    u isa AbstractVector{<:AbstractFloat} ||
+        throw(ArgumentError("the nonlinear operator's Jacobian evaluates AbstractFloat states; got $(eltype(u))"))
     elimination = N.elimination
     return with_operator(N) do op
         if elimination === nothing
@@ -397,7 +405,9 @@ function fem_system(ops::FEMOperators, iv; unknowns = nothing, metadata = nothin
     D = Differential(iv)
     us = unknowns === nothing ?
         [only(@variables $field(iv)[1:length(r)]) for (field, r) in ops.fields] : collect(unknowns)
-    @parameters Mop::FEMOp [tunable = false] Kop::FEMOp [tunable = false] Fop::FEMLoad [tunable = false]
+    # MTKParameters needs a concrete (DataType) symtype for a non-numeric parameter, not the UnionAll `FEMOp`.
+    OpT = FEMOp{eltype(ops.K)}
+    @parameters Mop::OpT [tunable = false] Kop::OpT [tunable = false] Fop::FEMLoad [tunable = false]
     ranges = last.(ops.fields)
     linear(ri) = sum(fem_apply(Mop, ri, rj, D(uj)) + fem_apply(Kop, ri, rj, uj) for (rj, uj) in zip(ranges, us))
     ps = Any[Mop, Kop, Fop]
@@ -405,7 +415,8 @@ function fem_system(ops::FEMOperators, iv; unknowns = nothing, metadata = nothin
     if ops.nonlinear === nothing
         eqs = [fem_load(Fop, ri, iv) ~ linear(ri) for ri in ranges]
     else
-        @parameters Nop::FEMNonlinear [tunable = false]
+        NonlinearT = typeof(ops.nonlinear)
+        @parameters Nop::NonlinearT [tunable = false]
         push!(ps, Nop)
         state = foldl(fem_cat, us)
         eqs = [fem_load(Fop, ri, iv) ~ linear(ri) + fem_nonlinear(Nop, ri, iv, state) for ri in ranges]

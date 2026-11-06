@@ -264,7 +264,7 @@ _finish_cell!(op::LinearOp{Nothing, Nothing}, dofs) = (Ferrite.assemble!(op.F, d
 function assemble_sources!(F, ctx::AssemblyContext, kernels, p, t)
     fill!(F, 0)
     ne = _max_ndofs(ctx.dh)
-    op = LinearOp(nothing, nothing, F, zeros(ne, ne), zeros(ne, ne), zeros(ne))
+    op = LinearOp(nothing, nothing, F, zeros(ne, ne), zeros(ne, ne), zeros(eltype(F), ne))
     _assemble!(op, ctx, _split(ctx, kernels, (:source,))..., p, t)
     return F
 end

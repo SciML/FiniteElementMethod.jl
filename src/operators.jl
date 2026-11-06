@@ -7,15 +7,15 @@ The `:nonlinear` kernels of `kernels` on `ctx`, with preallocated residual `r`, 
 `allocate_matrix(dh, ch)`) and element scratch. Use [`residual!`](@ref), [`jacobian!`](@ref) and
 [`residual_jacobian!`](@ref); `op(r, u, p, t)` is `residual!(r, op, u, p, t)`.
 """
-struct NonlinearOperator{C <: AssemblyContext, V <: Tuple, G <: Tuple, JT}
+struct NonlinearOperator{C <: AssemblyContext, V <: Tuple, G <: Tuple, JT, T <: AbstractFloat}
     ctx::C
     volume::V
     groups::G
-    r::Vector{Float64}
+    r::Vector{T}
     J::JT
-    Je::Matrix{Float64}
-    re::Vector{Float64}
-    u_elem::Vector{Float64}
+    Je::Matrix{T}
+    re::Vector{T}
+    u_elem::Vector{T}
 end
 
 function NonlinearOperator(ctx::AssemblyContext, kernels; ch = nothing)
