@@ -91,13 +91,10 @@ function kernel_rows(pdesys, test_space)
         e.f === nothing || push!(rows, (tag * ".f", e.f, f.f, :full))
         e.tangent === nothing || push!(rows, (tag * ".tangent", e.tangent, f.tangent, :full))
     end
-    # `emit_dirichlet` has no `expression` keyword; this is its body.
-    s = an.slots
-    for (i, (bc, (_, _, g))) in enumerate(zip(an.essential, emit_dirichlet(an)))
-        ex = FEM.compile(FEM.assert_differentiated(bc.g), (s.X, s.T, s.P); expression = Val(true))
+    for (i, ((_, _, ex), (_, _, g))) in enumerate(zip(emit_dirichlet(an; expression = Val(true)), emit_dirichlet(an)))
         push!(rows, ("dirichlet$i", ex, g, :dirichlet))
     end
-    return rows, length(s.P)
+    return rows, length(an.slots.P)
 end
 
 # Every `(case, role, Expr, host function, signature, number of parameters)` of `CASES`.

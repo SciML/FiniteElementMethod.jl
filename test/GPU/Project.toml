@@ -11,6 +11,7 @@ KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 ModelingToolkit = "961ee093-0014-501f-94e3-6117800e7a78"
 NaNMath = "77ba4419-2d1f-58cd-9bb1-8ffee604a2e3"
+OrdinaryDiffEqBDF = "6ad6398a-0878-4a85-9266-38940aa047c8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 RuntimeGeneratedFunctions = "7e49a35a-f44a-4d26-94aa-eba1b4ca6b47"
 SafeTestsets = "1bc83da4-3b8d-516f-aca4-4fe02f6d838f"
@@ -19,6 +20,7 @@ Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
+Ferrite = {url = "https://github.com/Ferrite-FEM/Ferrite.jl", rev = "do/gpu-ci"}
 FiniteElementMethod = {path = "../.."}
 
 [compat]
@@ -33,6 +35,7 @@ KernelAbstractions = "0.9"
 LinearAlgebra = "1"
 ModelingToolkit = "11"
 NaNMath = "1.1.5"
+OrdinaryDiffEqBDF = "2.4.1"
 Random = "1"
 RuntimeGeneratedFunctions = "0.5.12"
 SafeTestsets = "0.1"

@@ -269,7 +269,7 @@ function assemble_sources!(F, ctx::AssemblyContext, kernels, p, t)
     return F
 end
 
-function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
+function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet; backend = nothing, precision = nothing, assembly = :colored)
     kernels = emit_kernels(wf)
     # `emit_kernels` sums the terms sharing an equation, kind and piece, so a kernel is dynamic when any of its terms is.
     terms = [[(t, nothing) for t in wf.volume]; [(t, t.piece) for t in wf.facet]]
@@ -281,7 +281,11 @@ function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
     ctx = AssemblyContext(space.dh, space.fields, space.cellvalues, space.facetvalues, pieces)
     n = Ferrite.ndofs(space.dh)
     M, K, F = copy(space.pattern), copy(space.pattern), zeros(n)
-    assemble_linear!(M, K, F, ctx, static, pvals; t = t0)
+    if backend === nothing
+        assemble_linear!(M, K, F, ctx, static, pvals; t = t0)
+    else
+        device_assemble_linear!(backend, precision, assembly, M, K, F, ctx, static, pvals, t0)
+    end
     load = isempty(dynamic) ? F : (out, t) -> (assemble_sources!(out, _fresh_values(ctx), dynamic, pvals, t); out .+= F)
     nonlinear = any(k -> k.kind === :nonlinear, kernels) ?
         FEMNonlinear(NonlinearOperator(_fresh_values(ctx), kernels; ch = space.ch), pvals) : nothing
@@ -359,6 +363,22 @@ function _check_boundary_conditions(disc::FEMDiscretization, an, ctx)
     return nothing
 end
 
+# What device assembly (`backend`) does not cover yet; each is refused before anything is assembled.
+function _check_device_scope(disc, wf)
+    unsupported(what) = throw(
+        ArgumentError(
+            "backend = $(disc.backend): device assembly does not support $what yet; " *
+                "remove the backend keyword to assemble on the host"
+        )
+    )
+    disc.dirichlet === :eliminate && unsupported("dirichlet = :eliminate (use the default dirichlet = :algebraic)")
+    disc.test_space isa SUPG && unsupported("the SUPG test space")
+    isempty(wf.facet) || unsupported("facet terms (Neumann and Robin conditions)")
+    any(t -> t.kind === :nonlinear, wf.volume) && unsupported("nonlinear terms")
+    any(t -> t.kind === :source && t.timedep, wf.volume) && unsupported("sources that depend on time")
+    return nothing
+end
+
 function _lower(pdesys, disc::FEMDiscretization)
     _check_domains(pdesys, disc)
     sys, replaced = PDEBase.make_pdesys_compatible(pdesys)
@@ -388,7 +408,8 @@ function _lower(pdesys, disc::FEMDiscretization)
                 "$(an.essential[timedep].piece.name) depends on time; use the default dirichlet = :algebraic"
         )
     )
-    ops, coords, raw = _operators(space, wf, names, dirichlet, pvals, t0, timedep !== nothing)
+    disc.backend === nothing || _check_device_scope(disc, wf)
+    ops, coords, raw = _operators(space, wf, names, dirichlet, pvals, t0, timedep !== nothing; disc.backend, disc.precision, disc.assembly)
     u0 = _initial_values(Equation[b.eq for b in ics], ctx, space, coords, an, names, pvals)
     dirichlet_values!(view(u0, ops.prescribed), ops.load, t0)
     elimination = nothing

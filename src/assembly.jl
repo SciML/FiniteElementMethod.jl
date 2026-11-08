@@ -597,3 +597,22 @@ end
     end
     return nothing
 end
+
+# Device assembly (`FEMDiscretization(...; backend)`). The methods for KernelAbstractions backends are in
+# FiniteElementMethodKAExt; the vendor extensions add `device_matrix_type` and `supports_float64` for their backends.
+is_device_backend(_) = false
+function device_matrix_type end
+function device_matrix end
+function supports_float64 end
+device_assemble_linear!(backend, args...) = throw(backend_error(backend))
+
+function backend_error(backend)
+    Base.get_extension(@__MODULE__, :FiniteElementMethodKAExt) === nothing || return ArgumentError(
+        "backend must be a KernelAbstractions.Backend, such as ROCBackend() or KernelAbstractions.CPU(), or nothing; got $(repr(backend))"
+    )
+    return ArgumentError(
+        "backend = $(repr(backend)) needs the KernelAbstractions extension of FiniteElementMethod: load " *
+            "KernelAbstractions, Adapt, GPUArrays and GPUArraysCore, and the vendor package (AMDGPU for ROCBackend()), " *
+            "with a Ferrite that has GPU support (Ferrite.jl PR #1496)"
+    )
+end

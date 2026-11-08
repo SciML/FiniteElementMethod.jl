@@ -1,8 +1,13 @@
 module FiniteElementMethodKAExt
 
 using FiniteElementMethod: FiniteElementMethod
-using KernelAbstractions: KernelAbstractions
-using RuntimeGeneratedFunctions: RuntimeGeneratedFunction, drop_expr
+const FEM = FiniteElementMethod
+using Adapt: adapt
+using Ferrite: Ferrite
+using KernelAbstractions: KernelAbstractions, @kernel, @index, @Const, @ndrange
+const KA = KernelAbstractions
+using RuntimeGeneratedFunctions: RuntimeGeneratedFunctions, RuntimeGeneratedFunction, drop_expr
+using SparseArrays: SparseArrays, SparseMatrixCSC, nonzeros, rowvals
 
 # NaNMath is not a dependency, so its functions are recognised by module and function name.
 callee(f::Function) = (parentmodule(f), nameof(f))
@@ -104,5 +109,7 @@ function launch_checked(launch, backend::KernelAbstractions.Backend, callees)
         throw(kernel_compile_error(backend, callees, err))
     end
 end
+
+include("FiniteElementMethodKAExt/assembly.jl")
 
 end # module
