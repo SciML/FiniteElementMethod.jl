@@ -1,16 +1,19 @@
 # Mesh domains with named boundary pieces. A `MeshDomain` takes its pieces from the facet sets of the Ferrite
 # grid: `boundarypiece(Ω, :name)` is the facet set "name". The sets come from `generate_grid`, from
-# `Ferrite.addfacetset!` on a grid you build, or from the physical groups of a Gmsh mesh read with FerriteGmsh.
+# `Ferrite.addfacetset!` on a grid you build, from the physical groups of a Gmsh mesh read with FerriteGmsh, or
+# from submeshes added with `add_boundary_pieces!`. A Meshes.jl mesh becomes a grid with `ferrite_grid`.
 # Each piece then carries its own boundary condition.
 using FiniteElementMethod, ModelingToolkit, DomainSets, OrdinaryDiffEqBDF, Test
 using Ferrite: Ferrite, generate_grid, Triangle, Vec
+using LinearAlgebra: Diagonal
 using FerriteGmsh: FerriteGmsh
 using Gmsh: Gmsh, gmsh
+using Meshes: Meshes
 using ModelingToolkit: t_nounits as t
 
 @parameters k α
-@variables x y u(..)
-Dt, Dx, Dy = Differential(t), Differential(x), Differential(y)
+@variables x y z u(..)
+Dt, Dx, Dy, Dz = Differential(t), Differential(x), Differential(y), Differential(z)
 laplacian(f) = Dx(Dx(f)) + Dy(Dy(f))
 
 # Writes a triangle mesh of the L-shape [0, 2]^2 minus (1, 2]^2 to `path` as a Gmsh .msh file, with the physical
@@ -93,4 +96,70 @@ end
     @test sol(1.0, 0.5, 1.5; dv = u(t, x, y)) ≈ 0.25 + 2.25 + 8 atol = 1.0e-7
     @test isnan(sol(1.0, 1.5, 1.5; dv = u(t, x, y)))
     @test_throws "has no facet set :outflow; valid names are :inlet, :outlet, :wall" boundarypiece(Ω, :outflow)
+end
+
+# PDE:    u_t = Δu
+# Domain: the square [0, 4]^2 with the square hole [1, 3]^2, t in (0, 1), a Meshes.jl `Pgon` triangulated
+#         with `Meshes.discretize` and converted with `ferrite_grid`; P2; the pieces outer and hole are the two
+#         rings, each discretized into a mesh of segments and added with `add_boundary_pieces!`
+# BCs:    outer and hole: Dirichlet u = x^2 + y^2 + 4t; IC u(0, x, y) = x^2 + y^2
+# Exact:  u = x^2 + y^2 + 4t, in the P2 space
+# Shows:  a Meshes.jl polygon becomes a domain whose pieces are its rings; the hole reads NaN.
+@testset "a Meshes.jl polygon with a hole is solved with its two rings as pieces" begin
+    outer = Meshes.Ring((0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0))
+    hole = Meshes.Ring((1.0, 1.0), (1.0, 3.0), (3.0, 3.0), (3.0, 1.0))
+    grid = ferrite_grid(Meshes.discretize(Meshes.Pgon(outer, hole)))
+    add_boundary_pieces!(grid, :outer => Meshes.discretize(outer), :hole => Meshes.discretize(hole))
+    Ω = MeshDomain(grid)
+    @test length(boundarypieces(Ω)) == 2
+    bcs = [[u(t, Γ) ~ x^2 + y^2 + 4t for Γ in boundarypiece.(Ω, (:outer, :hole))]; u(0, x, y) ~ x^2 + y^2]
+    @named pdesys = PDESystem([Dt(u(t, x, y)) ~ laplacian(u(t, x, y))], bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
+    sol = solve(discretize(pdesys, FEMDiscretization(Ω, t; spaces = Dict(u => Lagrange{RefTriangle, 2}()))), DFBDF(); abstol = 1.0e-10, reltol = 1.0e-10)
+    @test sol[u(t, x, y)][end, :] ≈ sol[x] .^ 2 .+ sol[y] .^ 2 .+ 4 atol = 1.0e-7
+    @test sol(1.0, 0.5, 2.0; dv = u(t, x, y)) ≈ 0.25 + 4 + 4 atol = 1.0e-7
+    @test isnan(sol(1.0, 2.0, 2.0; dv = u(t, x, y)))
+end
+
+# Solves u_t = Δu on the grid of a Meshes.jl mesh in 1, 2 or 3 dimensions, with u = |x|^2 + 2 dim t on the whole
+# boundary as one piece, and returns the largest nodal error at t = 1.
+function meshes_heat_error(mesh, ref)
+    grid = ferrite_grid(mesh)
+    Ferrite.addboundaryfacetset!(grid, Ferrite.ExclusiveTopology(grid), "boundary", Returns(true))
+    Ω = MeshDomain(grid)
+    X = (x, y, z)[1:Meshes.embeddim(mesh)]
+    exact = sum(abs2, X) + 2length(X) * t
+    bcs = [u(t, boundarypiece(Ω, :boundary)) ~ exact, u(0, X...) ~ sum(abs2, X)]
+    heat = Dt(u(t, X...)) ~ sum(ξ -> Differential(ξ)(Differential(ξ)(u(t, X...))), X)
+    @named pdesys = PDESystem([heat], bcs, [X ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, X...], [u(t, X...)], [])
+    sol = solve(discretize(pdesys, FEMDiscretization(Ω, t; spaces = Dict(u => Lagrange{ref, 2}()))), DFBDF(); abstol = 1.0e-10, reltol = 1.0e-10)
+    return maximum(abs, sol[u(t, X...)][end, :] .- sum(ξ -> sol[ξ] .^ 2, X) .- 2length(X))
+end
+
+# The unit box in `dim` dimensions with 2 cells per side, and its mirror image x -> 1 - x, whose cells all have the
+# other orientation.
+box(dim) = Meshes.CartesianGrid(ntuple(Returns(0.0), dim), ntuple(Returns(1.0), dim); dims = ntuple(Returns(2), dim))
+function mirror(mesh)
+    dim = Meshes.embeddim(mesh)
+    A, b = Diagonal([-1; ones(dim - 1)]), [1; zeros(dim - 1)]
+    return Meshes.SimpleMesh(Meshes.vertices(mesh), Meshes.topology(mesh)) |> Meshes.Affine(A, b)
+end
+
+# PDE:    u_t = Δu
+# Domain: the unit box, t in (0, 1), a Meshes.jl `CartesianGrid` with 2 cells per side, as segments,
+#         quadrangles, triangles, hexahedra or tetrahedra (`Meshes.simplexify`), and mirrored with a
+#         `Meshes.Affine` map; P2; one piece holds every boundary facet, added with `Ferrite.addboundaryfacetset!`
+# BCs:    Dirichlet u = |x|^2 + 2 dim t; IC u(0, x) = |x|^2
+# Exact:  u = |x|^2 + 2 dim t, in the P2 space
+# Shows:  `ferrite_grid` gives every cell the orientation Ferrite needs, also when Meshes.jl has the other one.
+@testset "a Meshes.jl grid of $name is solved exactly" for (name, mesh, ref) in (
+        ("mirrored segments", mirror(box(1)), RefLine),
+        ("quadrangles", box(2), RefQuadrilateral),
+        ("mirrored quadrangles", mirror(box(2)), RefQuadrilateral),
+        ("mirrored triangles", Meshes.simplexify(mirror(box(2))), RefTriangle),
+        ("hexahedra", box(3), RefHexahedron),
+        ("mirrored hexahedra", mirror(box(3)), RefHexahedron),
+        ("tetrahedra", Meshes.simplexify(box(3)), RefTetrahedron),
+        ("mirrored tetrahedra", Meshes.simplexify(mirror(box(3))), RefTetrahedron),
+    )
+    @test meshes_heat_error(mesh, ref) < 1.0e-7
 end
