@@ -100,6 +100,23 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         end
     end
 
+    @testset "NonlinearProblem(pdesys, disc) is deprecated in favour of discretize" begin
+        Ω = MeshDomain(rectangle_grid(Triangle, (2, 2)))
+        @named steady = PDESystem([Dx(Dx(u(x, y))) + Dy(Dy(u(x, y))) ~ 0], [u(Γ) ~ 0 for Γ in boundarypiece.(Ω, (:left, :right, :bottom, :top))], [(x, y) ∈ Ω], [x, y], [u(x, y)], [])
+        disc = FEMDiscretization(Ω; abstol = 1.0e-12)
+        @test_deprecated r"discretize" SciMLBase.NonlinearProblem(steady, disc)
+        old = with_logger(NullLogger()) do
+            SciMLBase.NonlinearProblem(steady, disc)
+        end
+        new = discretize(steady, disc)
+        @test old isa SciMLBase.NonlinearProblem
+        @test old.u0 == new.u0 && old.kwargs == new.kwargs
+        @named pdesys = PDESystem([heat_eq], [dirichlet_all(Ω); ic], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
+        with_logger(NullLogger()) do
+            @test_throws "the FEMDiscretization has the time variable t, so it lowers to a DAEProblem" SciMLBase.NonlinearProblem(pdesys, FEMDiscretization(Ω, t))
+        end
+    end
+
     @testset "PDESystem without parameters" begin
         # Leaving out `ps` gives the system `NullParameters()`, which means no parameters.
         Ω = MeshDomain(rectangle_grid(Triangle, (4, 4)))

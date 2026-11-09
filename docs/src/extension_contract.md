@@ -22,8 +22,8 @@ accepts a `ModelingToolkit.PDESystem` on a `MeshDomain` and returns
     when it has none, `FEMDiscretization(Ω)`, for a nonlinear solver such as `NewtonRaphson`.
 
 Both carry the sparse analytic Jacobian and its prototype, so `solve(prob, alg)` needs nothing
-else. `NonlinearProblem(pdesys, disc)` builds the steady problem directly; the corresponding
-`DAEProblem(pdesys, disc)` is deprecated in favour of `discretize`.
+else. `NonlinearProblem(pdesys, disc)` and `DAEProblem(pdesys, disc)` are deprecated in favour of
+`discretize`.
 
 ## Keywords
 

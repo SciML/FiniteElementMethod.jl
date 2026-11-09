@@ -72,7 +72,6 @@ const DERIVED_VALUES = (tspan = (0.0, 2.0), u0 = zeros(9), p = [1.0], differenti
         @test_throws ArgumentError(DERIVED_MESSAGES.tspan) FEMDiscretization(Ω, t; tspan = (0.0, 2.0))
         @test_throws ArgumentError(DERIVED_MESSAGES.p) FEMDiscretization(Ω; p = [1.0])
         steady = poisson_system(Ω)
-        @test_throws ArgumentError(DERIVED_MESSAGES.u0) SciMLBase.NonlinearProblem(steady, FEMDiscretization(Ω); u0 = zeros(9))
         @test_throws ArgumentError(DERIVED_MESSAGES.u0) discretize(steady, FEMDiscretization(Ω); u0 = zeros(9))
     end
 

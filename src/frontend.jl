@@ -536,12 +536,14 @@ _daeproblem(pdesys, disc; kwargs...) =
     throw(
         ArgumentError(
             "the FEMDiscretization has no time variable, so it lowers to a NonlinearProblem, not a DAEProblem; " *
-            "call discretize(pdesys, disc) or NonlinearProblem(pdesys, disc)"
+            "call discretize(pdesys, disc)"
         )
     ) : SciMLBase.discretize(pdesys, disc; kwargs...)
 
 """
     NonlinearProblem(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
+
+Deprecated: use `discretize(pdesys, disc; kwargs...)`, which returns the same problem.
 
 Discretize the steady `pdesys` with a `disc` that has no time variable and return the
 `NonlinearProblem` `K u + N(u) - F = 0` of the Galerkin operators, with Dirichlet rows
@@ -560,6 +562,11 @@ Keywords are passed to the `NonlinearProblem` after `disc.kwargs`; the keywords
 `differential_vars` are rejected, as for the `DAEProblem`.
 """
 function SciMLBase.NonlinearProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
+    Base.depwarn("`NonlinearProblem(pdesys, disc)` is deprecated, use `discretize(pdesys, disc)` instead", :NonlinearProblem)
+    return _nonlinearproblem(pdesys, disc; kwargs...)
+end
+
+function _nonlinearproblem(pdesys, disc; kwargs...)
     disc.time === nothing || throw(
         ArgumentError(
             "the FEMDiscretization has the time variable $(disc.time), so it lowers to a DAEProblem; " *

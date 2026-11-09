@@ -103,10 +103,6 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         )
         @named transient = PDESystem([heat], [dirichlet(Ω); ic], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
         @test_throws ArgumentError(
-            "the FEMDiscretization has the time variable t, so it lowers to a DAEProblem; " *
-                "for a steady problem write FEMDiscretization(Ω) without a time variable"
-        ) SciMLBase.NonlinearProblem(transient, FEMDiscretization(Ω, t))
-        @test_throws ArgumentError(
             "the PDESystem pairs t with an interval, but the FEMDiscretization has no time variable; " *
                 "for a time-dependent problem write FEMDiscretization(Ω, t)"
         ) discretize(transient, FEMDiscretization(Ω))

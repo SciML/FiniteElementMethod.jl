@@ -13,7 +13,7 @@ Finite-element discretization of a `PDESystem` whose spatial domain is the mesh 
 (of a `Ferrite.Grid`), with time variable `t`. `discretize(pdesys, disc)` assembles the
 Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknown per field.
 Without `t` the discretization is steady: the `PDESystem` must have no time variable, and
-`discretize` (or `NonlinearProblem(pdesys, disc)`) returns a `NonlinearProblem` whose `solve`
+`discretize` returns a `NonlinearProblem` whose `solve`
 gives a `PDENoTimeSolution`.
 
   - `spaces`: dependent variable (`u` or `u(t, x, y)`) `=>` `Ferrite.Interpolation`; the
@@ -75,7 +75,7 @@ gives a `PDENoTimeSolution`.
     `sol(t, x, y)`, traces and `write_vtk`; only `sol.original_sol` and the array unknowns
     hold the free dofs alone. `:algebraic` is recommended.
   - `codegen = :mtk` is reserved and raises; remaining keywords are
-    passed to the `DAEProblem` (or `NonlinearProblem`), where a keyword given at the
+    passed to the `DAEProblem` (or the steady `NonlinearProblem`), where a keyword given at the
     `discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate`, `name` and `parameters` are set
     by the discretization and rejected, as are `tspan`, `u0`, `p` and `differential_vars`, which
     come from the `PDESystem` and the weak form.
