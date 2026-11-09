@@ -52,7 +52,7 @@ gives a `PDENoTimeSolution`.
     pressure in `0 ~ Dx(u1) + Dy(u2)`; a nonlinear term in the field, as in `0 ~ v^2 - u`,
     counts as present), and nothing otherwise; a positive number sets that
     value on the algebraic rows of any system; `nothing` sets nothing. The differential rows
-    get the `abstol` passed to `FEMDiscretization` or `DAEProblem` if it is a number, else
+    get the `abstol` passed to `FEMDiscretization` or `discretize` if it is a number, else
     OrdinaryDiffEq's default `1e-6`; an array `abstol` passed there is used as it is. An
     `abstol` passed to `solve` replaces the problem's whole vector. The keyword belongs to the
     time-dependent (DAE) path: a steady discretization ignores `:auto` and `nothing` and

@@ -526,7 +526,12 @@ function _abstol(algebraic, ops, selfnonlinear, abstol)
     return (; abstol = [d ? differential : algebraic for d in ops.differential_vars])
 end
 
-SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...) =
+function SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
+    Base.depwarn("`DAEProblem(pdesys, disc)` is deprecated, use `discretize(pdesys, disc)` instead", :DAEProblem)
+    return _daeproblem(pdesys, disc; kwargs...)
+end
+
+_daeproblem(pdesys, disc; kwargs...) =
     disc.time === nothing ?
     throw(
         ArgumentError(

@@ -61,7 +61,6 @@ end
     timed = [u(t, Γ) ~ sin(t) for Γ in (left, right, bottom, top)]
     @test_throws "dirichlet = :eliminate needs Dirichlet data that are constant in time" lower([heat], [timed; ic]; dirichlet = :eliminate)
     @named steady = PDESystem([Dx(Dx(u(x, y))) + Dy(Dy(u(x, y))) ~ 0], [u(Γ) ~ 0 for Γ in (left, right, bottom, top)], [(x, y) ∈ Ω], [x, y], [u(x, y)], [])
-    @test_throws "the FEMDiscretization has no time variable, so it lowers to a NonlinearProblem" DAEProblem(steady, FEMDiscretization(Ω))
     @named transient = PDESystem([heat], [dirichlet; ic], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
     @test_throws "for a time-dependent problem write FEMDiscretization(Ω, t)" discretize(transient, FEMDiscretization(Ω))
     @test_throws "`spaces` has keys that are not dependent variables of the system: v" lower(

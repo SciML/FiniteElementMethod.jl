@@ -101,10 +101,6 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
         @named steady = PDESystem(
             [Dx(Dx(u(x, y))) + Dy(Dy(u(x, y))) ~ 0], [u(Γ) ~ 0 for Γ in sides(Ω)], [(x, y) ∈ Ω], [x, y], [u(x, y)], []
         )
-        @test_throws ArgumentError(
-            "the FEMDiscretization has no time variable, so it lowers to a NonlinearProblem, not a DAEProblem; " *
-                "call discretize(pdesys, disc) or NonlinearProblem(pdesys, disc)"
-        ) DAEProblem(steady, FEMDiscretization(Ω))
         @named transient = PDESystem([heat], [dirichlet(Ω); ic], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
         @test_throws ArgumentError(
             "the FEMDiscretization has the time variable t, so it lowers to a DAEProblem; " *

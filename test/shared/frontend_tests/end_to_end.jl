@@ -2,6 +2,7 @@
 # solution. Each manufactured solution lies in the finite-element space and the quadrature is exact
 # for its data, so the nodal error is at the level of the time-integration tolerance.
 using Test
+using Base.CoreLogging: with_logger, NullLogger
 using FiniteElementMethod: FiniteElementMethod, rectangle_grid
 using Ferrite: Triangle, Quadrilateral, Line
 
@@ -80,6 +81,23 @@ dirichlet_all(Ω) = [u(t, Γ) ~ (1 + x + 2y) * (1 + t) for Γ in pieces(Ω)]
         sys, tspan = SciMLBase.symbolic_discretize(pdesys, FEMDiscretization(Ω, t))
         @test tspan == (0.0, 1.0)
         @test sys isa ModelingToolkit.System
+    end
+
+    @testset "DAEProblem(pdesys, disc) is deprecated in favour of discretize" begin
+        Ω = MeshDomain(rectangle_grid(Triangle, (2, 2)))
+        @named pdesys = PDESystem([heat_eq], [dirichlet_all(Ω); ic], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
+        disc = FEMDiscretization(Ω, t; saveat = 0.25)
+        @test_deprecated r"discretize" SciMLBase.DAEProblem(pdesys, disc; tstops = [0.5])
+        old = with_logger(NullLogger()) do
+            SciMLBase.DAEProblem(pdesys, disc; tstops = [0.5])
+        end
+        new = discretize(pdesys, disc; tstops = [0.5])
+        @test old isa SciMLBase.DAEProblem
+        @test old.u0 == new.u0 && old.du0 == new.du0 && old.tspan == new.tspan && old.kwargs == new.kwargs
+        @named steady = PDESystem([Dx(Dx(u(x, y))) + Dy(Dy(u(x, y))) ~ 0], [u(Γ) ~ 0 for Γ in boundarypiece.(Ω, (:left, :right, :bottom, :top))], [(x, y) ∈ Ω], [x, y], [u(x, y)], [])
+        with_logger(NullLogger()) do
+            @test_throws "the FEMDiscretization has no time variable, so it lowers to a NonlinearProblem" SciMLBase.DAEProblem(steady, FEMDiscretization(Ω))
+        end
     end
 
     @testset "PDESystem without parameters" begin
