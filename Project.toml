@@ -1,7 +1,7 @@
 name = "FiniteElementMethod"
 uuid = "e08948db-0ae8-498a-9b98-73fc7f237ce3"
 version = "0.1.0"
-authors = ["Alex Jones <alex.jones@juliahub.com>"]
+authors = ["Alex Jones <alex.w.jones1994@gmail.com>"]
 
 [deps]
 ADTypes = "47edcb42-4c32-4615-8424-f2b9edc5f35b"
