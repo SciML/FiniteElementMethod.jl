@@ -74,7 +74,7 @@ function dfg_problem(grid; tend = 30.0, ν_ = 1.0e-3, Umax_ = 0.3, ramp = 1 - ex
         Ω, t; spaces = Dict(u => Q2, v => Q2, p => Q1), pairing = Dict(eqs[3] => p), natural = [Γout],
         initializealg = CheckInit(), kwargs...
     )
-    return DAEProblem(dfg, disc)
+    return discretize(dfg, disc)
 end
 
 "Absolute tolerances: `abstol` on the differential variables, none (1e8) on the algebraic ones."
