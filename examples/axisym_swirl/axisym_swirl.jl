@@ -81,7 +81,7 @@ function axisym_problem(grid; tend, abstol = 1.0e-8)
         Ω, t; spaces = Dict(ur => P2, ut => P2, uz => P2, p => P1), pairing = Dict(eqs[4] => p),
         ibp = Dict(eqs[i] => Weighted(r) for i in 1:3), natural = [Γaxis], initializealg = CheckInit(), abstol
     )
-    return DAEProblem(axisym, disc)
+    return discretize(axisym, disc)
 end
 
 """

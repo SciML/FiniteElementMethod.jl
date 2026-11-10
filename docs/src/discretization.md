@@ -1,6 +1,6 @@
 # Discretization
 
-`FEMDiscretization`, `Galerkin`, `SUPG` and `add_boundary_pieces!` are exported, as are the PDEBase names a model needs
+`FEMDiscretization`, `Galerkin`, `SUPG`, `add_boundary_pieces!` and `ferrite_grid` are exported, as are the PDEBase names a model needs
 (`MeshDomain`, `Region`, `boundarypiece`, `boundarypieces`, `NormalDerivative`) and Ferrite's
 `Lagrange` and reference shapes. [Getting started](@ref) shows them in use.
 
@@ -19,6 +19,12 @@ FiniteElementMethod.operators
 
 ```@docs
 add_boundary_pieces!
+```
+
+## Meshes from other packages
+
+```@docs
+ferrite_grid
 ```
 
 `discretize(pdesys, disc)` returns the `DAEProblem` of the discretization (the `NonlinearProblem` of a steady one, see [Steady problems](@ref)). `symbolic_discretize(pdesys, disc)`
@@ -123,6 +129,46 @@ tested with `τ b·∇v`, which needs the shape-function Hessians, so the `CellV
 with them. Limits: linear terms only, `τ` and `b` must be numbers or expressions in the
 coordinates, time and `hK` (not parameters of the `PDESystem`), and boundary terms stay
 Galerkin.
+
+## Weighted and axisymmetric problems
+
+`ibp = Dict(eq => Weighted(w))` (`Weighted` is exported from `PDEBase.StrongForm`) multiplies the equation `eq` by the
+weight `w`, an expression in the coordinates, before it is integrated by parts; that is, `eq` is tested with `w v`
+instead of `v`. In axisymmetric coordinates `(r, z)` the volume element is `r dr dz`, so `w = r` turns the radial
+operator `(1/r) ∂ᵣ(r ∂ᵣu)` into the divergence `∇⋅(r ∇u)`. The weak form is then the symmetric `∫ r ∇u⋅∇v` with mass
+`∫ r u v`, with no product-rule correction term; the default policy, `ProductRule()`, would split the `1/r` factor
+and give a non-symmetric stiffness matrix. The weight kills the boundary term on the axis `r = 0`, so a field that
+is regular there needs no condition on it: list the axis piece in `natural`. Other weights work the same way, such
+as `Weighted(r^2)` for the spherical Laplacian. The continuity equation of axisymmetric flow is weighted by `r` in the same way, with `ibp = Dict(continuity => Weighted(r))`.
+
+The axisymmetric heat equation `uₜ = (1/r) ∂ᵣ(r ∂ᵣu) + ∂ᶻᶻu + f` on the half-strip `(r, z) ∈ [0, 1] × [-1, 1]`, with
+the source `f` chosen so that `exp(-t - r² - z²)` is the solution:
+
+```julia
+using FiniteElementMethod, ModelingToolkit, DomainSets, OrdinaryDiffEqBDF
+using ModelingToolkit: t_nounits as t
+using Symbolics: expand_derivatives, substitute
+using Ferrite: Triangle
+
+@variables r z u(..)
+Dt, Dr, Dz = Differential(t), Differential(r), Differential(z)
+exact = exp(-t - r^2 - z^2)
+f = expand_derivatives(Dt(exact) - (Dr(r * Dr(exact)) / r + Dz(Dz(exact))))
+
+Ω = MeshDomain(FiniteElementMethod.rectangle_grid(Triangle, (16, 16); lo = (0.0, -1.0), hi = (1.0, 1.0)))
+axis, outer, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+U = u(t, r, z)
+eq = Dt(U) ~ Dr(r * Dr(U)) / r + Dz(Dz(U)) + f
+bcs = [[u(t, Γ) ~ exact for Γ in (outer, bottom, top)]; u(0, r, z) ~ substitute(exact, t => 0)]
+@named pdesys = PDESystem([eq], bcs, [(r, z) ∈ Ω, t ∈ Interval(0.0, 0.5)], [t, r, z], [U], [])
+
+disc = FEMDiscretization(
+    Ω, t; spaces = Dict(u => Lagrange{RefTriangle, 2}()), ibp = Dict(eq => Weighted(r)), natural = (axis,),
+)
+sol = solve(discretize(pdesys, disc), DFBDF())
+```
+
+`test/shared/frontend_tests/weighted.jl` runs this problem on three meshes and checks the P2 convergence rate.
 
 ## Curved meshes
 
