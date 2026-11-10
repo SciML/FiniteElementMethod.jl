@@ -117,7 +117,7 @@ end
     @testset "Jacobian against finite differences, Dirichlet rows" begin
         Ω = square()
         eq = Dt(U) + U * Dx(U) ~ Dx((1 + U^2) * Dx(U)) + Dy(Dy(U)) - U^2 + (1 + x + 2y)
-        prob = DAEProblem(pdesystem([eq], [dirichlet(Ω); ic], Ω), FEMDiscretization(Ω, t))
+        prob = discretize(pdesystem([eq], [dirichlet(Ω); ic], Ω), FEMDiscretization(Ω, t))
         n = length(prob.u0)
         rng_u = [0.3 + 0.1 * sin(3i) for i in 1:n]
         rng_du = [0.2 * cos(5i) for i in 1:n]
@@ -141,7 +141,7 @@ end
         # see Dual states; the time-dependent source exercises the load path too.
         Ω = square()
         eq = Dt(U) ~ Dx((1 + U^2) * Dx(U)) + Dy((1 + U^2) * Dy(U)) + (1 + x + 2y) - 10 * ustar * (1 + t)^2
-        prob = DAEProblem(pdesystem([eq], [dirichlet(Ω); ic], Ω), FEMDiscretization(Ω, t))
+        prob = discretize(pdesystem([eq], [dirichlet(Ω); ic], Ω), FEMDiscretization(Ω, t))
         dofs = prob.problem_type.space.ch.prescribed_dofs
         u0 = copy(prob.u0)
         u0[dofs] .+= 0.5
@@ -154,7 +154,7 @@ end
         # Every evaluation borrows its own copy of the nonlinear operator's buffers and values objects.
         Ω = MeshDomain(rectangle_grid(Triangle, (16, 16)))
         eq = Dt(U) ~ Dx((1 + U^2) * Dx(U)) + Dy((1 + U^2) * Dy(U)) + (1 + x + 2y) - 10 * ustar * (1 + t)^2
-        prob = DAEProblem(pdesystem([eq], [dirichlet(Ω); ic], Ω), FEMDiscretization(Ω, t))
+        prob = discretize(pdesystem([eq], [dirichlet(Ω); ic], Ω), FEMDiscretization(Ω, t))
         probs = [remake(prob; u0 = s * prob.u0) for s in (1.0, 1.3, 0.7)]
         final(q) = solve(q, EXACT_ROWS; abstol = 1.0e-8, reltol = 1.0e-8).original_sol.u[end]
         serial = final.(probs)
@@ -167,7 +167,7 @@ end
     @testset "AbstractFloat states and their Duals are evaluated, nested Duals are rejected" begin
         Ω = square()
         eq = Dt(U) ~ Dx((1 + U^2) * Dx(U)) + Dy(Dy(U)) + (1 + x + 2y) - 2 * ustar * (1 + t)^2
-        prob = DAEProblem(pdesystem([eq], [dirichlet(Ω); ic], Ω), FEMDiscretization(Ω, t))
+        prob = discretize(pdesystem([eq], [dirichlet(Ω); ic], Ω), FEMDiscretization(Ω, t))
         n = length(prob.u0)
         Dual = FiniteElementMethod.ForwardDiff.Dual
         value = FiniteElementMethod.ForwardDiff.value
@@ -255,7 +255,7 @@ end
         # The operators, the nonlinear one included, hold the values they were assembled with (spec §8.3).
         Ω = square()
         eq = Dt(U) ~ Dx((1 + k * U^2) * Dx(U)) + Dy(Dy(U)) + (1 + x + 2y) - 2k * ustar * (1 + t)^2
-        prob = DAEProblem(pdesystem([eq], [dirichlet(Ω); ic], Ω; ps = [k => 1.0]), FEMDiscretization(Ω, t))
+        prob = discretize(pdesystem([eq], [dirichlet(Ω); ic], Ω; ps = [k => 1.0]), FEMDiscretization(Ω, t))
         sol = solve(prob, EXACT_ROWS; abstol = 1.0e-10, reltol = 1.0e-10)
         @test nodal_error(sol, U, uexact) <= tol
         @test SciMLBase.successful_retcode(solve(remake(prob; p = [k => 1.0]), EXACT_ROWS))
@@ -266,7 +266,7 @@ end
 
 @testset verbose = true "still-rejected nonlinear classes" begin
     Ω = square()
-    lower(eqs, bcs = [dirichlet(Ω); ic]) = DAEProblem(pdesystem(eqs, bcs, Ω), FEMDiscretization(Ω, t))
+    lower(eqs, bcs = [dirichlet(Ω); ic]) = discretize(pdesystem(eqs, bcs, Ω), FEMDiscretization(Ω, t))
     # Raised by PDEBase's strong-form analysis with the messages of spec Appendix A.
     @test_throws ErrorException("state-dependent mass in Differential(t, 1)(u(t, x, y))*(u(t, x, y)^2) needs residual-form DAE") lower(
         [(1 + U^2) * Dt(U) ~ Dx(Dx(U)) + Dy(Dy(U))]
