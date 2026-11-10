@@ -39,7 +39,8 @@ Restrictions of this release:
 ## Geometries and coordinates
 
 The spatial domain is a `MeshDomain(grid)` of a `Ferrite.Grid`, for example one read from Gmsh
-with `FerriteGmsh.togrid` or made with `Ferrite.generate_grid`. Boundary pieces are the grid's
+with `FerriteGmsh.togrid`, made with `Ferrite.generate_grid` or converted from a Meshes.jl mesh
+with [`ferrite_grid`](@ref). Boundary pieces are the grid's
 facet sets: `boundarypiece(Ω, :inlet)` is the facet set `"inlet"`. Pieces must be disjoint; a
 facet in two pieces that both carry conditions is an error naming the first shared facet, and a
 piece containing an interior facet (one shared by two cells) is an error, since a piece lies on
@@ -64,6 +65,17 @@ add_boundary_pieces!(grid, :inlet => inlet_mesh, :wall => wall_mesh)
 
 A submesh cell that matches no facet of the parent, or only an interior facet, is an error that
 names the cell and where it is. The grid's own facet sets work as before.
+
+With Meshes.jl loaded, a submesh may also be a Meshes.jl mesh, such as the rings of a polygon:
+
+```julia
+using Meshes: Meshes
+outer = Meshes.Ring((0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0))
+hole = Meshes.Ring((1.0, 1.0), (1.0, 3.0), (3.0, 3.0), (3.0, 1.0))
+grid = ferrite_grid(Meshes.discretize(Meshes.Pgon(outer, hole)))
+add_boundary_pieces!(grid, :outer => Meshes.discretize(outer), :hole => Meshes.discretize(hole))
+Ω = MeshDomain(grid)
+```
 
 Coordinates are Cartesian. Their names and order come from the `(x, y) ∈ Ω` pairing (see
 [Coordinate binding](@ref)). A curvilinear operator, such as a radial Laplacian, is written
