@@ -110,8 +110,8 @@ those; `krylovdim` grows with the candidate count.
 Edge elements carry the gradients of the nodal hat functions as an exact `λ = 0` null space (one mode per node
 off the PEC facets, less one per connected part of the mesh without PEC), which would swamp the shift-invert for any target below the lowest physical mode. Every
 Krylov vector is therefore projected, along those gradients, onto the discretely divergence-free fields, so the
-null space never enters; eigenvalues with `|λ| < nullspace_tol |σ|` (such as the one constant mode of each
-further disconnected PEC body) are dropped as well.
+null space never enters; eigenvalues with `|λ| < nullspace_tol min(σ, ‖Kc‖₁/‖Mε‖₁)` (such as the one constant mode of
+each further disconnected PEC body) are dropped as well, and the search widens until `nev` modes survive.
 
 Returns `(; frequency, Q, omega, modes)`: `omega` the complex angular frequencies `ω = √λ / (L √(μ0 ε0))`,
 `frequency = Re(ω) / 2π` in Hz, `Q = Re(ω) / (2 Im(ω))` (`Inf` for a lossless model; with `exp(+iωt)` a passive
@@ -144,6 +144,9 @@ function maxwell_eigenmodes(
     M = lossy ? blocks.eps_real[free, free] + im * blocks.eps_imag[free, free] : blocks.eps_real[free, free]
     σ = scale * (2π * target_frequency)^2
     F = lu(K - σ * M)
+    # The cutoff for the null space is relative to the spectrum of the model, ‖K‖/‖M‖ of the order of its largest λ,
+    # and to σ when that is smaller; relative to σ alone, a high target would discard the lowest physical modes.
+    λ_null = nullspace_tol * min(σ, opnorm(K, 1) / opnorm(M, 1))
 
     # The gradients of the hat functions of nodes off the PEC facets vanish on the PEC edges; project along them.
     Gfull, dhn = _discrete_gradient(model)
@@ -172,10 +175,14 @@ function maxwell_eigenmodes(
         # The dense spectrum also holds the projected-out gradients (θ = 0): their eigenvectors lie in the range of
         # G, which the projection annihilates, while every other eigenvector is left unchanged by it.
         physical(v) = norm(project(v)) > norm(v) / 2
-        keep = findall(j -> physical(vecs[j]) && abs(λ[j]) >= nullspace_tol * σ, eachindex(λ))
+        keep = findall(j -> physical(vecs[j]) && abs(λ[j]) >= λ_null, eachindex(λ))
         dist = abs.(sqrt.(complex.(λ[keep]) ./ scale) .- ωt)
         keep = keep[sortperm(dist)]
-        length(keep) < nev && break
+        if length(keep) < nev
+            dense && break
+            howmany = 2howmany  # the filter took too many of the candidates, so look further out
+            continue
+        end
         d = sort(dist)[nev]
         (dense || maximum(l -> abs(l - σ), λ[keep]) >= (2ωt + d) * d * scale) && break
         howmany = 2howmany

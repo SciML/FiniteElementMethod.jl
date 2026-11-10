@@ -60,6 +60,22 @@ end
     @test maxwell_eigenmodes(box_model(3); nev = 1, target_frequency = 0.98).frequency[1] ≈ EXACT[2] rtol = 0.01
 end
 
+@testset "null-space cutoff: not relative to a high target, and the search widens past what it drops" begin
+    # box_model(1) has 93 modes outside the gradient null space; the lowest is 0.83, below 1e-3 of the target.
+    small = box_model(1)
+    high = maxwell_eigenmodes(small; nev = 93, target_frequency = 1000.0)
+    @test length(high.frequency) == 93
+    @test high.frequency[1] ≈ maxwell_eigenmodes(small; nev = 1, target_frequency = 0.9).frequency[1] rtol = 1.0e-8
+    # A cutoff of 12σ drops every mode below 1.39 Hz from a target of 0.4: the 2nev = 6 nearest candidates are all
+    # dropped, and the search must go on to find the next three rather than stop with fewer.
+    model = box_model(2)
+    krylov = maxwell_eigenmodes(model; nev = 3, target_frequency = 0.4, nullspace_tol = 12.0)
+    dense = maxwell_eigenmodes(model; nev = 3, target_frequency = 0.4, nullspace_tol = 12.0, krylovdim = 10_000)
+    @test length(krylov.frequency) == 3
+    @test all(>(sqrt(12) * 0.4), krylov.frequency)
+    @test krylov.frequency ≈ dense.frequency rtol = 1.0e-8
+end
+
 @testset "lossy: nearest in complex ω, and the candidate bound holds" begin
     # eps_r = 1 - 100i scales ω by 1/√(1 - 100i): the lowest modes sit at Re f = 0.0592, 0.0794, 0.0854 with
     # Im f about as large. From 0.0854 the nearest in complex ω is the first, and shift-invert ranks the first
