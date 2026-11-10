@@ -27,9 +27,9 @@ run_qa(
         all_explicit_imports_via_owners = (; ignore = (LTS_MTK_OWNER..., :curl)),
         all_qualified_accesses_via_owners = (; ignore = (LTS_MTK_OWNER..., :curl)),
     ),
-    # The user API of a FEM model: PDEBase's mesh vocabulary and Ferrite's interpolations.
+    # The user API of a FEM model: PDEBase's mesh vocabulary and weighted integration by parts, and Ferrite's interpolations.
     reexports_allow = (
         :MeshDomain, :Region, :boundarypiece, :boundarypieces, :NormalDerivative, :Lagrange,
-        :RefLine, :RefTriangle, :RefQuadrilateral, :RefTetrahedron, :RefHexahedron, :curl,
+        :RefLine, :RefTriangle, :RefQuadrilateral, :RefTetrahedron, :RefHexahedron, :curl, :Weighted,
     ),
 )

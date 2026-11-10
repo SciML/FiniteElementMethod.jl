@@ -2,7 +2,7 @@
 # perfect-conductor condition need PDEBase's facet normal (SciML/PDEBase.jl#164) and are skipped without it.
 using FiniteElementMethod, Ferrite, ModelingToolkit, DomainSets, LinearAlgebra, SparseArrays, Test
 using LinearSolve: LinearSolve  # the default solver of the LinearProblem; its exports clash with Ferrite's
-using SciMLBase: DAEProblem, LinearProblem, NonlinearProblem, discretize, solve, symbolic_discretize
+using SciMLBase: LinearProblem, discretize, solve, symbolic_discretize
 using FiniteElementMethod: PDEBase
 using Symbolics: expand_derivatives
 include(joinpath(@__DIR__, "..", "shared", "maxwell.jl"))
@@ -235,7 +235,7 @@ end
     )
 
     disc = maxwell_disc(Ω, 1.0)
-    for (f, what) in ((DAEProblem, "DAEProblem"), (NonlinearProblem, "NonlinearProblem"), (symbolic_discretize, "symbolic_discretize"), (FiniteElementMethod.operators, "operators"))
+    for (f, what) in ((FiniteElementMethod._daeproblem, "DAEProblem"), (FiniteElementMethod._nonlinearproblem, "NonlinearProblem"), (symbolic_discretize, "symbolic_discretize"), (FiniteElementMethod.operators, "operators"))
         @test_throws ArgumentError("$what has no frequency-domain form; a FEMDiscretization with omega lowers to a LinearProblem through discretize(pdesys, disc)") f(sys, disc)
     end
     @test_throws ArgumentError("maxwell_model needs a FEMDiscretization with omega, as FEMDiscretization(Ω, t; omega = 2π, spaces)") maxwell_model(sys, FEMDiscretization(Ω, t))

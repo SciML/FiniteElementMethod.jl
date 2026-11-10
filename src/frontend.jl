@@ -264,7 +264,7 @@ _finish_cell!(op::LinearOp{Nothing, Nothing}, dofs) = (Ferrite.assemble!(op.F, d
 function assemble_sources!(F, ctx::AssemblyContext, kernels, p, t)
     fill!(F, 0)
     ne = _max_ndofs(ctx.dh)
-    op = LinearOp(nothing, nothing, F, zeros(ne, ne), zeros(ne, ne), zeros(ne))
+    op = LinearOp(nothing, nothing, F, zeros(ne, ne), zeros(ne, ne), zeros(eltype(F), ne))
     _assemble!(op, ctx, _split(ctx, kernels, (:source,))..., p, t)
     return F
 end
@@ -538,11 +538,16 @@ function _reject_omega(disc, what)
 end
 
 function SciMLBase.DAEProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
+    Base.depwarn("`DAEProblem(pdesys, disc)` is deprecated, use `discretize(pdesys, disc)` instead", :DAEProblem)
+    return _daeproblem(pdesys, disc; kwargs...)
+end
+
+function _daeproblem(pdesys, disc; kwargs...)
     _reject_omega(disc, "DAEProblem")
     disc.time === nothing && throw(
         ArgumentError(
             "the FEMDiscretization has no time variable, so it lowers to a NonlinearProblem, not a DAEProblem; " *
-                "call discretize(pdesys, disc) or NonlinearProblem(pdesys, disc)"
+                "call discretize(pdesys, disc)"
         )
     )
     return SciMLBase.discretize(pdesys, disc; kwargs...)
@@ -550,6 +555,8 @@ end
 
 """
     NonlinearProblem(pdesys::PDESystem, disc::FEMDiscretization; kwargs...)
+
+Deprecated: use `discretize(pdesys, disc; kwargs...)`, which returns the same problem.
 
 Discretize the steady `pdesys` with a `disc` that has no time variable and return the
 `NonlinearProblem` `K u + N(u) - F = 0` of the Galerkin operators, with Dirichlet rows
@@ -568,6 +575,11 @@ Keywords are passed to the `NonlinearProblem` after `disc.kwargs`; the keywords
 `differential_vars` are rejected, as for the `DAEProblem`.
 """
 function SciMLBase.NonlinearProblem(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; kwargs...)
+    Base.depwarn("`NonlinearProblem(pdesys, disc)` is deprecated, use `discretize(pdesys, disc)` instead", :NonlinearProblem)
+    return _nonlinearproblem(pdesys, disc; kwargs...)
+end
+
+function _nonlinearproblem(pdesys, disc; kwargs...)
     _reject_omega(disc, "NonlinearProblem")
     disc.time === nothing || throw(
         ArgumentError(

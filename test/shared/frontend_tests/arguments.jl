@@ -66,14 +66,12 @@ const DERIVED_VALUES = (tspan = (0.0, 2.0), u0 = zeros(9), p = [1.0], differenti
     @testset "keyword `$k` is derived" for k in keys(DERIVED_MESSAGES)
         kw = NamedTuple{(k,)}((DERIVED_VALUES[k],))
         @test_throws ArgumentError(DERIVED_MESSAGES[k]) discretize(pdesys, disc; kw...)
-        @test_throws ArgumentError(DERIVED_MESSAGES[k]) SciMLBase.DAEProblem(pdesys, disc; kw...)
     end
 
     @testset "derived keywords in FEMDiscretization and NonlinearProblem" begin
         @test_throws ArgumentError(DERIVED_MESSAGES.tspan) FEMDiscretization(Ω, t; tspan = (0.0, 2.0))
         @test_throws ArgumentError(DERIVED_MESSAGES.p) FEMDiscretization(Ω; p = [1.0])
         steady = poisson_system(Ω)
-        @test_throws ArgumentError(DERIVED_MESSAGES.u0) SciMLBase.NonlinearProblem(steady, FEMDiscretization(Ω); u0 = zeros(9))
         @test_throws ArgumentError(DERIVED_MESSAGES.u0) discretize(steady, FEMDiscretization(Ω); u0 = zeros(9))
     end
 

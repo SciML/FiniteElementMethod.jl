@@ -60,7 +60,7 @@ const Dt, Dx, Dy = Differential(t), Differential(x), Differential(y)
         @named steady = PDESystem(
             [Dx(Dx(u(x, y))) + Dy(Dy(u(x, y))) ~ 0], [u(Γ) ~ 0 for Γ in sides], [(x, y) ∈ Ω], [x, y], [u(x, y)], []
         )
-        @test NonlinearProblem(steady, FEMDiscretization(Ω)).f.sys === nothing
+        @test discretize(steady, FEMDiscretization(Ω)).f.sys === nothing
         @test_throws ArgumentError(
             "a steady FEMDiscretization builds no symbolic System, so it has no symbolic_discretize; " *
                 "call discretize(pdesys, disc) for its NonlinearProblem"

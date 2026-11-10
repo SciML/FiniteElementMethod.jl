@@ -44,11 +44,14 @@ export Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexa
 
 using PDEBase: StrongForm, MeshDomain, Region, boundarypiece, boundarypieces, NormalDerivative
 include("maxwell/ports.jl")  # before the discretization, which holds WavePorts
+using PDEBase.StrongForm: Weighted
 include("discretization.jl")
 include("frontend.jl")
 _is_normal_derivative(op) = op isa NormalDerivative
-export FEMDiscretization, Galerkin, SUPG, add_boundary_pieces!
+export FEMDiscretization, Galerkin, SUPG, add_boundary_pieces!, ferrite_grid
 export MeshDomain, Region, boundarypiece, boundarypieces, NormalDerivative
+# The integration-by-parts policy `ibp = Dict(eq => Weighted(w))` of `FEMDiscretization`.
+export Weighted
 
 # Frequency-domain Maxwell: a separate entry point assembled directly on Ferrite; `FEMDiscretization(…; omega)` reaches it
 # from a PDESystem without the scalar weak form.
