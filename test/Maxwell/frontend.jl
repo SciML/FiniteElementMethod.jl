@@ -176,6 +176,10 @@ end
         message(() -> discretize(maxwell_system(Ω; extra = c -> D[1](D[1](Dt(Ev[c])))), maxwell_disc(Ω, 2.0)))
     )
 
+    # A coupling is judged against the zeroth-order coefficients, not against a much larger ν: ν = 1e12 sits
+    # beside a coupling of 1e-3 in a₀ = 1.
+    err("the zeroth-order term of equation 1 couples the components of E; the coefficients of E and its time derivatives must be scalars"; nu = 1.0e12, a0 = 1.0, extra = c -> 1.0e-3 * Ev[mod1(c + 1, 3)])
+
     # Terms confined to a small ball around one interior centroid are seen: every centroid is checked.
     grid = unit_cube(3)
     Ωf = MeshDomain(grid)

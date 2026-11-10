@@ -177,7 +177,8 @@ function _recognise_volume(an, s, fixed, xs)
             maximum(abs, q.dG) > tol && throw(
                 ArgumentError("equation $e has a first-order term in the derivatives of E, which curl(ν*curl(E)) does not have; $_MAXWELL_FORM")
             )
-            maximum(abs, q.λU[[c for c in 1:3 if c != ce]]) > tol && throw(
+            # A coupling is judged against the zeroth-order coefficients, not against a larger second-order one.
+            maximum(abs, q.λU[[c for c in 1:3 if c != ce]]) > 1.0e-10 * maximum(abs, q.λU) && throw(
                 ArgumentError("the zeroth-order term of equation $e couples the components of E; the coefficients of E and its time derivatives must be scalars")
             )
             nus[e], lambdas[e] = β, q.λU[ce]
