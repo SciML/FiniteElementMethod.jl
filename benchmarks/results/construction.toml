@@ -1,0 +1,46 @@
+benchmark = "(c) problem construction time, numeric path against ModelingToolkit codegen"
+description = "discretize(pdesys, FEMDiscretization(Ω, t)) for a P1 heat equation with Dirichlet conditions, minimum of 3 calls after a first call"
+
+[cold_first_call]
+seconds = 21.529622717
+unknowns = 2500
+
+[environment]
+cpu = "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S"
+cpu_threads = 32
+date = "2026-11-05T19:32:45.373Z"
+git_sha = "d973585c8462cf3bf7db85cf851718bc9ff84943"
+julia = "1.12.1"
+julia_threads = 1
+origin = "local run, not CI"
+os = "Linux x86_64-linux-gnu"
+
+    [environment.packages]
+    Dates = "1.11.0"
+    DomainSets = "0.8.3"
+    Ferrite = "1.7.0"
+    FiniteElementMethod = "0.1.0 (path, see git_sha)"
+    LinearAlgebra = "1.12.0"
+    MethodOfLines = "1.6.0"
+    ModelingToolkit = "11.46.1"
+    OrdinaryDiffEqBDF = "2.4.14"
+    PDEBase = "0.1.41"
+    PDESystemLibrary = "0.1.11"
+    Pkg = "1.12.0"
+    Printf = "1.11.0"
+    SciMLBase = "3.58.0"
+    Symbolics = "7.48.0"
+    TOML = "1.0.3"
+
+[mtk_codegen]
+available = false
+message = "ArgumentError: codegen = :mtk is not supported; use the default codegen = :numeric"
+status = "not available today: codegen = :mtk is reserved until the upstream blockers of spec §7.7 land"
+upstream_blockers = ["ModelingToolkit #5121", "ModelingToolkit #5312", "ModelingToolkit #5327", "ModelingToolkit #5325", "ModelingToolkit #5328", "SciMLBase #1602"]
+
+[[rows]]
+numeric_s = 0.017830579
+unknowns = 2500
+[[rows]]
+numeric_s = 0.092028731
+unknowns = 10000

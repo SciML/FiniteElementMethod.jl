@@ -193,14 +193,33 @@ function _submesh_facets(grid::Ferrite.Grid{dim}, name, sub::Ferrite.Grid, atol,
 end
 
 """
+    ferrite_grid(mesh)
+
+The `Ferrite.Grid` of `mesh`, a mesh from another Julia meshing package, for `MeshDomain` and
+[`add_boundary_pieces!`](@ref). A package is supported by an extension that loads with it:
+
+  - Meshes.jl (`using Meshes`): a mesh in Cartesian coordinates whose elements are segments, triangles,
+    quadrangles, tetrahedra or hexahedra. The nodes are the vertices of the mesh in its length unit, without
+    the unit. A cell with the other orientation, such as a clockwise triangle in 2D, has its nodes reordered,
+    since Ferrite needs cells with a positive Jacobian.
+
+A `Ferrite.Grid` is returned as it is.
+"""
+ferrite_grid(grid::Ferrite.Grid) = grid
+function ferrite_grid(mesh)
+    throw(ArgumentError("ferrite_grid converts a Ferrite.Grid, or a Meshes.jl mesh after `using Meshes`; got a $(nameof(typeof(mesh)))"))
+end
+
+"""
     add_boundary_pieces!(grid, name => submesh, ...; atol = nothing)
     add_boundary_pieces!(grid, pieces::AbstractDict; atol = nothing)
 
 Add a boundary piece to the `Ferrite.Grid` `grid` for each pair `name => submesh`: a facet set called `name`
 holding the facets of `grid` that the cells of `submesh` coincide with. `submesh` is a `Ferrite.Grid` of one
 dimension less than `grid`, in the coordinates of `grid`: the boundary mesh that Gmsh gives for a physical
-group, or any grid whose cells are facets of `grid`. Afterwards `boundarypiece(MeshDomain(grid), name)` is the
-piece, exactly as for any other facet set; `grid` is modified, as by `Ferrite.addfacetset!`, and returns.
+group, or any grid whose cells are facets of `grid`. It may also be a mesh that [`ferrite_grid`](@ref)
+converts, such as a Meshes.jl mesh. Afterwards `boundarypiece(MeshDomain(grid), name)` is the piece, exactly
+as for any other facet set; `grid` is modified, as by `Ferrite.addfacetset!`, and returns.
 
 A submesh cell is matched to a facet of `grid` through the nodes: each node of the submesh is the node of `grid`
 within `atol > 0` of it (by coordinates, since the two grids number their nodes independently; the default `atol`
@@ -218,7 +237,7 @@ function add_boundary_pieces!(grid::Ferrite.Grid, pieces::Pair...; atol = nothin
             throw(ArgumentError("the mesh already has a facet set $(repr(Symbol(name))); pick another name for the boundary piece"))
     end
     owners = _facet_owners(grid)
-    sets = [_submesh_facets(grid, Symbol(n), last(p), atol, owners) for (n, p) in zip(names, pieces)]
+    sets = [_submesh_facets(grid, Symbol(n), ferrite_grid(last(p)), atol, owners) for (n, p) in zip(names, pieces)]
     foreach((n, s) -> Ferrite.addfacetset!(grid, n, s), names, sets)
     return grid
 end
