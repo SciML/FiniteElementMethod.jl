@@ -1,7 +1,7 @@
 name = "FiniteElementMethod"
 uuid = "e08948db-0ae8-498a-9b98-73fc7f237ce3"
 version = "0.1.0"
-authors = ["Alex Jones <alex.jones@juliahub.com>"]
+authors = ["Alex Jones <alex.w.jones1994@gmail.com>"]
 
 [deps]
 ADTypes = "47edcb42-4c32-4615-8424-f2b9edc5f35b"
@@ -24,10 +24,12 @@ Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 CUDSS = "45b445bb-4962-46a0-9369-b4df9d0f772e"
 FerriteGmsh = "4f95f4f8-b27c-4ae5-9a39-ea55e634e36b"
+Meshes = "eacbb407-ea5a-433e-ab97-5258b1ca43fa"
 
 [extensions]
 FiniteElementMethodCUDSSExt = ["CUDA", "CUDSS"]
 FiniteElementMethodFerriteGmshExt = "FerriteGmsh"
+FiniteElementMethodMeshesExt = "Meshes"
 
 [compat]
 ADTypes = "1.24"
@@ -43,6 +45,7 @@ Gmsh = "0.3"
 LinearAlgebra = "1.10"
 ModelingToolkit = "11.34"
 LinearSolve = "5"
+Meshes = "0.60"
 NonlinearSolveFirstOrder = "2.10"
 OrdinaryDiffEqBDF = "2.4.1"
 OrdinaryDiffEqNonlinearSolve = "2.9.4"
@@ -64,6 +67,7 @@ AllocCheck = "9b6a8646-10ed-4001-bbdc-1d2f46dfbb1a"
 FerriteGmsh = "4f95f4f8-b27c-4ae5-9a39-ea55e634e36b"
 Gmsh = "705231aa-382f-11e9-3f0c-b7cb4346fdeb"
 LinearSolve = "7ed4a6bd-45f5-4d41-b270-4a48e9bafcae"
+Meshes = "eacbb407-ea5a-433e-ab97-5258b1ca43fa"
 OrdinaryDiffEqBDF = "6ad6398a-0878-4a85-9266-38940aa047c8"
 OrdinaryDiffEqNonlinearSolve = "127b3ac7-2247-4354-8eb6-78cf4e7c58e8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
@@ -72,4 +76,4 @@ SciMLTesting = "09d9d899-5365-40a9-917a-5f67fddea283"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["AllocCheck", "FerriteGmsh", "Gmsh", "LinearSolve", "OrdinaryDiffEqBDF", "OrdinaryDiffEqNonlinearSolve", "Random", "SafeTestsets", "SciMLTesting", "Test"]
+test = ["AllocCheck", "FerriteGmsh", "Gmsh", "LinearSolve", "Meshes", "OrdinaryDiffEqBDF", "OrdinaryDiffEqNonlinearSolve", "Random", "SafeTestsets", "SciMLTesting", "Test"]

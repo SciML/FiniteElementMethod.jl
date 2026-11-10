@@ -82,6 +82,8 @@ boundary pieces are `boundarypiece.(Ω, (:left, :right, :bottom, :top))` in 2D a
 | `wave_first_order.jl` | 2D standing wave | wave as a first-order system | 2 | P2 | zero Dirichlet |
 | `mesh_domains.jl` | side split into two named pieces | heat | 2 | P2 | Dirichlet, Neumann and Robin on five pieces |
 | `mesh_domains.jl` | L-shaped Gmsh mesh read from a file | heat with parameters `k`, `α` | 2 | P2 | Dirichlet on inlet and wall, Robin on outlet |
+| `mesh_domains.jl` | Meshes.jl polygon with a hole, rings as pieces | heat | 2 | P2 | Dirichlet on outer and hole |
+| `mesh_domains.jl` | Meshes.jl grid of hexahedra and of tetrahedra | heat | 3 | P2 | Dirichlet on the whole boundary |
 | `curved_geometry.jl` | optimal rates on a quarter annulus with `QuadraticTriangle` cells | heat with source | 2 | P1, P2 | Dirichlet on the arcs, Neumann |
 | `parameters.jl` | `D`, `A`, `g` from `ps` for three parameter sets | heat with source | 2 | P2 | Dirichlet with parameter |
 | `parameters.jl` | Neumann flux `q` from `ps` | heat | 2 | P2 | Dirichlet and Neumann with parameter |
@@ -103,7 +105,7 @@ boundary pieces are `boundarypiece.(Ω, (:left, :right, :bottom, :top))` in 2D a
 | `navier_stokes.jl` | Kovasznay flow, Taylor-Hood, rates 3 and 2 | steady incompressible Navier-Stokes | 2 | P2/P1 | Dirichlet velocity, Dirichlet pressure on one side |
 | `metadata_and_operators.jl` | `facet_dofs`, `dof_coordinates`, `cell_dofs` | heat | 2 | P1, P2 | zero Dirichlet |
 | `metadata_and_operators.jl` | `operators` gives the matrices for a hand-made steady solve | heat at its steady state | 2 | P2 | Dirichlet |
-| `rejections.jl` | rejected boundary conditions, equations, options, domains, shared facets, SUPG with a nonlinear term, observed expressions, `operators` | heat and others | 1 to 2 | | |
+| `rejections.jl` | rejected boundary conditions, equations, options, domains, shared facets, SUPG with a nonlinear term, observed expressions, `operators`, `ferrite_grid` | heat and others | 1 to 3 | | |
 
 ## Not covered
 

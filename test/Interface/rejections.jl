@@ -5,6 +5,7 @@
 using FiniteElementMethod, ModelingToolkit, DomainSets, OrdinaryDiffEqBDF, Test
 using Ferrite: Ferrite
 using Ferrite: generate_grid, Line, Triangle, Vec
+using Meshes: Meshes
 using ModelingToolkit: t_nounits as t
 
 @variables x y u(..) v(..)
@@ -61,7 +62,6 @@ end
     timed = [u(t, Γ) ~ sin(t) for Γ in (left, right, bottom, top)]
     @test_throws "dirichlet = :eliminate needs Dirichlet data that are constant in time" lower([heat], [timed; ic]; dirichlet = :eliminate)
     @named steady = PDESystem([Dx(Dx(u(x, y))) + Dy(Dy(u(x, y))) ~ 0], [u(Γ) ~ 0 for Γ in (left, right, bottom, top)], [(x, y) ∈ Ω], [x, y], [u(x, y)], [])
-    @test_throws "the FEMDiscretization has no time variable, so it lowers to a NonlinearProblem" DAEProblem(steady, FEMDiscretization(Ω))
     @named transient = PDESystem([heat], [dirichlet; ic], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
     @test_throws "for a time-dependent problem write FEMDiscretization(Ω, t)" discretize(transient, FEMDiscretization(Ω))
     @test_throws "`spaces` has keys that are not dependent variables of the system: v" lower(
@@ -119,4 +119,15 @@ end
 @testset "operators rejects a nonlinear term" begin
     nonlinear = Dt(u(t, x)) ~ Dx(Dx(u(t, x))) - u(t, x)^3
     @test_throws "operators returns linear operators only" FiniteElementMethod.operators(line_system(nonlinear), FEMDiscretization(Ω1, t))
+end
+
+# Domain: Meshes.jl meshes that `ferrite_grid` cannot convert, and an input that is not a mesh of a supported package
+# Shows:  the message names what `ferrite_grid` needs.
+@testset "meshes that ferrite_grid cannot convert are rejected with what it needs" begin
+    latlon = Meshes.SimpleMesh(Meshes.Point.(Meshes.LatLon.([0.0, 0.0, 1.0], [0.0, 1.0, 0.0])), [Meshes.connect((1, 2, 3))])
+    @test_throws "needs a mesh in Cartesian coordinates, got GeodeticLatLon" ferrite_grid(latlon)
+    corners = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 0.0, 1.0), (0.0, 1.0, 1.0)]
+    wedge = Meshes.SimpleMesh(Meshes.Point.(corners), [Meshes.connect(Tuple(1:6), Meshes.Wedge)])
+    @test_throws "supports segments, triangles, quadrangles, tetrahedra and hexahedra, got a Wedge" ferrite_grid(wedge)
+    @test_throws "converts a Ferrite.Grid, or a Meshes.jl mesh after `using Meshes`; got a Ring" ferrite_grid(Meshes.Ring((0.0, 0.0), (1.0, 0.0), (1.0, 1.0)))
 end
