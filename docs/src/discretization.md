@@ -1,6 +1,6 @@
 # Discretization
 
-`FEMDiscretization`, `Galerkin`, `SUPG` and `add_boundary_pieces!` are exported, as are the PDEBase names a model needs
+`FEMDiscretization`, `Galerkin`, `SUPG`, `add_boundary_pieces!` and `ferrite_grid` are exported, as are the PDEBase names a model needs
 (`MeshDomain`, `Region`, `boundarypiece`, `boundarypieces`, `NormalDerivative`) and Ferrite's
 `Lagrange` and reference shapes. [Getting started](@ref) shows them in use.
 
@@ -19,6 +19,12 @@ FiniteElementMethod.operators
 
 ```@docs
 add_boundary_pieces!
+```
+
+## Meshes from other packages
+
+```@docs
+ferrite_grid
 ```
 
 `discretize(pdesys, disc)` returns the `DAEProblem` of the discretization (the `NonlinearProblem` of a steady one, see [Steady problems](@ref)). `symbolic_discretize(pdesys, disc)`
