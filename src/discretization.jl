@@ -14,7 +14,7 @@ Finite-element discretization of a `PDESystem` whose spatial domain is the mesh 
 (of a `Ferrite.Grid`), with time variable `t`. `discretize(pdesys, disc)` assembles the
 Galerkin operators with Ferrite and returns a `DAEProblem` with one array unknown per field.
 Without `t` the discretization is steady: the `PDESystem` must have no time variable, and
-`discretize` (or `NonlinearProblem(pdesys, disc)`) returns a `NonlinearProblem` whose `solve`
+`discretize` returns a `NonlinearProblem` whose `solve`
 gives a `PDENoTimeSolution`.
 
   - `spaces`: dependent variable (`u` or `u(t, x, y)`) `=>` `Ferrite.Interpolation`; the
@@ -53,7 +53,7 @@ gives a `PDENoTimeSolution`.
     pressure in `0 ~ Dx(u1) + Dy(u2)`; a nonlinear term in the field, as in `0 ~ v^2 - u`,
     counts as present), and nothing otherwise; a positive number sets that
     value on the algebraic rows of any system; `nothing` sets nothing. The differential rows
-    get the `abstol` passed to `FEMDiscretization` or `DAEProblem` if it is a number, else
+    get the `abstol` passed to `FEMDiscretization` or `discretize` if it is a number, else
     OrdinaryDiffEq's default `1e-6`; an array `abstol` passed there is used as it is. An
     `abstol` passed to `solve` replaces the problem's whole vector. The keyword belongs to the
     time-dependent (DAE) path: a steady discretization ignores `:auto` and `nothing` and
@@ -82,7 +82,7 @@ gives a `PDENoTimeSolution`.
     needs the time variable `t`, which the `PDESystem` is written in; `test_space`, `regions`, `ibp` and
     `pairing` do not apply to it and must keep their defaults. A Nédélec space needs `omega`.
   - `codegen = :mtk` is reserved and raises; remaining keywords are
-    passed to the `DAEProblem` (or `NonlinearProblem`), where a keyword given at the
+    passed to the `DAEProblem` (or the steady `NonlinearProblem`), where a keyword given at the
     `discretize` call wins. `iv`, `unknowns`, `du0`, `coordinate`, `name` and `parameters` are set
     by the discretization and rejected, as are `tspan`, `u0`, `p` and `differential_vars`, which
     come from the `PDESystem` and the weak form.
