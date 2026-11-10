@@ -106,7 +106,7 @@ disc = FEMDiscretization(
     Ω, t; spaces = Dict(u => Q2, v => Q2, p => Q1),
     pairing = Dict(eqs[3] => p), natural = [Γ_out], initializealg = CheckInit()
 )
-prob = DAEProblem(dfg, disc)
+prob = discretize(dfg, disc)
 abstol = [differential ? 1.0e-6 : 1.0e8 for differential in prob.differential_vars]   # no error control on p
 sol = solve(prob, DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0), linsolve = UMFPACKFactorization()); abstol, reltol = 1.0e-6)
 sol(tend, 0.6, 0.2; dv = v(t, x, y))                         # the cross-stream velocity in the wake

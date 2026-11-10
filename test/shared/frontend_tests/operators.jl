@@ -47,7 +47,7 @@ end
         # u0 is the full dof vector, so it lines up with the rows of M and K.
         @test length(ops.u0) == size(ops.K, 1)
         # Off the Dirichlet rows the operators are those of the DAEProblem.
-        prob = DAEProblem(pdesys, disc)
+        prob = discretize(pdesys, disc)
         free = setdiff(1:size(ops.K, 1), ops.prescribed)
         res = zeros(length(prob.u0))
         du = randn(length(prob.u0))
@@ -66,7 +66,7 @@ end
         @test ops.u0[facet_dofs(ops.metadata, left, u)] ≈ fill(2.0, 4)
         @test ops.u0[facet_dofs(ops.metadata, right, u)] ≈ zeros(4)
         # The eliminated problem drops exactly the prescribed dofs.
-        prob = DAEProblem(pdesys, disc)
+        prob = discretize(pdesys, disc)
         @test length(prob.u0) == length(ops.u0) - length(ops.prescribed)
     end
 
