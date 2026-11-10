@@ -158,7 +158,7 @@ function _recognise_volume(an, s, fixed, xs)
         for (e, q) in enumerate(unpack(x, sv))
             ce = comps[e]
             other = mod1(ce + 1, 3)
-            tol = 1.0e-10 * max(maximum(abs, q.B), maximum(abs, q.λU), 1.0e-300)
+            tol = 1.0e-10 * max(maximum(abs, q.B), 1.0e-300)  # the second-order part is judged against itself
             α, β, γ = q.B[other, ce, other], q.B[other, other, ce], q.B[ce, other, other]
             expect = [α * (c == ce) * (a == b) + β * (b == ce) * (a == c) + γ * (a == ce) * (c == b) for a in 1:3, c in 1:3, b in 1:3]
             abs(γ) > tol && throw(

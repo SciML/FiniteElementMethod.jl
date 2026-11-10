@@ -184,6 +184,9 @@ end
     err("equation 1 has a first-order term in the derivatives of E, which curl(ν*curl(E)) does not have; $form"; nu = 1.0e12, extra = c -> D[1](Ev[c]))
     err("equation 1 has a first-order term inside a derivative; $form"; nu = 1.0e12, extra = c -> D[1](D[1](x * Ev[c])) - D[1](x * D[1](Ev[c])))
 
+    # Nor does a large reaction coefficient hide a component-wise Laplacian beside curl(ν*curl(E)).
+    err("the second-order part of equation 1 adds a component-wise Laplacian of E to curl(ν*curl(E)), which is not H(curl)-conforming; $form"; a0 = 1.0e12, a2 = 1.0e12, extra = laplacian)
+
     # Terms confined to a small ball around one interior centroid are seen: every centroid is checked.
     grid = unit_cube(3)
     Ωf = MeshDomain(grid)
