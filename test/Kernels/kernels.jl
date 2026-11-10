@@ -2,7 +2,7 @@
 # differences, every KernelSpec is concrete, and calls with the driver's slot types do not allocate.
 import FiniteElementMethod
 using FiniteElementMethod: weak_form, emit_kernels, emit_dirichlet, WeakForm, VolumeTerm, FacetTerm, TestSlots,
-    StructuralZero, emit_strong
+    StructuralZero, emit_strong, build
 using FiniteElementMethod: AssemblyContext, assemble_linear
 using Ferrite: Ferrite, Vec, Triangle, RefTriangle, Lagrange, DofHandler, CellValues, FacetValues, QuadratureRule,
     FacetQuadratureRule, generate_grid, add!, close!
@@ -263,4 +263,114 @@ end
         abs(r((v[1],), (v[2], v[3]), (0.0,), Tuple(v[4:7]), X, 0.0, [0.0]))
     end
     @test worst ≤ 1.0e-13
+end
+
+# The name of the function a generated call applies: Symbolics embeds function objects and global references.
+function callee_name(x)
+    x isa Expr && x.head === :call || return nothing
+    callee = x.args[1]
+    return callee isa Function ? nameof(callee) : callee isa GlobalRef ? callee.name : callee
+end
+# Calls of `^` or `NaNMath.pow` in a generated `Expr` whose exponent is a temporary bound to a number, which is what
+# common-subexpression elimination makes of a literal exponent (`literal_pow` becomes a libm `pow` call).
+function hoisted_exponents(ex)
+    numbers = Set{Symbol}()
+    found = Any[]
+    walk(x) = x
+    function walk(x::Expr)
+        x.head === :(=) && x.args[1] isa Symbol && x.args[2] isa Number && push!(numbers, x.args[1])
+        powers = callee_name(x) in (:^, :pow)
+        powers && length(x.args) == 3 && x.args[3] isa Symbol && push!(found, x)
+        foreach(walk, x.args)
+        return x
+    end
+    walk(ex)
+    return [call for call in found if call.args[3] in numbers]
+end
+count_calls(ex, name) = ex isa Expr ? (callee_name(ex) === name) + sum(a -> count_calls(a, name), ex.args; init = 0) : 0
+
+@testset "no kernel turns a literal power into a pow call on a hoisted exponent" begin
+    for (name, case) in ("(iii)" => case_iii, "two-field" => two_field)
+        kernels = emit_kernels(weak_form(case()); expression = Val(true))
+        @test any(k -> k.kind === :nonlinear, kernels)
+        for k in kernels, ex in (k.f, k.tangent, k.coeffs)
+            ex === nothing && continue
+            @test isempty(hoisted_exponents(ex))
+        end
+        # not vacuous: the squares are there, as `literal_pow` calls
+        powers = sum(count_calls(ex, :literal_pow) for k in kernels if k.kind === :nonlinear for ex in (k.f, k.tangent) if ex !== nothing)
+        @test powers > 0
+    end
+    @variables ξ η
+    squares = ξ^2 * η + 2 * ξ * η + ξ^2
+    for cse in (false, true)
+        code = build(squares, (ξ, η), Val(true); cse)
+        @test isempty(hoisted_exponents(code))
+        @test count_calls(code, :literal_pow) + count_calls(code, :^) > 0
+    end
+end
+
+@testset "common-subexpression elimination of a source agrees with the plain code generator" begin
+    @variables ξ η τ p1 p2
+    slots = (ξ, η, τ, p1, p2)
+    plain(ex) = Symbolics.build_function(ex, slots...; expression = Val(false), cse = false, expression_module = FiniteElementMethod)
+    manufactured = exp(-τ) * sum(1:8) do j
+        sin((1 + 0.3j) * ξ + τ) * cos((1 + 0.2j) * η) * exp(-0.05j * ξ * η) * (1 + ξ^2 * η)^(0.5 + 0.1j)
+    end
+    long = expand_derivatives(Differential(τ)(manufactured) - Differential(ξ)(Differential(ξ)(manufactured)) - Differential(η)(Differential(η)(manufactured)))
+    zoo = (
+        "ordinary" => sin(π * ξ) * sin(π * η) * exp(-τ) + 1,
+        "long" => long,
+        "parameters and time" => p1 * (ξ * η + τ)^2 + p2 * sin(ξ * τ) / (1 + η^2) - (ξ * η + τ)^2,
+        "squares" => (1 - ξ)^2 * sin(τ)^2 + η^2 * cos(ξ * η)^2 + (1 - η)^2 * p1^2 * exp(-ξ^2),
+    )
+    for (name, ex) in zoo
+        cse, reference = build(ex, slots, Val(false); cse = true), plain(ex)
+        for _ in 1:20
+            point = (0.5 + rand(), 0.5 + rand(), rand(), 0.5 + rand(), 0.5 + rand())
+            @test isapprox(cse(point...), reference(point...); rtol = 1.0e-12)
+        end
+    end
+    # it does share: the long source evaluates fewer sin calls
+    shared, plain_code = build(long, slots, Val(true); cse = true), Symbolics.build_function(long, slots...; expression = Val{true}, cse = false, expression_module = FiniteElementMethod)
+    @test count_calls(shared, :sin) < count_calls(plain_code, :sin)
+    # through the emitters: a long source gives the same value as the symbolic integrand
+    an = analyse([Dt(U) ~ Dx(k * Dx(U)) + Dy(k * Dy(U)) + sum(j -> sin(j * x + t) * cos(j * y)^2 * exp(-j * x * y) * (1 + x^2 * y)^(0.5 + 0.1j), 1:4)], BC[]; depvars = [U], t, sivs = [x, y], params = [k, α, β, h])
+    wf = weak_form(an)
+    args = random_args(an)
+    for kernel in emit_kernels(wf; coeffs = false)
+        kernel.kind === :source || continue
+        term = only(filter(term -> term.eq == kernel.eq && term.kind === :source, wf.volume))
+        @test isapprox(kernel.f(args...), symbolic_value(term.integrand, wf, args); rtol = 1.0e-12)
+    end
+end
+
+guarded_root(z) = sqrt(z)
+@register_symbolic guarded_root(z)
+
+@testset "a guarded source keeps its conditional branches lazy" begin
+    guarded = ifelse(x > 0, guarded_root(x), 0.0) + 2 * ifelse(x > 0, guarded_root(x), 0.0) * y
+    an = analyse([Dt(U) ~ Dx(k * Dx(U)) + Dy(k * Dy(U)) + guarded], BC[]; depvars = [U], t, sivs = [x, y], params = [k, α, β, h])
+    X = Vec(-1.0, 0.3)
+    for kernel in emit_kernels(weak_form(an)), kind in (:source,)
+        kernel.kind === kind || continue
+        @test all(c -> c isa StructuralZero || iszero(c), kernel.coeffs(X, 0.0, Vec(1.0, 0.0), [2.0, 3.0, 0.5, 1.5]))
+    end
+    for kernel in emit_kernels(weak_form(an); coeffs = false)
+        kernel.kind === :source || continue
+        args = random_args(an)
+        @test kernel.f(args[1:5]..., X, args[7:9]...) == 0.0
+    end
+end
+
+module Custom
+    pow(x, y) = x + y
+end
+@register_symbolic Custom.pow(x, y)
+
+@testset "only NaNMath.pow is rewritten into literal_pow" begin
+    @variables ξ
+    ex = Custom.pow(ξ, 2) + ξ^2 * Custom.pow(ξ, 3)
+    f = build(ex, (ξ,), Val(false); cse = true)
+    @test f(3.0) == Custom.pow(3.0, 2) + 3.0^2 * Custom.pow(3.0, 3)
 end

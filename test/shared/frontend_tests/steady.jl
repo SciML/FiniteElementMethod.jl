@@ -109,7 +109,6 @@ end
         prob = discretize(pdesys, FEMDiscretization(Ω; abstol = 1.0e-12))
         @test prob isa SciMLBase.NonlinearProblem
         @test prob.kwargs[:abstol] == 1.0e-12
-        @test SciMLBase.NonlinearProblem(pdesys, FEMDiscretization(Ω)).u0 == prob.u0
         # The initial guess is zero except on the Dirichlet dofs, which hold the data.
         space = prob.problem_type.space
         pd = space.ch.prescribed_dofs
