@@ -7,15 +7,15 @@ The `:nonlinear` kernels of `kernels` on `ctx`, with preallocated residual `r`, 
 `allocate_matrix(dh, ch)`) and element scratch. Use [`residual!`](@ref), [`jacobian!`](@ref) and
 [`residual_jacobian!`](@ref); `op(r, u, p, t)` is `residual!(r, op, u, p, t)`.
 """
-struct NonlinearOperator{C <: AssemblyContext, V <: Tuple, G <: Tuple, JT}
+struct NonlinearOperator{C <: AssemblyContext, V <: Tuple, G <: Tuple, JT, T <: AbstractFloat}
     ctx::C
     volume::V
     groups::G
-    r::Vector{Float64}
+    r::Vector{T}
     J::JT
-    Je::Matrix{Float64}
-    re::Vector{Float64}
-    u_elem::Vector{Float64}
+    Je::Matrix{T}
+    re::Vector{T}
+    u_elem::Vector{T}
 end
 
 function NonlinearOperator(ctx::AssemblyContext, kernels; ch = nothing)
@@ -60,11 +60,14 @@ end
 
 (op::NonlinearOperator)(r, u, p, t) = residual!(r, op, u, p, t)
 
+# Ferrite releases before `task_local_copy` (1.7.0) only have `copy`; newer ones deprecate it.
+const _values_copy = isdefined(Ferrite, :task_local_copy) ? Ferrite.task_local_copy : copy
+
 # `reinit!` mutates CellValues and FacetValues, so each load evaluation gets its own copies and
 # concurrent solves of one problem's remakes share no mutable state.
 function _fresh_values(ctx::AssemblyContext{NF, DH, CV, FV}) where {NF, DH, CV, FV}
     return AssemblyContext{NF, DH, CV, FV}(
-        ctx.dh, ctx.fields, map(copy, ctx.cellvalues), map(copy, ctx.facetvalues), ctx.facetsets, ctx.facetcells
+        ctx.dh, ctx.fields, map(_values_copy, ctx.cellvalues), map(_values_copy, ctx.facetvalues), ctx.facetsets, ctx.facetcells
     )
 end
 
