@@ -218,6 +218,17 @@ function _port_term(data::WavePortData, mu0eps0, L)
     return MaxwellTerm(data.block, ω -> im * _propagation_constant(data, mu0eps0, ω) * L / data.mu_r)
 end
 
+# The propagation constants of all ports at ω. At exact cutoff β = 0, the wave impedance ωμ/β is infinite and the
+# power-wave scale of the S-parameters is 0/0, so it is an error rather than a NaN matrix.
+function _port_betas(model, ω)
+    β = [_propagation_constant(data, model.mu0 * model.eps0, float(ω)) for data in model.ports]
+    j = findfirst(iszero, β)
+    j === nothing || throw(
+        ArgumentError("ω = $ω is exactly the TE10 cutoff of wave port $j, where its wave impedance is infinite and its S-parameters are undefined; use a nearby frequency")
+    )
+    return β
+end
+
 """
     port_excitations(model::MaxwellModel, ω)
 
@@ -226,9 +237,9 @@ incident on that port, without the PEC constraints.
 """
 function port_excitations(model, ω::Real)
     B = zeros(ComplexF64, Ferrite.ndofs(model.dh), length(model.ports))
+    β = _port_betas(model, ω)
     for (j, data) in pairs(model.ports)
-        β = _propagation_constant(data, model.mu0 * model.eps0, float(ω))
-        B[:, j] .= (2im * β * model.length_scale / data.mu_r) .* data.profile
+        B[:, j] .= (2im * β[j] * model.length_scale / data.mu_r) .* data.profile
     end
     return B
 end
@@ -238,12 +249,12 @@ end
 
 The scattering matrix from the solutions `U[:, j]` with port `j` driven by [`port_excitations`](@ref):
 `Sᵢⱼ = (pᵢᵀ uⱼ / Pᵢ - δᵢⱼ) sqrt(Pᵢ Zⱼ / (Pⱼ Zᵢ)) exp(iβᵢdᵢ + iβⱼdⱼ)`, with `Pᵢ = ∮ e⋅e dS`, the TE10 wave
-impedance `Zᵢ = ωμ0μr / βᵢ` and the de-embedding distances `dᵢ`.
+impedance `Zᵢ = ωμ0μr / βᵢ` and the de-embedding distances `dᵢ`. At exactly a port's cutoff `βᵢ = 0`, `Zᵢ` is
+infinite and the S-parameters are undefined, so this throws an `ArgumentError`.
 """
 function s_parameters(model, ω::Real, U::AbstractMatrix)
-    mu0eps0 = model.mu0 * model.eps0
     ports = model.ports
-    β = [_propagation_constant(data, mu0eps0, float(ω)) for data in ports]
+    β = _port_betas(model, ω)
     # Power-wave scale: |a|² P / Z, with Z ∝ μr / β.
     w = [sqrt(data.norm * β[i] / data.mu_r) for (i, data) in pairs(ports)]
     shift = [exp(im * β[i] * data.port.deembed * model.length_scale) for (i, data) in pairs(ports)]
