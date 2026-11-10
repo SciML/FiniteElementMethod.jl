@@ -158,7 +158,7 @@ function _recognise_volume(an, s, fixed, xs)
         for (e, q) in enumerate(unpack(x, sv))
             ce = comps[e]
             other = mod1(ce + 1, 3)
-            tol = 1.0e-10 * max(maximum(abs, q.B), maximum(abs, q.λU), 1.0e-300)
+            tol = 1.0e-10 * max(maximum(abs, q.B), 1.0e-300)  # the second-order part is judged against itself
             α, β, γ = q.B[other, ce, other], q.B[other, other, ce], q.B[ce, other, other]
             expect = [α * (c == ce) * (a == b) + β * (b == ce) * (a == c) + γ * (a == ce) * (c == b) for a in 1:3, c in 1:3, b in 1:3]
             abs(γ) > tol && throw(
@@ -173,8 +173,11 @@ function _recognise_volume(an, s, fixed, xs)
             abs(α + β) > tol && throw(
                 ArgumentError("the second-order part of equation $e adds a component-wise Laplacian of E to curl(ν*curl(E)), which is not H(curl)-conforming; $_MAXWELL_FORM")
             )
-            maximum(abs, q.dF) > tol && throw(ArgumentError("equation $e has a first-order term inside a derivative; $_MAXWELL_FORM"))
-            maximum(abs, q.dG) > tol && throw(
+            # No first-order term is allowed, so only roundoff of the larger coefficients may pass: a 1e-10 tolerance
+            # would hide a first-order term of size 1 next to ν = 1e12.
+            tol1 = 10eps() * max(maximum(abs, q.B), maximum(abs, q.λU), 1.0e-300)
+            maximum(abs, q.dF) > tol1 && throw(ArgumentError("equation $e has a first-order term inside a derivative; $_MAXWELL_FORM"))
+            maximum(abs, q.dG) > tol1 && throw(
                 ArgumentError("equation $e has a first-order term in the derivatives of E, which curl(ν*curl(E)) does not have; $_MAXWELL_FORM")
             )
             # A coupling is judged against the zeroth-order coefficients, not against a larger second-order one.
