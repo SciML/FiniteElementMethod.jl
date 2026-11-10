@@ -180,6 +180,10 @@ end
     # beside a coupling of 1e-3 in a₀ = 1.
     err("the zeroth-order term of equation 1 couples the components of E; the coefficients of E and its time derivatives must be scalars"; nu = 1.0e12, a0 = 1.0, extra = c -> 1.0e-3 * Ev[mod1(c + 1, 3)])
 
+    # The same for a first-order term next to a large ν.
+    err("equation 1 has a first-order term in the derivatives of E, which curl(ν*curl(E)) does not have; $form"; nu = 1.0e12, extra = c -> D[1](Ev[c]))
+    err("equation 1 has a first-order term inside a derivative; $form"; nu = 1.0e12, extra = c -> D[1](D[1](x * Ev[c])) - D[1](x * D[1](Ev[c])))
+
     # Terms confined to a small ball around one interior centroid are seen: every centroid is checked.
     grid = unit_cube(3)
     Ωf = MeshDomain(grid)
