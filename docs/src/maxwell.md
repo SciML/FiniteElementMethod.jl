@@ -70,8 +70,9 @@ sweep = solve_sweep(model, 2π .* (8.0e9:0.5e9:12.0e9); solver = CuDSSSolver())
 
 The default is cuDSS's general LU (`structure = "G"`). `CuDSSSolver(; structure = "S")` uses its complex
 symmetric LDLᵀ instead (the Maxwell operator is complex symmetric, not Hermitian), with about half the factor
-storage; CUDSS.jl documents complex symmetric matrices from its version 1.0, so use it with CUDSS.jl 1. Both
-CUDSS.jl 0.8 and 1 are accepted for the default.
+storage; CUDSS.jl documents complex symmetric matrices only from its version 1.0. CUDSS.jl 1.0 currently cannot be
+installed next to this package (its ArrayInterface bound conflicts with the one of DiffEqBase), so use CUDSS.jl 0.8
+with the default general LU until it resolves; the extension accepts both.
 
 The CPU side of this solver (the CSR layout and the per-frequency value update) is tested in the Maxwell test
 group, and the `MaxwellGPU` group checks that the extension loads and infers. The comparison of the GPU sweep with

@@ -21,7 +21,8 @@ const EXT = Base.get_extension(FiniteElementMethod, :FiniteElementMethodCUDSSExt
     @test_throws "SparseMatrixCSC" solver(Matrix(A), B, nothing)  # dense A is not for cuDSS
 end
 
-# The complex symmetric LDLᵀ is documented from CUDSS.jl 1.0 on.
+# The complex symmetric LDLᵀ is documented from CUDSS.jl 1.0 on; the supported resolvable version today is 0.8,
+# where only the general LU runs, so the gate skips "S" there.
 const STRUCTURES = pkgversion(CUDSS) >= v"1" ? ["G", "S"] : ["G"]
 
 if CUDA.functional()
