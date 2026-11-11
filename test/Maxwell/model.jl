@@ -140,3 +140,23 @@ end
     @test FiniteElementMethod.maxwell_rhs(m, 3.0, J) ≈
         -im * 3.0 * FiniteElementMethod.MU0 * 0.25 .* FiniteElementMethod.maxwell_rhs(MaxwellModel(unit_cube(2); mu0 = 1.0), 1.0, x -> im .* J(x))
 end
+
+@testset "point evaluation finds points the nearest-node search misses" begin
+    nodes = Node.([(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (0.35, 0.35, 0.35), (0.36, 0.35, 0.35), (0.35, 0.36, 0.35), (0.35, 0.35, 0.36)])
+    grid = Grid(Tetrahedron.([(1, 2, 3, 4), (5, 6, 7, 8)]), nodes)
+    model = MaxwellModel(grid; eps0 = 1.0, mu0 = 1.0)
+    E0 = ComplexF64[1 + 0.2im, -2 + 0.3im, 3 - 0.4im]
+    sol = solve_driven(model, 2.0, x -> -2im .* E0)
+    vals = field_values(sol, [Vec(0.3, 0.3, 0.3), Vec(5.0, 5.0, 5.0)])
+    @test collect(vals.E[1]) ≈ E0 atol = 1.0e-12
+    @test all(isnan, vals.E[2]) && all(isnan, vals.curlE[2])
+end
+
+@testset "PEC facet edge dofs match Ferrite's tetrahedron table" begin
+    @test FiniteElementMethod._TET_FACET_EDGE_DOFS == Ferrite.dirichlet_facetdof_indices(FiniteElementMethod._NEDELEC)
+end
+
+@testset "PEC facet vertex dofs match Ferrite's linear Lagrange table" begin
+    @test FiniteElementMethod._TET_FACET_VERTEX_DOFS ==
+        Ferrite.dirichlet_facetdof_indices(Ferrite.Lagrange{RefTetrahedron, 1}())
+end
