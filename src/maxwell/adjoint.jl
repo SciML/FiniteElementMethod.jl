@@ -4,6 +4,17 @@
 
 const _PARAMETER_KINDS = (:eps_r, :eps_r_imag, :mu_r, :sigma)
 
+# The adjoint of a port is its forward field only for a symmetric A, but `add_term!` takes any block with the
+# model's sparsity pattern.
+function _check_symmetric(model)
+    for (k, term) in pairs(model.terms)
+        B = term.block
+        norm(B - transpose(B), 1) <= 1.0e-12 * max(norm(B, 1), 1.0) ||
+            throw(ArgumentError("term $k of the model has a nonsymmetric block, so A is not symmetric and the adjoint needs transpose(A); the sensitivities support symmetric terms only"))
+    end
+    return nothing
+end
+
 # ∫ w ∇×Nᵢ⋅∇×Nⱼ (curl = true) or ∫ w Nᵢ⋅Nⱼ over `cells`, with the real weight `w = weight(cell)`, with the
 # zeros outside `cells` dropped.
 function _region_block(model, cells, curl::Bool, weight)
@@ -118,10 +129,12 @@ field of port `i` is the forward field `uᵢ` with port `i` driven, so
 at no linear solve beyond [`solve_sweep`](@ref). `dA/dp` is assembled once per parameter over the cells of its
 set, including the absorbing boundary's `sqrt(εc/μr)` on those cells. A cell set adjacent to a wave port is
 rejected: the port's mode, excitation and normalisation depend on its material, and are taken as fixed.
-Terms added with [`FiniteElementMethod.add_term!`](@ref) are taken as independent of the parameters.
+Terms added with [`FiniteElementMethod.add_term!`](@ref) are taken as independent of the parameters, and must have
+symmetric blocks (an `ArgumentError` otherwise).
 """
 function s_parameter_sensitivities(model::MaxwellModel, omegas, params; solver = umfpack_solver)
     params = _normalise_params(params)
+    _check_symmetric(model)
     terms = [_parameter_terms(model, param) for param in params]  # validate before solving
     return _s_parameter_sensitivities(model, solve_sweep(model, omegas; fields = true, solver), params, terms)
 end
@@ -132,6 +145,7 @@ function s_parameter_sensitivities(model::MaxwellModel, sweep::MaxwellSweep, par
     all(U -> size(U) == (Ferrite.ndofs(model.dh), length(model.ports)), sweep.fields) ||
         throw(ArgumentError("the sweep's fields do not match the dofs and ports of the model"))
     params = _normalise_params(params)
+    _check_symmetric(model)
     terms = [_parameter_terms(model, param) for param in params]
     return _s_parameter_sensitivities(model, sweep, params, terms)
 end
@@ -174,6 +188,7 @@ The solve is `solver(A, B, cache)` on the constrained `A(ω)`; to reuse an exist
 `solver = (A, B, F) -> (F \\ B, F)` and `cache = F`.
 """
 function adjoint_gradient(model::MaxwellModel, ω::Real, u::AbstractVector, dJ_du::AbstractVector, params; solver = umfpack_solver, cache = nothing)
+    _check_symmetric(model)
     terms = [_parameter_terms(model, param) for param in _normalise_params(params)]
     ω = float(ω)
     A = maxwell_operator(model, ω)

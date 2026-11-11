@@ -149,3 +149,16 @@ end
     addcellset!(grid, "empty", Int[])
     @test iszero(s_parameter_sensitivities(model, sweep, [(:sigma, "empty")]).dS)
 end
+
+@testset "sensitivities reject a model with a nonsymmetric term" begin
+    model = slab_model(slab_grid(3.0), MaxwellMaterial(; eps_r = 2.2))
+    extra = copy(model.blocks.sigma)
+    nonzeros(extra) .= rand(nnz(extra))
+    FiniteElementMethod.add_term!(model, extra, ω -> 1.0)
+    u = zeros(ComplexF64, ndofs(model.dh))
+    @test_throws "nonsymmetric" s_parameter_sensitivities(model, [SLAB_F], [(:eps_r, "slab")])
+    @test_throws "nonsymmetric" adjoint_gradient(model, SLAB_F, u, zeros(ndofs(model.dh)), [(:eps_r, "slab")])
+    @test_throws "nonsymmetric" s_parameter_sensitivities(
+        model, MaxwellSweep([SLAB_F], zeros(ComplexF64, 2, 2, 1), [zeros(ComplexF64, ndofs(model.dh), 2)]), [(:eps_r, "slab")]
+    )
+end
