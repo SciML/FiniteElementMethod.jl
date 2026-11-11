@@ -49,7 +49,7 @@ function _unique_facets(grid, facets)
     for facet in facets
         cell, local_facet = facet[1], facet[2]
         cell_nodes = Ferrite.getcells(grid, cell).nodes
-        nodes = sort!([cell_nodes[i] for i in Ferrite.reference_facets(RefTetrahedron)[local_facet]])
+        nodes = sort!([cell_nodes[i] for i in _TET_FACET_NODES[local_facet]])
         nodes in seen && continue
         push!(seen, nodes)
         push!(unique_facets, Ferrite.FacetIndex(cell, local_facet))
@@ -64,7 +64,7 @@ function _lumped_port_geometry(port::LumpedPort, dh)
     facets = _unique_facets(grid, Ferrite.getfacetset(grid, port.facetset))
     isempty(facets) && throw(ArgumentError("port facet set $(repr(port.facetset)) is empty"))
     fv = _facet_values()
-    local_dofs = Ferrite.dirichlet_facetdof_indices(_NEDELEC)
+    local_dofs = _TET_FACET_EDGE_DOFS
     profile = zeros(Ferrite.ndofs(dh))
     normal = nothing
     nodes = Ferrite.Vec{3, Float64}[]
@@ -85,7 +85,7 @@ function _lumped_port_geometry(port::LumpedPort, dh)
                 profile[dofs[i]] += dot(l̂, Ferrite.shape_value(fv, q, i)) * dS
             end
         end
-        append!(nodes, x[i] for i in Ferrite.reference_facets(RefTetrahedron)[local_facet])
+        append!(nodes, x[i] for i in _TET_FACET_NODES[local_facet])
     end
     abs(dot(l̂, normal)) <= 1.0e-8 || throw(ArgumentError("direction of port $(repr(port.facetset)) is not in the port plane"))
     t̂ = cross(normal, l̂)
