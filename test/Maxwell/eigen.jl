@@ -66,14 +66,36 @@ end
     high = maxwell_eigenmodes(small; nev = 93, target_frequency = 1000.0)
     @test length(high.frequency) == 93
     @test high.frequency[1] ≈ maxwell_eigenmodes(small; nev = 1, target_frequency = 0.9).frequency[1] rtol = 1.0e-8
-    # A cutoff of 12σ drops every mode below 1.39 Hz from a target of 0.4: the 2nev = 6 nearest candidates are all
+    # The cutoff is relative to the spectrum scale ‖K‖₁/‖M‖₁ = 1412.4 of this model; nullspace_tol = 0.0537 makes it
+    # 75.85 = 12σ of a target of 0.4, which drops every mode below 1.39 Hz: the 2nev = 6 nearest candidates are all
     # dropped, and the search must go on to find the next three rather than stop with fewer.
     model = box_model(2)
-    krylov = maxwell_eigenmodes(model; nev = 3, target_frequency = 0.4, nullspace_tol = 12.0)
-    dense = maxwell_eigenmodes(model; nev = 3, target_frequency = 0.4, nullspace_tol = 12.0, krylovdim = 10_000)
+    krylov = maxwell_eigenmodes(model; nev = 3, target_frequency = 0.4, nullspace_tol = 0.0537)
+    dense = maxwell_eigenmodes(model; nev = 3, target_frequency = 0.4, nullspace_tol = 0.0537, krylovdim = 10_000)
     @test length(krylov.frequency) == 3
     @test all(>(sqrt(12) * 0.4), krylov.frequency)
     @test krylov.frequency ≈ dense.frequency rtol = 1.0e-8
+end
+
+@testset "null-space cutoff: static modes are rejected for a low target too" begin
+    grid = generate_grid(Tetrahedron, (2, 2, 2), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0))
+    model = MaxwellModel(grid; pec = ["left", "right"], eps0 = 1.0, mu0 = 1.0)
+    # First three nonzero eigenfrequencies of the generalised problem K u = λ M u on the free dofs.
+    truth = [0.4695153184, 0.4907674018, 0.6775122733]
+    krylov = maxwell_eigenmodes(model; nev = 3, target_frequency = 1.0e-5)
+    dense = maxwell_eigenmodes(model; nev = 3, target_frequency = 1.0e-7, krylovdim = 10_000)
+    @test krylov.frequency ≈ truth rtol = 1.0e-8
+    @test dense.frequency ≈ truth rtol = 1.0e-8
+end
+
+@testset "a target exactly on a discrete resonance" begin
+    # One free edge dof with K / M = 20 = mu0 eps0 ω², so the shifted matrix is exactly [0.0].
+    model = MaxwellModel(
+        generate_grid(Tetrahedron, (1, 1, 1), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0));
+        pec = CUBE_FACES, eps0 = 20.0, mu0 = 1.0
+    )
+    modes = maxwell_eigenmodes(model; nev = 1, target_frequency = 1 / (2π))
+    @test modes.frequency[1] ≈ 1 / (2π) rtol = 1.0e-6
 end
 
 @testset "lossy: nearest in complex ω, and the candidate bound holds" begin

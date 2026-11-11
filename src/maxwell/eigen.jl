@@ -110,7 +110,7 @@ those; `krylovdim` grows with the candidate count.
 Edge elements carry the gradients of the nodal hat functions as an exact `λ = 0` null space (one mode per node
 off the PEC facets, less one per connected part of the mesh without PEC), which would swamp the shift-invert for any target below the lowest physical mode. Every
 Krylov vector is therefore projected, along those gradients, onto the discretely divergence-free fields, so the
-null space never enters; eigenvalues with `|λ| < nullspace_tol min(σ, ‖Kc‖₁/‖Mε‖₁)` (such as the one constant mode of
+null space never enters; eigenvalues with `|λ| < nullspace_tol ‖Kc‖₁/‖Mε‖₁` (such as the one constant mode of
 each further disconnected PEC body) are dropped as well, and the search widens until `nev` modes survive.
 
 Returns `(; frequency, Q, omega, modes)`: `omega` the complex angular frequencies `ω = √λ / (L √(μ0 ε0))`,
@@ -142,11 +142,21 @@ function maxwell_eigenmodes(
     isempty(free) && throw(ArgumentError("every edge dof of the model is on a PEC facet, so it has no modes"))
     K = blocks.curlcurl[free, free]
     M = lossy ? blocks.eps_real[free, free] + im * blocks.eps_imag[free, free] : blocks.eps_real[free, free]
-    σ = scale * (2π * target_frequency)^2
-    F = lu(K - σ * M)
     # The cutoff for the null space is relative to the spectrum of the model, ‖K‖/‖M‖ of the order of its largest λ,
-    # and to σ when that is smaller; relative to σ alone, a high target would discard the lowest physical modes.
-    λ_null = nullspace_tol * min(σ, opnorm(K, 1) / opnorm(M, 1))
+    # not to the target: relative to a high target it would discard the lowest physical modes, and relative to a
+    # low one it would admit the static modes, whose roundoff λ is far above it. A target below the cutoff is
+    # raised to it, which also keeps `K - σ M` from being numerically singular; it then has the same nearest modes.
+    λ_null = nullspace_tol * opnorm(K, 1) / opnorm(M, 1)
+    ωt = max(2π * target_frequency, sqrt(λ_null / scale))
+    σ = scale * ωt^2
+    # A shift exactly on a discrete eigenvalue makes the factorisation singular; nudge it off.
+    F = try
+        lu(K - σ * M)
+    catch err
+        err isa SingularException || rethrow()
+        σ *= 1 + 1.0e-8
+        lu(K - σ * M)
+    end
 
     # The gradients of the hat functions of nodes off the PEC facets vanish on the PEC edges; project along them.
     Gfull, dhn = _discrete_gradient(model)
@@ -162,7 +172,6 @@ function maxwell_eigenmodes(
     # Shift-invert finds the modes nearest σ in λ ∝ ω², which favours those below the target. Every mode with
     # |ω - ωt| ≤ d has |λ - σ| = scale |ω - ωt| |ω + ωt| ≤ scale d (2ωt + d), complex ω included, so the
     # candidates (all modes within the largest λ distance found) hold the nev nearest in ω once it reaches that.
-    ωt = 2π * target_frequency
     howmany = 2nev
     local λ, vecs, keep
     while true
