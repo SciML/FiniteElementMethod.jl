@@ -107,9 +107,6 @@ function _absorbing_terms(dh, pattern, names, cell_materials, mu0, eps0, L)
     end
 end
 
-# The local nodes of each face of a tetrahedron, in Ferrite's facet order (checked against Ferrite in the tests).
-const _TET_FACET_NODES = ((1, 3, 2), (1, 2, 4), (2, 3, 4), (1, 4, 3))
-
 function _port_frame(port, normal)
     a_dir = port.a_direction
     abs(dot(a_dir, normal)) <= 1.0e-8 * norm(a_dir) ||
