@@ -12,7 +12,7 @@ struct _HuygensSurface
 end
 
 _facet_nodes(grid, cell, local_facet) =
-    sort!([Ferrite.getcells(grid, cell).nodes[i] for i in Ferrite.reference_facets(RefTetrahedron)[local_facet]])
+    sort!([Ferrite.getcells(grid, cell).nodes[i] for i in _TET_FACET_NODES[local_facet]])
 
 _centroid(grid, nodes) = sum(Ferrite.get_node_coordinate(grid, n) for n in nodes) / length(nodes)
 
@@ -78,7 +78,7 @@ function _huygens_surface(sol::MaxwellSolution, name::AbstractString, center)
     end
     center = Ferrite.Vec{3, Float64}(Tuple(center))
     fv = _facet_values()
-    local_dofs = Ferrite.dirichlet_facetdof_indices(_NEDELEC)
+    local_dofs = _TET_FACET_EDGE_DOFS
     prescribed = Set(model.ch.prescribed_dofs)
     surface = _HuygensSurface(Ferrite.Vec{3, Float64}[], Ferrite.Vec{3, Float64}[], Ferrite.Vec{3, ComplexF64}[], Ferrite.Vec{3, ComplexF64}[], Float64[])
     oriented = NTuple{3, Int}[]
