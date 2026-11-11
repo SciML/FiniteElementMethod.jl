@@ -35,7 +35,7 @@ as a [`MaxwellSweep`](@ref). Each frequency recombines the nonzero values of one
 [`maxwell_operator!`](@ref), applies the PEC constraints, and solves for all port excitations at once with
 `solver(A, B, cache)` (see [`FiniteElementMethod.umfpack_solver`](@ref)), which may keep its factorisation
 between frequencies in `cache`. `fields = true` keeps the solutions (`ndofs × nports` complex values per
-frequency).
+frequency). An empty `omegas` gives an empty sweep.
 """
 function solve_sweep(model::MaxwellModel, omegas; fields::Bool = false, solver = umfpack_solver)
     isempty(model.ports) && throw(ArgumentError("the model has no wave ports"))
@@ -43,6 +43,7 @@ function solve_sweep(model::MaxwellModel, omegas; fields::Bool = false, solver =
     np = length(model.ports)
     S = zeros(ComplexF64, np, np, length(omegas))
     kept = fields ? Matrix{ComplexF64}[] : nothing
+    isempty(omegas) && return MaxwellSweep(omegas, S, kept)
     A = maxwell_operator(model, first(omegas))
     prescribed = model.ch.prescribed_dofs
     cache = nothing
@@ -53,7 +54,7 @@ function solve_sweep(model::MaxwellModel, omegas; fields::Bool = false, solver =
         B[prescribed, :] .= 0  # the PEC constraints are homogeneous
         U, cache = solver(A, B, cache)
         S[:, :, k] .= s_parameters(model, ω, U)
-        fields && push!(kept, U)
+        fields && push!(kept, copy(U))
     end
     return MaxwellSweep(omegas, S, kept)
 end

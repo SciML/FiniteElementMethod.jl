@@ -34,7 +34,7 @@ tangential mass `∮ (n × Nᵢ)⋅(n × Nⱼ) dS` of the port face), `profile` 
 (`pᵀ B⁻¹ p` over the unconstrained edge dofs of the face: `∮ e_h⋅e_h dS` of the L² projection `e_h` of the
 mode onto the discrete tangential traces, so that a port-face field `c e_h` gives exactly `pᵀu / norm = c`),
 `normal` (outward), `a`, `b` (mesh units), `kc` (`π / (a L)`, rad/m),
-`eps_r` and `mu_r` of the port material.
+`eps_r` and `mu_r` of the port material (lossless: complex `eps_r` is rejected).
 """
 struct WavePortData
     port::WavePort
@@ -99,9 +99,16 @@ function _absorbing_terms(dh, pattern, names, cell_materials, mu0, eps0, L)
     materials = unique(cell_materials[facet[1]] for name in names for facet in Ferrite.getfacetset(dh.grid, name))
     return map(materials) do m
         block = _tangential_mass(dh, pattern, names, cell -> Float64(cell_materials[cell] == m))
-        MaxwellTerm(block, ω -> im * ω * sqrt(mu0 * eps0) * L * sqrt((m.eps_r - im * m.sigma / (ω * eps0)) / m.mu_r))
+        # The coefficient is ω √εc with εc ~ 1/ω for a conductor, so it tends to 0 as ω → 0.
+        MaxwellTerm(
+            block,
+            ω -> iszero(ω) ? 0.0im : im * ω * sqrt(mu0 * eps0) * L * sqrt((m.eps_r - im * m.sigma / (ω * eps0)) / m.mu_r)
+        )
     end
 end
+
+# The local nodes of each face of a tetrahedron, in Ferrite's facet order (checked against Ferrite in the tests).
+const _TET_FACET_NODES = ((1, 3, 2), (1, 2, 4), (2, 3, 4), (1, 4, 3))
 
 function _port_frame(port, normal)
     a_dir = port.a_direction
@@ -138,7 +145,7 @@ function _wave_port(port::WavePort, dh, pattern, cell_materials, length_scale, c
     end
     for (cell, local_facet) in facets
         x = Ferrite.getcoordinates(grid, cell)
-        append!(nodes, x[i] for i in Ferrite.reference_facets(RefTetrahedron)[local_facet])
+        append!(nodes, x[i] for i in _TET_FACET_NODES[local_facet])
     end
     â, ê = _port_frame(port, normal)
     ξ, η, ζ = [dot(x, â) for x in nodes], [dot(x, ê) for x in nodes], [dot(x, normal) for x in nodes]
@@ -151,6 +158,8 @@ function _wave_port(port::WavePort, dh, pattern, cell_materials, length_scale, c
     length(materials) == 1 || throw(ArgumentError("port $(repr(port.facetset)) touches more than one material"))
     material = only(materials)
     iszero(material.sigma) || throw(ArgumentError("port $(repr(port.facetset)) is in a conducting material"))
+    iszero(imag(material.eps_r)) ||
+        throw(ArgumentError("port $(repr(port.facetset)) is in a lossy material (complex eps_r); the S-parameter power normalisation of a wave port assumes a lossless one"))
 
     e(x) = ê * sin(π * (dot(x, â) - ξ0) / a)
     profile = zeros(Ferrite.ndofs(dh))
@@ -174,7 +183,7 @@ function _wave_port(port::WavePort, dh, pattern, cell_materials, length_scale, c
     count = Dict{Int, Int}()
     for (cell, local_facet) in facets
         cell_dofs = Ferrite.celldofs(dh, cell)
-        for i in Ferrite.dirichlet_facetdof_indices(_NEDELEC)[local_facet]
+        for i in _TET_FACET_EDGE_DOFS[local_facet]
             count[cell_dofs[i]] = get(count, cell_dofs[i], 0) + 1
         end
     end

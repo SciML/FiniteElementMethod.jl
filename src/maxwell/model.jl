@@ -103,6 +103,10 @@ function MaxwellModel(
     absorbing = String.(collect(absorbing))
     foreach(name -> _check_facetset(grid, name), pec)
     foreach(name -> _check_facetset(grid, name), absorbing)
+    for port in ports, name in absorbing
+        isdisjoint(Ferrite.getfacetset(grid, name), Ferrite.getfacetset(grid, port.facetset)) ||
+            throw(ArgumentError("facet sets $(repr(name)) and $(repr(port.facetset)) share facets: a facet cannot be both absorbing and a wave port"))
+    end
     cell_materials = _cell_materials(grid, materials)
 
     ip = _NEDELEC
