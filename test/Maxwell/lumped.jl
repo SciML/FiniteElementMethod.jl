@@ -185,3 +185,22 @@ end
     @test model.ports[1].block.colptr == model.blocks.sigma.colptr
     @test FiniteElementMethod.tangential_mass(model, ["top"]).colptr == model.blocks.curlcurl.colptr
 end
+
+@testset "sweep fields survive a solver that reuses its output buffer" begin
+    model = plates(5.0)
+    ωs = 2π .* [2.0e9, 3.0e9]
+    function buffer_reusing_solver(A, B, cache)
+        U = cache === nothing ? similar(B) : cache
+        copyto!(U, lu(A) \ B)
+        return U, U
+    end
+    sweep = solve_sweep(model, ωs; fields = true, solver = buffer_reusing_solver)
+    @test sweep.fields[1] !== sweep.fields[2]
+    for (k, ω) in pairs(ωs)
+        A = maxwell_operator(model, ω)
+        Ferrite.apply!(A, model.ch)
+        B = FiniteElementMethod.port_excitations(model, ω)
+        B[model.ch.prescribed_dofs, :] .= 0
+        @test norm(A * sweep.fields[k] - B) / norm(B) < 1.0e-8
+    end
+end
