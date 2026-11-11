@@ -222,16 +222,20 @@ end
     )
 end
 
-@testset "a facet set cannot be both absorbing and a wave port" begin
+@testset "a facet cannot carry two absorbing or wave port conditions" begin
     grid = generate_grid(Tetrahedron, (2, 1, 2), Vec(0.0, 0.0, 0.0), Vec(2.0, 1.0, 2.0))
     addfacetset!(grid, "bottom_alias", x -> x[3] ≈ 0.0)
     walls = ["left", "right", "front", "back"]
     for name in ("bottom", "bottom_alias")
-        @test_throws "absorbing and a wave port" MaxwellModel(
+        @test_throws "share facets" MaxwellModel(
             grid; pec = walls, eps0 = 1.0, mu0 = 1.0, absorbing = [name],
             ports = [WavePort("bottom"; a_direction = (1, 0, 0))]
         )
     end
+    @test_throws "share facets" MaxwellModel(
+        grid; pec = walls, eps0 = 1.0, mu0 = 1.0,
+        ports = [WavePort("bottom"; a_direction = (1, 0, 0)), WavePort("bottom_alias"; a_direction = (1, 0, 0))]
+    )
 end
 
 @testset "tetrahedron facet tables match Ferrite" begin

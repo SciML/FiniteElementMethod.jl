@@ -57,7 +57,7 @@ constant is `β = -iα`, the evanescent branch.
 
 A port must lie in a lossless material: a complex `eps_r` or a nonzero conductivity at a port is rejected, because the
 power-wave normalisation above holds for a real wave impedance. Put loss behind the port, not in its face, and a
-facet set cannot be both a port and `absorbing`.
+facet cannot belong to two ports or to both a port and an `absorbing` set.
 
 ```@docs
 MaxwellModel
