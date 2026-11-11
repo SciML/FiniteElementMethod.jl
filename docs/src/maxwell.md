@@ -55,6 +55,10 @@ sweep.S[2, 1, 5]  # S21 at 10 GHz: |S21| ≈ 1, angle ≈ -93.3°
 are normalised to power waves through the TE10 wave impedance `ωμ0μr/β`. Below cutoff the propagation
 constant is `β = -iα`, the evanescent branch.
 
+A port must lie in a lossless material: a complex `eps_r` or a nonzero conductivity at a port is rejected, because the
+power-wave normalisation above holds for a real wave impedance. Put loss behind the port, not in its face, and a
+facet cannot belong to two ports or to both a port and an `absorbing` set.
+
 ```@docs
 MaxwellModel
 MaxwellMaterial
