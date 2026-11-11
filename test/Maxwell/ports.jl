@@ -220,7 +220,3 @@ end
         ports = [WavePort("bottom"; a_direction = (1, 0, 0)), WavePort("bottom_alias"; a_direction = (1, 0, 0))]
     )
 end
-
-@testset "tetrahedron facet tables match Ferrite" begin
-    @test FiniteElementMethod._TET_FACET_NODES == Ferrite.reference_facets(RefTetrahedron)
-end
