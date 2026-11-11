@@ -104,6 +104,12 @@ function MaxwellModel(
     absorbing = String.(collect(absorbing))
     foreach(name -> _check_facetset(grid, name), pec)
     foreach(name -> _check_facetset(grid, name), absorbing)
+    # Each boundary condition assembles its own term, so a facet in two of them would get both.
+    conditions = [[("absorbing", name) for name in absorbing]; [("wave port", port.facetset) for port in ports]]
+    for (i, (kind_i, name_i)) in pairs(conditions), (kind_j, name_j) in conditions[(i + 1):end]
+        isdisjoint(Ferrite.getfacetset(grid, name_i), Ferrite.getfacetset(grid, name_j)) ||
+            throw(ArgumentError("facet sets $(repr(name_i)) ($kind_i) and $(repr(name_j)) ($kind_j) share facets: a facet can carry only one absorbing or wave port condition"))
+    end
     cell_materials = _cell_materials(grid, materials)
 
     ip = _NEDELEC
@@ -158,9 +164,12 @@ function _cell_materials(grid, materials)
     return cell_materials
 end
 
+# The local edge dofs of each face of a tetrahedron, in Ferrite's facet order (checked against Ferrite in the tests).
+const _TET_FACET_EDGE_DOFS = ((3, 2, 1), (1, 5, 4), (2, 6, 5), (4, 6, 3))
+
 # The edge dofs on the PEC facets: the tangential traces there are exactly these dofs.
 function _pec_dofs(dh, grid, pec)
-    local_dofs = Ferrite.dirichlet_facetdof_indices(_NEDELEC)
+    local_dofs = _TET_FACET_EDGE_DOFS
     dofs = Set{Int}()
     cell_dofs = zeros(Int, Ferrite.ndofs_per_cell(dh))
     for name in pec, facet in Ferrite.getfacetset(grid, name)

@@ -70,6 +70,20 @@ end
     @test abs(S[2, 1] - 1) < 0.05
 end
 
+@testset "exactly at cutoff the wave impedance is infinite: a clear error, not NaN" begin
+    # With eps0 = mu0 = 1 and unit scale, ω = kc is exactly the cutoff and β is exactly zero.
+    grid = generate_grid(Tetrahedron, (2, 1, 2), Vec(0.0, 0.0, 0.0), Vec(2.0, 1.0, 2.0))
+    model = MaxwellModel(
+        grid; pec = ["left", "right", "front", "back"], eps0 = 1.0, mu0 = 1.0,
+        ports = [WavePort("bottom"; a_direction = (1, 0, 0)), WavePort("top"; a_direction = (1, 0, 0))],
+    )
+    ωc = model.ports[1].kc
+    @test FiniteElementMethod.propagation_constant(model, 1, ωc) == 0
+    @test_throws "cutoff of wave port 1" solve_sweep(model, [ωc])
+    @test_throws "cutoff of wave port 1" FiniteElementMethod.port_excitations(model, ωc)
+    @test all(isfinite, solve_sweep(model, [ωc * (1 + 1.0e-6)]).S)
+end
+
 @testset "evanescent TE10 below cutoff" begin
     len = 10.0
     model = wr90(2.0, len)
@@ -166,4 +180,64 @@ end
     @info "WR-90 ABC on a conducting load" εc S11 expected abs(S11 - expected) abs(ignoring_σ - expected)
     @test abs(S11 - expected) < 0.01
     @test abs(ignoring_σ - expected) > 0.03
+end
+
+@testset "sweep keeps an independent field per frequency, even from a solver that reuses its output" begin
+    model = wr90(5.0, 10.0)
+    ωs = F10 .* [0.9, 1.1]
+    reused = Matrix{ComplexF64}(undef, 0, 0)
+    function one_buffer_solver(A, B, cache)
+        U, cache = FiniteElementMethod.umfpack_solver(A, B, cache)
+        size(reused) == size(U) || (reused = similar(U))
+        copyto!(reused, U)
+        return reused, cache
+    end
+    sweep = solve_sweep(model, ωs; fields = true, solver = one_buffer_solver)
+    fresh = [solve_sweep(model, [ω]; fields = true).fields[1] for ω in ωs]
+    @test sweep.fields[1] !== sweep.fields[2]
+    @test sweep.fields[1] ≈ fresh[1] && sweep.fields[2] ≈ fresh[2]
+end
+
+@testset "an empty frequency vector gives an empty sweep" begin
+    sweep = solve_sweep(wr90(5.0, 10.0), Float64[]; fields = true)
+    @test isempty(sweep.omegas) && size(sweep.S) == (2, 2, 0) && isempty(sweep.fields)
+end
+
+@testset "the absorbing operator is finite at ω = 0" begin
+    grid = generate_grid(Tetrahedron, (1, 1, 1))
+    addcellset!(grid, "all", x -> true)
+    for material in (MaxwellMaterial(), MaxwellMaterial(; sigma = 0.5))
+        m = MaxwellModel(grid; absorbing = ["top"], materials = Dict("all" => material), eps0 = 1.0, mu0 = 1.0)
+        @test all(isfinite, maxwell_operator(m, 0.0).nzval)
+    end
+end
+
+@testset "lossy port materials are rejected" begin
+    grid = generate_grid(Tetrahedron, (2, 1, 2), Vec(0.0, 0.0, 0.0), Vec(2.0, 1.0, 2.0))
+    addcellset!(grid, "lossy", x -> x[3] >= 0.0)
+    walls = ["left", "right", "front", "back"]
+    @test_throws "lossy" MaxwellModel(
+        grid; pec = walls, eps0 = 1.0, mu0 = 1.0, materials = Dict("lossy" => MaxwellMaterial(; eps_r = 1 - 2im)),
+        ports = [WavePort("bottom"; a_direction = (1, 0, 0))]
+    )
+end
+
+@testset "a facet cannot carry two absorbing or wave port conditions" begin
+    grid = generate_grid(Tetrahedron, (2, 1, 2), Vec(0.0, 0.0, 0.0), Vec(2.0, 1.0, 2.0))
+    addfacetset!(grid, "bottom_alias", x -> x[3] ≈ 0.0)
+    walls = ["left", "right", "front", "back"]
+    for name in ("bottom", "bottom_alias")
+        @test_throws "share facets" MaxwellModel(
+            grid; pec = walls, eps0 = 1.0, mu0 = 1.0, absorbing = [name],
+            ports = [WavePort("bottom"; a_direction = (1, 0, 0))]
+        )
+    end
+    @test_throws "share facets" MaxwellModel(
+        grid; pec = walls, eps0 = 1.0, mu0 = 1.0,
+        ports = [WavePort("bottom"; a_direction = (1, 0, 0)), WavePort("bottom_alias"; a_direction = (1, 0, 0))]
+    )
+end
+
+@testset "tetrahedron facet tables match Ferrite" begin
+    @test FiniteElementMethod._TET_FACET_NODES == Ferrite.reference_facets(RefTetrahedron)
 end
