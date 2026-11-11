@@ -151,8 +151,10 @@ function _cell_materials(grid, materials::AbstractVector{MaxwellMaterial})
     return collect(materials)
 end
 
-# The local edge dofs of each face of a tetrahedron, in Ferrite's facet order (checked against Ferrite in the tests).
+# The local edge dofs and the local nodes of each face of a tetrahedron, in Ferrite's facet order (checked against
+# Ferrite in the tests): Ferrite's own spellings of these are not public.
 const _TET_FACET_EDGE_DOFS = ((3, 2, 1), (1, 5, 4), (2, 6, 5), (4, 6, 3))
+const _TET_FACET_NODES = ((1, 3, 2), (1, 2, 4), (2, 3, 4), (1, 4, 3))
 
 # The edge dofs on the PEC facets: the tangential traces there are exactly these dofs.
 function _pec_dofs(dh, grid, pec)
