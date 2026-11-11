@@ -34,7 +34,7 @@ tangential mass `∮ (n × Nᵢ)⋅(n × Nⱼ) dS` of the port face), `profile` 
 (`pᵀ B⁻¹ p` over the unconstrained edge dofs of the face: `∮ e_h⋅e_h dS` of the L² projection `e_h` of the
 mode onto the discrete tangential traces, so that a port-face field `c e_h` gives exactly `pᵀu / norm = c`),
 `normal` (outward), `a`, `b` (mesh units), `kc` (`π / (a L)`, rad/m),
-`eps_r` and `mu_r` of the port material.
+`eps_r` and `mu_r` of the port material (lossless: complex `eps_r` is rejected).
 """
 struct WavePortData
     port::WavePort
@@ -99,9 +99,16 @@ function _absorbing_terms(dh, pattern, names, cell_materials, mu0, eps0, L)
     materials = unique(cell_materials[facet[1]] for name in names for facet in Ferrite.getfacetset(dh.grid, name))
     return map(materials) do m
         block = _tangential_mass(dh, pattern, names, cell -> Float64(cell_materials[cell] == m))
-        MaxwellTerm(block, ω -> im * ω * sqrt(mu0 * eps0) * L * sqrt((m.eps_r - im * m.sigma / (ω * eps0)) / m.mu_r))
+        # The coefficient is ω √εc with εc ~ 1/ω for a conductor, so it tends to 0 as ω → 0.
+        MaxwellTerm(
+            block,
+            ω -> iszero(ω) ? 0.0im : im * ω * sqrt(mu0 * eps0) * L * sqrt((m.eps_r - im * m.sigma / (ω * eps0)) / m.mu_r)
+        )
     end
 end
+
+# The local nodes of each face of a tetrahedron, in Ferrite's facet order (checked against Ferrite in the tests).
+const _TET_FACET_NODES = ((1, 3, 2), (1, 2, 4), (2, 3, 4), (1, 4, 3))
 
 function _port_frame(port, normal)
     a_dir = port.a_direction
@@ -138,7 +145,7 @@ function _wave_port(port::WavePort, dh, pattern, cell_materials, length_scale, c
     end
     for (cell, local_facet) in facets
         x = Ferrite.getcoordinates(grid, cell)
-        append!(nodes, x[i] for i in Ferrite.reference_facets(RefTetrahedron)[local_facet])
+        append!(nodes, x[i] for i in _TET_FACET_NODES[local_facet])
     end
     â, ê = _port_frame(port, normal)
     ξ, η, ζ = [dot(x, â) for x in nodes], [dot(x, ê) for x in nodes], [dot(x, normal) for x in nodes]
@@ -151,6 +158,8 @@ function _wave_port(port::WavePort, dh, pattern, cell_materials, length_scale, c
     length(materials) == 1 || throw(ArgumentError("port $(repr(port.facetset)) touches more than one material"))
     material = only(materials)
     iszero(material.sigma) || throw(ArgumentError("port $(repr(port.facetset)) is in a conducting material"))
+    iszero(imag(material.eps_r)) ||
+        throw(ArgumentError("port $(repr(port.facetset)) is in a lossy material (complex eps_r); the S-parameter power normalisation of a wave port assumes a lossless one"))
 
     e(x) = ê * sin(π * (dot(x, â) - ξ0) / a)
     profile = zeros(Ferrite.ndofs(dh))
@@ -174,7 +183,7 @@ function _wave_port(port::WavePort, dh, pattern, cell_materials, length_scale, c
     count = Dict{Int, Int}()
     for (cell, local_facet) in facets
         cell_dofs = Ferrite.celldofs(dh, cell)
-        for i in Ferrite.dirichlet_facetdof_indices(_NEDELEC)[local_facet]
+        for i in _TET_FACET_EDGE_DOFS[local_facet]
             count[cell_dofs[i]] = get(count, cell_dofs[i], 0) + 1
         end
     end
@@ -226,6 +235,16 @@ end
 
 _excitation(model, data::WavePortData, ω) =
     (2im * _propagation_constant(data, model.mu0 * model.eps0, ω) * model.length_scale / data.mu_r) .* data.profile
+# The propagation constants of the wave ports at ω. At exact cutoff β = 0, the wave impedance ωμ/β is infinite and the
+# power-wave scale of the S-parameters is 0/0, so it is an error rather than a NaN matrix.
+function _check_not_at_cutoff(model, ω)
+    for (j, data) in pairs(model.ports)
+        data isa WavePortData && iszero(_propagation_constant(data, model.mu0 * model.eps0, float(ω))) && throw(
+            ArgumentError("ω = $ω is exactly the TE10 cutoff of wave port $j, where its wave impedance is infinite and its S-parameters are undefined; use a nearby frequency")
+        )
+    end
+    return nothing
+end
 # A 1 A Norton source, -(1/w) l̂ sheet current, gives +iωμ0 L² g / (w L) after division by L.
 _excitation(model, data::LumpedPortData, ω) = (im * ω * model.mu0 / data.width) .* data.profile
 
@@ -238,6 +257,7 @@ parallel with its `Z0`.
 """
 function port_excitations(model, ω::Real)
     B = zeros(ComplexF64, Ferrite.ndofs(model.dh), length(model.ports))
+    _check_not_at_cutoff(model, ω)
     for (j, data) in pairs(model.ports)
         B[:, j] .= _excitation(model, data, float(ω))
     end
@@ -267,10 +287,12 @@ The scattering matrix `Sᵢⱼ = bᵢ / aⱼ` from the solutions `U[:, j]` with 
 [`port_excitations`](@ref), in power waves. A wave port has `aⱼ = sqrt(Pⱼ / Zⱼ) exp(-iβⱼdⱼ)` and
 `bᵢ = (pᵢᵀuⱼ / Pᵢ - δᵢⱼ) sqrt(Pᵢ / Zᵢ) exp(iβᵢdᵢ)`, with `Pᵢ = ∮ e⋅e dS`, the TE10 wave impedance
 `Zᵢ = ωμ0μr / βᵢ` and the de-embedding distances `dᵢ`. A lumped port has `aⱼ = sqrt(Z0ⱼ) / 2` and
-`bᵢ = (2Vᵢ - Z0ᵢ δᵢⱼ) / (2 sqrt(Z0ᵢ))`, so between lumped ports `Sᵢⱼ = 2Vᵢ / sqrt(Z0ᵢ Z0ⱼ) - δᵢⱼ`.
+`bᵢ = (2Vᵢ - Z0ᵢ δᵢⱼ) / (2 sqrt(Z0ᵢ))`, so between lumped ports `Sᵢⱼ = 2Vᵢ / sqrt(Z0ᵢ Z0ⱼ) - δᵢⱼ`. At exactly a wave port's cutoff `βᵢ = 0`, `Zᵢ` is
+infinite and the S-parameters are undefined, so this throws an `ArgumentError`.
 """
 function s_parameters(model, ω::Real, U::AbstractMatrix)
     ω = float(ω)
+    _check_not_at_cutoff(model, ω)
     ports = model.ports
     np = length(ports)
     S = zeros(ComplexF64, np, np)
