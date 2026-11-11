@@ -109,7 +109,7 @@ SI units (per metre, not per mesh unit). Points outside the mesh get `NaN`s.
 function field_values(sol::MaxwellSolution, points::AbstractVector{<:Ferrite.Vec{3}})
     (; model, u) = sol
     grid = model.grid
-    ph = Ferrite.PointEvalHandler(grid, points; warn = false)
+    ph = _locate(grid, points)
     pv = Ferrite.PointValues(_NEDELEC)
     nan = Ferrite.Vec{3, ComplexF64}((NaN, NaN, NaN))
     E = fill(nan, length(points))
