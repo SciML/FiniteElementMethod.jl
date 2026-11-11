@@ -152,11 +152,11 @@ end
     @test all(isnan, vals.E[2]) && all(isnan, vals.curlE[2])
 end
 
-@testset "PEC facet edge dofs match Ferrite's tetrahedron table" begin
+@testset "facet edge dof and node tables match Ferrite's tetrahedron" begin
     @test FiniteElementMethod._TET_FACET_EDGE_DOFS == Ferrite.dirichlet_facetdof_indices(FiniteElementMethod._NEDELEC)
+    @test FiniteElementMethod._TET_FACET_NODES == Ferrite.reference_facets(RefTetrahedron)
 end
 
-@testset "PEC facet vertex dofs match Ferrite's linear Lagrange table" begin
-    @test FiniteElementMethod._TET_FACET_VERTEX_DOFS ==
-        Ferrite.dirichlet_facetdof_indices(Ferrite.Lagrange{RefTetrahedron, 1}())
+@testset "the linear Lagrange facet dofs are the facet nodes" begin
+    @test FiniteElementMethod._TET_FACET_NODES == Ferrite.dirichlet_facetdof_indices(Ferrite.Lagrange{RefTetrahedron, 1}())
 end

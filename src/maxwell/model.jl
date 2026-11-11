@@ -143,12 +143,12 @@ function _cell_materials(grid, materials)
     return cell_materials
 end
 
-# The local dofs of each face of a tetrahedron, in Ferrite's facet order (checked against Ferrite in the tests):
-# the edge dofs of the lowest-order Nedelec space and the vertex dofs of linear Lagrange.
+# The local edge dofs and the local nodes of each face of a tetrahedron, in Ferrite's facet order (checked against
+# Ferrite in the tests): Ferrite's own spellings of these are not public.
 const _TET_FACET_EDGE_DOFS = ((3, 2, 1), (1, 5, 4), (2, 6, 5), (4, 6, 3))
-const _TET_FACET_VERTEX_DOFS = ((1, 3, 2), (1, 2, 4), (2, 3, 4), (1, 4, 3))
+const _TET_FACET_NODES = ((1, 3, 2), (1, 2, 4), (2, 3, 4), (1, 4, 3))
 _tet_facet_dofs(::Ferrite.Nedelec{Ferrite.RefTetrahedron, 1}) = _TET_FACET_EDGE_DOFS
-_tet_facet_dofs(::Ferrite.Lagrange{Ferrite.RefTetrahedron, 1}) = _TET_FACET_VERTEX_DOFS
+_tet_facet_dofs(::Ferrite.Lagrange{Ferrite.RefTetrahedron, 1}) = _TET_FACET_NODES
 
 # The edge dofs on the PEC facets: the tangential traces there are exactly these dofs. With another
 # interpolation `ip` of the single field of `dh`, its dofs on those facets.
