@@ -284,3 +284,34 @@ end
     # Data that agree at t = 0 and differ later.
     @test_throws "disagree" build([u(t, left) ~ u(t, right), u(t, bottom) ~ t * x, u(t, top) ~ 0, ic])
 end
+
+# PDE:    the 2D heat equation, t in (0, 0.1)
+# BCs:    periodic left and right on meshes whose sides match one to one (a normal and a graded mesh) and on meshes whose sides
+#         have the same number of nodes without a one-to-one correspondence
+# Shows:  the nodes of the two pieces are matched one to one; two nodes closer than the tolerance to the same partner, or a
+#         node moved by more than the tolerance, are an error naming the pieces and the nodes.
+@testset "periodic pieces need a one-to-one correspondence of their nodes" begin
+    function problem(grid)
+        Ω = MeshDomain(grid)
+        left, right, bottom, top = sides(Ω)
+        bcs = [u(t, left) ~ u(t, right), u(t, bottom) ~ 0, u(t, top) ~ 0, u(0, x, y) ~ 0]
+        @named pdesys = PDESystem([heat], bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.1)], [t, x, y], [u(t, x, y)], [])
+        return discretize(pdesys, FEMDiscretization(Ω, t))
+    end
+    base = generate_grid(Triangle, (4, 4), Vec(0.0, 0.0), Vec(1.0, 1.0))
+    remesh(f) = Grid(base.cells, [Node(f(n.x)) for n in base.nodes]; facetsets = base.facetsets)
+    @test problem(base) isa SciMLBase.DAEProblem
+    @test problem(remesh(X -> Vec(X[1], X[2]^2))) isa SciMLBase.DAEProblem
+    moved = remesh(X -> X[1] > 0.99 && 0.4 < X[2] < 0.6 ? Vec(X[1], X[2] + 1.0e-3) : X)
+    @test_throws "periodic pieces Γ_left and Γ_right of u do not match under a translation" problem(moved)
+    # Two nodes on each side lie within the tolerance of one node of the other side.
+    nodes = [Node(Vec(0.0, 0.0)), Node(Vec(1.0, 0.0)), Node(Vec(1.0, 1.0e-7)), Node(Vec(0.0, 1.0e-9)), Node(Vec(1.0, 1.0)), Node(Vec(0.0, 1.0))]
+    close_grid = Grid(
+        [Quadrilateral((1, 2, 3, 4)), Quadrilateral((4, 3, 5, 6))], nodes;
+        facetsets = Dict(
+            "left" => Set([Ferrite.FacetIndex(1, 4), Ferrite.FacetIndex(2, 4)]), "right" => Set([Ferrite.FacetIndex(1, 2), Ferrite.FacetIndex(2, 2)]),
+            "bottom" => Set([Ferrite.FacetIndex(1, 1)]), "top" => Set([Ferrite.FacetIndex(2, 3)]),
+        )
+    )
+    @test_throws "both match the node" problem(close_grid)
+end

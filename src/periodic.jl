@@ -33,6 +33,30 @@ function _match_translate(coords, from, to, shift, tol)
     return matched, unmatched
 end
 
+# Why the matching of `da` onto `db` is not a one-to-one correspondence, or `nothing`: every node of Γ_a needs a node of
+# Γ_b within `tol`, no node of Γ_b may be the target of two, and the nearest node of Γ_a to each node of Γ_b must be its
+# own preimage.
+function _matching_problem(coords, da, db, matched, unmatched, shift, tol, a, b)
+    isempty(unmatched) || return "the node at $(_tuple_str(coords[first(unmatched)])) on Γ_$a has no node of Γ_$b at " *
+        "$(_tuple_str(coords[first(unmatched)] + shift)) ($(length(unmatched)) such nodes of Γ_$a, $(length(da)) on Γ_$a and $(length(db)) on Γ_$b)"
+    owner = Dict{Int, Int}()
+    for (x, y) in matched
+        haskey(owner, y) && return "the nodes at $(_tuple_str(coords[owner[y]])) and $(_tuple_str(coords[x])) on Γ_$a both match the node at " *
+            "$(_tuple_str(coords[y])) on Γ_$b, at distances $(round(norm(coords[owner[y]] + shift - coords[y]); sigdigits = 3)) and " *
+            "$(round(norm(coords[x] + shift - coords[y]); sigdigits = 3))"
+        owner[y] = x
+    end
+    missed = [y for y in db if !haskey(owner, y)]
+    isempty(missed) || return "the node at $(_tuple_str(coords[first(missed)])) on Γ_$b has no node of Γ_$a ($(length(da)) on Γ_$a and $(length(db)) on Γ_$b)"
+    back, _ = _match_translate(coords, db, da, -shift, tol)
+    for (y, x) in back
+        owner[y] == x && continue
+        return "the node at $(_tuple_str(coords[y])) on Γ_$b is nearest to the node at $(_tuple_str(coords[x])) on Γ_$a, not to its match at " *
+            "$(_tuple_str(coords[owner[y]]))"
+    end
+    return nothing
+end
+
 function _tuple_str(x)
     return "(" * join(round.(x; sigdigits = 6), ", ") * ")"
 end
@@ -60,16 +84,14 @@ function periodic_ties(grid, dh, nodes, periodic, prescribed; dirichlet = Dict{I
         names = "Γ_$a and Γ_$b of $field"
         norm(shift) <= tol && throw(ArgumentError("periodic pieces $names coincide: their centroids are the same point, so there is no translation between them"))
         matched, unmatched = _match_translate(coords, da, db, shift, tol)
-        if !isempty(unmatched) || length(da) != length(db)
-            first_miss = isempty(unmatched) ? "" : "; the node at $(_tuple_str(coords[first(unmatched)])) on Γ_$a has no node of Γ_$b at $(_tuple_str(coords[first(unmatched)] + shift))"
-            throw(
-                ArgumentError(
-                    "periodic pieces $names do not match under a translation: Γ_$a has $(length(da)) nodes and Γ_$b has $(length(db)); " *
-                        "the translation between their centroids is $(_tuple_str(shift)) and $(length(unmatched)) nodes of Γ_$a " *
-                        "have no counterpart$first_miss. Periodic pieces must be translates of each other, with matching nodes"
-                )
+        problem = _matching_problem(coords, da, db, matched, unmatched, shift, tol, a, b)
+        problem === nothing || throw(
+            ArgumentError(
+                "periodic pieces $names do not match under a translation: $problem; the translation between their centroids is " *
+                    "$(_tuple_str(shift)) and the tolerance is $(round(tol; sigdigits = 3)). Periodic pieces must be translates of each other, " *
+                    "with a one-to-one correspondence of their nodes"
             )
-        end
+        )
         for (x, y) in matched
             parent[root(x)] = root(y)
         end
