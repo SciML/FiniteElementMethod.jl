@@ -17,7 +17,8 @@ end
     MaxwellSweep
 
 The result of [`solve_sweep`](@ref): `omegas`, the scattering matrices `S[:, :, k]` at `omegas[k]`
-(`S[i, j, k]` is the wave leaving port `i` for a unit wave incident on port `j`) and `fields`, either
+(`S[i, j, k]` is the wave leaving port `i` for a unit wave incident on port `j`: a power wave for a propagating
+port, a generalized traveling-wave coefficient below cutoff) and `fields`, either
 `nothing` or, per frequency, the matrix whose column `j` is the edge-dof vector with port `j` driven (wrap it
 with `MaxwellSolution(model, omegas[k], fields[k][:, j])`).
 """

@@ -52,8 +52,10 @@ sweep.S[2, 1, 5]  # S21 at 10 GHz: |S21| ≈ 1, angle ≈ -93.3°
 ```
 
 `Sᵢⱼ` is referred to the port faces, or to planes `deembed` mesh units inside them. Ports on different guides
-are normalised to power waves through the TE10 wave impedance `ωμ0μr/β`. Below cutoff the propagation
-constant is `β = -iα`, the evanescent branch.
+are normalised through the TE10 wave impedance `ωμ0μr/β`. For a propagating port these are power waves. Below cutoff
+the propagation constant is `β = -iα`, the evanescent branch, which carries no real axial power: the coefficients
+are then generalized traveling-wave coefficients with the same normalisation, still supported, but without an
+individual incident or outgoing power, and `S` is not power conserving.
 
 ## From a PDESystem
 
