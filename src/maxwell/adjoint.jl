@@ -84,7 +84,8 @@ function _parameter_terms(model, (kind, name))
         push!(
             terms, MaxwellTerm(
                 dropzeros!(block),
-                ω -> im * ω * sqrt(mu0 * eps0) * length_scale * _abc_admittance_derivative(kind, m, ω, eps0)
+                # 0 at ω = 0, as the forward absorbing coefficient is, where εc = εr - iσ/(ωε0) is 0/0 for σ = 0.
+                ω -> iszero(ω) ? 0.0im : im * ω * sqrt(mu0 * eps0) * length_scale * _abc_admittance_derivative(kind, m, ω, eps0)
             )
         )
     end

@@ -171,3 +171,18 @@ end
         model, MaxwellSweep([SLAB_F], zeros(ComplexF64, 2, 2, 1), [zeros(ComplexF64, ndofs(model.dh), 2)]), [(:eps_r, "slab")]
     )
 end
+
+@testset "the absorbing boundary's derivative is finite at ω = 0" begin
+    grid = slab_grid(3.0; abc = true)
+    model = slab_model(grid, MaxwellMaterial(; eps_r = 2.2); abc = true)
+    n = ndofs(model.dh)
+    # The static operator is singular, so the adjoint solve is stubbed: only dA/dp u is under test.
+    stub(A, B, cache) = (zeros(ComplexF64, size(B)), cache)
+    for kind in SLAB_KINDS
+        g = adjoint_gradient(model, 0.0, ones(ComplexF64, n), ones(n), [(kind, "slab")]; solver = stub)
+        @test all(isfinite, g)
+    end
+    for kind in SLAB_KINDS, term in FiniteElementMethod._parameter_terms(model, (kind, "slab"))
+        @test isfinite(term.coefficient(0.0))
+    end
+end
