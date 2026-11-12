@@ -182,6 +182,10 @@ function _wave_port(port::WavePort, dh, pattern, cell_materials, length_scale, c
         throw(ArgumentError("the rim of port $(repr(port.facetset)) is not PEC; name the guide walls in `pec`"))
     free = setdiff(_pec_dofs(dh, grid, [port.facetset]), constrained)
     isempty(free) && throw(ArgumentError("every edge dof of port $(repr(port.facetset)) is PEC-constrained; a port face cannot also be in `pec`"))
+    # An interior edge of the face in `pec` blocks part of the aperture, which the full-rectangle TE10 mode ignores.
+    any(dof -> count[dof] > 1 && dof in constrained, keys(count)) && throw(
+        ArgumentError("part of the face of port $(repr(port.facetset)) is in `pec`; only its rim may be PEC")
+    )
     norm_h = dot(profile[free], block[free, free] \ profile[free])
     norm_h > 0 || throw(ArgumentError("the TE10 mode of port $(repr(port.facetset)) has no projection onto its free edge dofs"))
     return WavePortData(port, block, profile, norm_h, normal, a, b, π / (a * length_scale), material.eps_r, material.mu_r)
