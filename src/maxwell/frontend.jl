@@ -368,7 +368,11 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
     materials = map(enumerate(centroids)) do (cell, x)
         nu, a0, a1, a2 = _real_values(coefficient_at(x...), "a coefficient")
         iszero(nu) && throw(ArgumentError("ν = $nu in cell $cell; ν = 1/μ must be nonzero"))
-        MaxwellMaterial(; eps_r = a2 - a0 / ω^2, mu_r = 1 / nu, sigma = a1)
+        eps_r = a2 - a0 / ω^2
+        isfinite(eps_r) || throw(
+            ArgumentError("ε = a₂ - a₀/ω² = $a2 - $a0/$ω^2 in cell $cell is not representable at this tiny ω; use a larger frequency or a MaxwellModel directly")
+        )
+        MaxwellMaterial(; eps_r, mu_r = 1 / nu, sigma = a1)
     end
     model = MaxwellModel(
         grid; materials, pec, eps0 = 1.0, mu0 = 1.0, length_scale = 1.0, quadrature = something(disc.quadrature, 2)
