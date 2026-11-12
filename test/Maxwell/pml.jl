@@ -110,3 +110,13 @@ end
     explicit = MaxwellModel(grid(); pec = ["top"], pml = CartesianPML("pml"; omega = 2.0, box = ((-1, -1, -1), (1, 1, 0.5))))
     @test maxwell_operator(inferred, 2.0) == maxwell_operator(explicit, 2.0)
 end
+
+@testset "the PML operator is conjugate symmetric in ω" begin
+    grid = generate_grid(Tetrahedron, (1, 1, 4), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 4.0))
+    addcellset!(grid, "pml", x -> x[3] >= 3.0 - 1.0e-9)
+    model = MaxwellModel(
+        grid; pec = ["left", "right", "front", "back", "top"], pml = CartesianPML("pml"; omega = 2.0), eps0 = 1.0, mu0 = 1.0
+    )
+    A, Aneg = maxwell_operator(model, 2.0), maxwell_operator(model, -2.0)
+    @test norm(Aneg - conj(A)) / norm(A) < 1.0e-12
+end

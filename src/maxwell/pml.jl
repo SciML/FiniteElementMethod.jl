@@ -22,8 +22,8 @@ to the bounding box of the layer cells (zero means no stretching across that fac
 incidence in vacuum comes back from a PEC-backed layer with amplitude `R`. Edges and corners of the layer
 multiply the stretchings of their faces.
 
-The stretching is frequency-independent (`α = σ/omega` frozen at the reference), so the attenuation scales
-with `k`: at `ω` the round trip is `R^(k/k_ref)` (in a waveguide `R^(β/k_ref)`). Name the outer faces of the
+The stretching is frequency-independent (`α = σ/omega` frozen at the reference) and is conjugated for `ω < 0`, so
+that the operator satisfies `A(-ω) = conj(A(ω))`; the attenuation scales with `k`: at `ω` the round trip is `R^(k/k_ref)` (in a waveguide `R^(β/k_ref)`). Name the outer faces of the
 layer in `pec` to back it with a conductor. Wave ports and absorbing facet sets cannot touch layer cells.
 """
 struct CartesianPML
@@ -132,9 +132,12 @@ function _pml_terms(pml::CartesianPML, dh, cv, pattern, cell_materials, mu0, eps
         Ferrite.assemble!(assemblers.sigma_im, dofs, sigma .* imag.(m))
     end
     k2, μL2 = mu0 * eps0 * L^2, mu0 * L^2
+    # For ω < 0 the stretching is conjugated (the imaginary blocks change sign), so that A(-ω) = conj(A(ω)) and the layer
+    # still attenuates the outgoing wave.
+    sgn(ω) = ω < 0 ? -1.0 : 1.0
     coefficients = (
-        Returns(1.0 + 0.0im), Returns(1.0im), ω -> complex(-k2 * ω^2), ω -> -im * k2 * ω^2,
-        ω -> im * μL2 * ω, ω -> complex(-μL2 * ω),
+        Returns(1.0 + 0.0im), ω -> im * sgn(ω), ω -> complex(-k2 * ω^2), ω -> -im * k2 * ω^2 * sgn(ω),
+        ω -> im * μL2 * ω, ω -> complex(-μL2 * ω * sgn(ω)),
     )
     terms = [MaxwellTerm(block, c) for (block, c) in zip(mats, coefficients)]
     return filter(term -> any(!iszero, nonzeros(term.block)), terms)
