@@ -41,6 +41,7 @@ frequency).
 function solve_sweep(model::MaxwellModel, omegas; fields::Bool = false, solver = umfpack_solver)
     isempty(model.ports) && throw(ArgumentError("the model has no wave ports"))
     omegas = float.(collect(omegas))
+    all(>(0), omegas) || throw(ArgumentError("wave ports need positive frequencies, got ω = $(omegas[findfirst(<=(0), omegas)])"))
     np = length(model.ports)
     S = zeros(ComplexF64, np, np, length(omegas))
     kept = fields ? Matrix{ComplexF64}[] : nothing

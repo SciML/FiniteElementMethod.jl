@@ -55,7 +55,8 @@ sweep.S[2, 1, 5]  # S21 at 10 GHz: |S21| ≈ 1, angle ≈ -93.3°
 are normalised through the TE10 wave impedance `ωμ0μr/β`. For a propagating port these are power waves. Below cutoff
 the propagation constant is `β = -iα`, the evanescent branch, which carries no real axial power: the coefficients
 are then generalized traveling-wave coefficients with the same normalisation, still supported, but without an
-individual incident or outgoing power, and `S` is not power conserving.
+individual incident or outgoing power, and `S` is not power conserving. Wave ports need positive frequencies; a
+zero or negative `ω` is rejected, since a real system has `S(-ω) = conj(S(ω))`.
 
 ## From a PDESystem
 
