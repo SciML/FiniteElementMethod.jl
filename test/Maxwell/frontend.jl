@@ -221,6 +221,10 @@ end
     # Scaling the whole equation changes nothing: a small coupling next to small coefficients is still a coupling.
     @test rejected(1.0; a2 = 1.0e-16, nu = 1.0e-16, extra = c -> 1.0e-16 * Ev[mod1(c + 1, 3)])
     @test rejected(1.0e8; a2 = 1.0e-16, extra = c -> 1.0e-16 * Dt(Dt(Ev[mod1(c + 1, 3)])))
+    # Component reactions 2^48 + c against the inertia 2^46 cancel at ω = 2 to the anisotropic diag(1, 2, 3); the
+    # differences 1 and 2 are far below a tolerance scaled to 2^48, and must still be seen, exactly.
+    anisotropic = message(() -> discretize(maxwell_system(Ω; a2 = 2.0^46, extra = c -> (2.0^48 + c) * Ev[c]), maxwell_disc(Ω, 2.0)))
+    @test occursin("so the medium is anisotropic", anisotropic)
     # The same large coefficients with scalar lower-order terms are fine.
     @test !rejected(2.0e6; a0 = 1.0e12, a2 = 2.0, a1 = 3.0)
 end
