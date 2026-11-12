@@ -231,6 +231,15 @@ function _space(disc, ctx, analysis, dirichlet, periodic, pvals, t0)
     ]
     regions = Dict(names[f] => String(disc.regions[op].name) for (f, op) in enumerate(ctx.ops) if haskey(disc.regions, op))
     _check_region_pieces(grid, regions, names, analysis)
+    for (f, Γa, Γb) in periodic
+        ips[f] isa Ferrite.Lagrange || throw(
+            ArgumentError(
+                "$(names[f]) has a periodic condition on $Γa and $Γb but the space $(ips[f]) is not a nodal Lagrange space; " *
+                    "periodic conditions are supported for scalar Lagrange spaces only, since other spaces (such as edge elements) " *
+                    "need orientation signs across the periodic map"
+            )
+        )
+    end
     pairs = [(names[f], String(Γa.name), String(Γb.name)) for (f, Γa, Γb) in periodic]
     space = FEMSpace(
         grid, names .=> ips; dirichlet = bcs, periodic = pairs, quadrature = disc.quadrature, t0, regions,

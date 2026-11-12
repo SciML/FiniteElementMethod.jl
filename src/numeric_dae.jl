@@ -296,11 +296,14 @@ function FEMOperators(
     for (k, i) in enumerate(rowvals(M))
         iszero(nonzeros(M)[k]) || (differential_vars[i] = true)
     end
-    if !isempty(ties)
-        load = load isa AbstractVector ? apply_ties!(copy(load), ties, prescribed) :
-            (out, t) -> apply_ties!(load(out, t), ties, prescribed)
+    tied_load = if isempty(ties)
+        load
+    elseif load isa AbstractVector
+        apply_ties!(copy(load), ties, prescribed)
+    else
+        (out, t) -> apply_ties!(load(out, t), ties, prescribed)
     end
-    F = FEMLoad(load, prescribed, dirichlet_values, n)
+    F = FEMLoad(tied_load, prescribed, dirichlet_values, n)
     if nonlinear !== nothing
         J = nonlinear.op.J
         J.colptr == K.colptr && J.rowval == K.rowval ||

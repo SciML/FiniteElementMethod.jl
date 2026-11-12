@@ -168,6 +168,27 @@ prob = discretize(pdesys, FEMDiscretization(Ω, t))
 The solution is `exp(-8π² t) sin(2π (x + y))` and converges at the optimal rate;
 `test/Interface/periodic.jl` runs this case, the steady and Navier–Stokes ones.
 
+Periodic pairs work in every problem class of this package, including nonlinear terms (the
+nonlinear residual and Jacobian get the same row sums and ties inside Newton's method), SUPG test
+spaces, steady and transient problems and coupled fields with different spaces:
+
+| Problem class with a periodic pair | Status | Covered by |
+|:--- |:--- |:--- |
+| Scalar linear, transient, 2D, P1 and P2, triangles and quadrilaterals, fully periodic | supported | `test/Interface/periodic.jl`, heat on a periodic box |
+| Periodic in one direction with Dirichlet pieces in the other | supported | `test/Interface/periodic.jl`, periodic in x |
+| Scalar linear on a line, transient, Galerkin and SUPG | supported | `test/Interface/periodic.jl`, periodic line |
+| Scalar linear on a hexahedral mesh, steady, fully periodic | supported | `test/Interface/periodic.jl`, periodic cube |
+| Steady (`NonlinearProblem`), linear terms, Galerkin and SUPG | supported | `test/Interface/periodic.jl`, steady advection–diffusion |
+| Steady, nonlinear terms | supported | `test/Interface/periodic.jl`, steady nonlinear diffusion |
+| Transient (`DAEProblem`), nonlinear terms and a time-dependent source | supported | `test/Interface/periodic.jl`, viscous Burgers |
+| Coupled fields, different spaces per field, per-field pairs | supported | `test/Interface/periodic.jl`, coupled P2/P1 |
+| Taylor–Hood Navier–Stokes, steady and transient (index-2 DAE) | supported | `test/Interface/periodic_navier_stokes.jl` |
+| Boundary integrals (Neumann, Robin) on the other, non-periodic pieces | supported | assembled as before; the periodic pieces take no boundary integral |
+| Pieces that are not translates of each other | error `periodic pieces Γa and Γb of u do not match under a translation: …` | `test/Interface/periodic.jl`, rejected pairs |
+| A periodic piece that also carries another condition for that field | error `… has a periodic condition on Γ and a Dirichlet condition on the same piece` | same |
+| `dirichlet = :eliminate`, or `operators` | error `… does not support periodic conditions …` | same |
+| A space that is not a scalar Lagrange space (edge elements need orientation signs across the map) | error `… is not a nodal Lagrange space; periodic conditions are supported for scalar Lagrange spaces only …` | same, edge-element case |
+
 The operators keep every dof as an unknown. Each node of a class other than its master is tied
 to it by an algebraic row `u_node − u_master = 0`, and the Galerkin equation of the tied node is
 added to its master's, which is the condensed system `PᵀKP` of the identification. No boundary

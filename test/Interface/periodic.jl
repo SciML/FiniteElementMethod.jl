@@ -3,7 +3,7 @@
 # they are translates of each other. Each case builds the PDESystem as a user would, solves it and compares with an
 # exact solution; the last cases are the inputs that are refused.
 using FiniteElementMethod, ModelingToolkit, DomainSets, OrdinaryDiffEqBDF, NonlinearSolveFirstOrder, Test
-using Ferrite: Grid, Node, generate_grid, Triangle, Quadrilateral, Vec
+using Ferrite: Ferrite, Grid, Node, generate_grid, Line, Triangle, Quadrilateral, Hexahedron, Vec
 using ModelingToolkit: t_nounits as t
 include(joinpath(@__DIR__, "..", "shared", "interface_helpers.jl"))
 
@@ -144,4 +144,114 @@ end
     )
     @test_throws "must be a periodic pair of the form u(t, Γa) ~ u(t, Γb)" lower([u(t, left) ~ u(t, right) + 1, dirichlet..., ic])
     @test_throws "dirichlet = :eliminate does not support periodic conditions" lower([u(t, left) ~ u(t, right); dirichlet; ic]; dirichlet = :eliminate)
+end
+
+# BCs:    a periodic pair for a field whose space is not a scalar Lagrange space (an edge element)
+# Shows:  the unsupported combination is refused with an error naming the space, rather than giving a wrong answer.
+@testset "periodic conditions on a non-Lagrange space are rejected" begin
+    Ω = unit_square(Triangle, 4)
+    left, right, bottom, top = sides(Ω)
+    bcs = [u(t, left) ~ u(t, right), u(t, bottom) ~ 0, u(t, top) ~ 0, u(0, x, y) ~ 0]
+    @named pdesys = PDESystem([heat], bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
+    disc = FEMDiscretization(Ω, t; spaces = Dict(u => Ferrite.Nedelec{RefTriangle, 1}()))
+    @test_throws "is not a nodal Lagrange space" discretize(pdesys, disc)
+end
+
+# PDE:    ((1 + u^2) u_x)_x + ((1 + u^2) u_y)_y - u = f, a steady nonlinear diffusion solved by Newton's method
+# Domain: the unit square, meshes of 8, 16 and 32 cells per side, P1 triangles
+# BCs:    periodic left and right, periodic bottom and top, no time variable
+# Exact:  u = 0.5 sin(2 pi x) cos(2 pi y) + 1, so f follows by differentiation
+# Shows:  the Newton residual and Jacobian carry the periodic ties: the nonlinear steady problem converges at rate 2.
+@testset "steady nonlinear diffusion on a periodic box converges at rate 2" begin
+    ex = 0.5 * sin(2pi * x) * cos(2pi * y) + 1
+    exact(x_, y_) = 0.5 * sin(2pi * x_) * cos(2pi * y_) + 1
+    D(f, v) = ModelingToolkit.expand_derivatives(Differential(v)(f))
+    source = D((1 + ex^2) * D(ex, x), x) + D((1 + ex^2) * D(ex, y), y) - ex
+    U = u(x, y)
+    eq = Dx((1 + U^2) * Dx(U)) + Dy((1 + U^2) * Dy(U)) - U ~ source
+    ns = (8, 16, 32)
+    errors = map(ns) do n
+        Ω = unit_square(Triangle, n)
+        left, right, bottom, top = sides(Ω)
+        @named pdesys = PDESystem([eq], [u(left) ~ u(right), u(bottom) ~ u(top)], [(x, y) ∈ Ω], [x, y], [U], [])
+        sol = solve(discretize(pdesys, FEMDiscretization(Ω)), NewtonRaphson(); abstol = 1.0e-11)
+        @test SciMLBase.successful_retcode(sol)
+        l2_error(sol, U, exact, sample_points(40), sample_points(40))
+    end
+    @test all(observed_rate(errors, 1 ./ ns) .> 1.8)
+end
+
+# PDE:    u_t + u u_x + u u_y = ν (u_xx + u_yy) + f with ν = 0.1 (viscous Burgers), a transient nonlinear problem
+# Domain: the unit square, t in (0, 0.1), meshes of 8, 16 and 32 cells per side, P1 triangles
+# BCs:    periodic in both directions; IC sin(2 pi (x + y))
+# Exact:  u = exp(-t) sin(2 pi (x + y)), so f follows by differentiation
+# Shows:  the nonlinear DAE path carries the periodic ties and converges at rate 2.
+@testset "viscous Burgers on a periodic box converges at rate 2 in the transient path" begin
+    ν = 0.1
+    ex = exp(-t) * sin(2pi * (x + y))
+    exact(x_, y_) = exp(-0.1) * sin(2pi * (x_ + y_))
+    D(f, v) = ModelingToolkit.expand_derivatives(Differential(v)(f))
+    source = D(ex, t) + ex * D(ex, x) + ex * D(ex, y) - ν * (D(D(ex, x), x) + D(D(ex, y), y))
+    U = u(t, x, y)
+    eq = Dt(U) + U * Dx(U) + U * Dy(U) ~ ν * (Dx(Dx(U)) + Dy(Dy(U))) + source
+    ns = (8, 16, 32)
+    errors = map(ns) do n
+        Ω = unit_square(Triangle, n)
+        left, right, bottom, top = sides(Ω)
+        bcs = [u(t, left) ~ u(t, right), u(t, bottom) ~ u(t, top), u(0, x, y) ~ sin(2pi * (x + y))]
+        sol = solve_heat(eq, Ω, bcs, 0.1)
+        @test SciMLBase.successful_retcode(sol)
+        l2_error(sol, U, exact, 0.1, sample_points(40), sample_points(40))
+    end
+    @test all(observed_rate(errors, 1 ./ ns) .> 1.8)
+end
+
+# PDE:    u_t + c u_x = ε u_xx with c = 1, ε = 0.05, a travelling decaying wave on a ring
+# Domain: x in (0, 1), t in (0, 0.2), meshes of 16, 32 and 64 line cells, P1; Galerkin and SUPG
+# BCs:    u(t, left) ~ u(t, right); IC sin(2 pi x)
+# Exact:  u = exp(-4 pi^2 ε t) sin(2 pi (x - c t))
+# Shows:  periodic conditions on a line mesh, in the transient path, converge at rate 2 with Galerkin testing and at rate 1
+#         with the first-order SUPG stabilisation.
+@testset "advection-diffusion on a periodic line converges at rate $rate with $name testing" for (name, test_space, rate) in (
+        ("Galerkin", Galerkin(), 2), ("SUPG", SUPG((hK, b) -> hK / (20 * abs(b[1]))), 1),
+    )
+    c, ε = 1.0, 0.05
+    eq = Dt(u(t, x)) + c * Dx(u(t, x)) ~ ε * Dx(Dx(u(t, x)))
+    exact(x_) = exp(-4pi^2 * ε * 0.2) * sin(2pi * (x_ - c * 0.2))
+    ns = (16, 32, 64)
+    errors = map(ns) do n
+        Ω = MeshDomain(generate_grid(Line, (n,), Vec(0.0), Vec(1.0)))
+        left, right = boundarypiece.(Ω, (:left, :right))
+        bcs = [u(t, left) ~ u(t, right), u(0, x) ~ sin(2pi * x)]
+        @named pdesys = PDESystem([eq], bcs, [(x,) ∈ Ω, t ∈ Interval(0.0, 0.2)], [t, x], [u(t, x)], [])
+        sol = solve(discretize(pdesys, FEMDiscretization(Ω, t; test_space)), DFBDF(); abstol = 1.0e-11, reltol = 1.0e-11)
+        @test sol(0.2, [0.0]; dv = u(t, x)) ≈ sol(0.2, [1.0]; dv = u(t, x)) atol = 1.0e-12
+        l2_error(sol, u(t, x), exact, 0.2, sample_points(200))
+    end
+    @test all(observed_rate(errors, 1 ./ ns) .> rate - 0.2)
+end
+
+# PDE:    -(u_xx + u_yy + u_zz) + u = f
+# Domain: the unit cube, meshes of 4 and 8 hexahedra per side, P1
+# BCs:    periodic in x, y and z (three pairs; the 8 corners form one class)
+# Exact:  u = sin(2 pi x) sin(2 pi y) cos(2 pi z) + 1
+# Shows:  periodic conditions in 3D, with edges and corners shared by several pairs, converge at rate 2.
+@testset "steady reaction-diffusion on a fully periodic cube converges at rate 2" begin
+    @variables z
+    Dz = Differential(z)
+    ex = sin(2pi * x) * sin(2pi * y) * cos(2pi * z) + 1
+    exact(x_, y_, z_) = sin(2pi * x_) * sin(2pi * y_) * cos(2pi * z_) + 1
+    D(f, v) = ModelingToolkit.expand_derivatives(Differential(v)(f))
+    source = -(D(D(ex, x), x) + D(D(ex, y), y) + D(D(ex, z), z)) + ex
+    U = u(x, y, z)
+    eq = -(Dx(Dx(U)) + Dy(Dy(U)) + Dz(Dz(U))) + U ~ source
+    ns = (4, 8)
+    errors = map(ns) do n
+        Ω = MeshDomain(generate_grid(Hexahedron, (n, n, n), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0)))
+        left, right, front, back, bottom, top = boundarypiece.(Ω, (:left, :right, :front, :back, :bottom, :top))
+        @named pdesys = PDESystem([eq], [u(left) ~ u(right), u(front) ~ u(back), u(bottom) ~ u(top)], [(x, y, z) ∈ Ω], [x, y, z], [U], [])
+        sol = solve(discretize(pdesys, FEMDiscretization(Ω)), NewtonRaphson(); abstol = 1.0e-11)
+        l2_error(sol, U, exact, sample_points(12), sample_points(12), sample_points(12))
+    end
+    @test all(observed_rate(errors, 1 ./ ns) .> 1.7)
 end
