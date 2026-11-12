@@ -157,6 +157,7 @@ end
     err("a source of the Maxwell equation depends on time; with omega the coefficients and sources are time-independent, and a source is the phasor amplitude"; f = [sin(t), 0, 0])
     err("a coefficient of the Maxwell equation depends on time; with omega the coefficients and sources are time-independent, and a source is the phasor amplitude"; a2 = 1 + t)
     err("ν = 0.0 in cell 1; ν = 1/μ must be nonzero"; nu = 0)
+    err("ν = 1.0e-309 in cell 1; ν = 1/μ must be nonzero and 1/ν must be representable"; nu = 1.0e-309, a2 = 1.0e-309)
     @test_throws ArgumentError discretize(maxwell_system(Ω; extra = c -> Dt(Dt(Dt(Ev[c])))), maxwell_disc(Ω, 1.0))
 
     # A second derivative of a field-free expression lands in the flux; it must not vanish from the load.
