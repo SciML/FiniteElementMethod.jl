@@ -24,7 +24,9 @@ multiply the stretchings of their faces.
 
 The stretching is frequency-independent (`α = σ/omega` frozen at the reference) and is conjugated for `ω < 0`, so
 that the operator satisfies `A(-ω) = conj(A(ω))`; the attenuation scales with `k`: at `ω` the round trip is `R^(k/k_ref)` (in a waveguide `R^(β/k_ref)`). Name the outer faces of the
-layer in `pec` to back it with a conductor. Wave ports and absorbing facet sets cannot touch layer cells.
+layer in `pec` to back it with a conductor. The layer must be filled with materials of positive real `eps_r` and positive
+`mu_r` (loss is allowed): for a negative-index filling the stretching would amplify the outgoing wave, so it is an
+`ArgumentError`. Wave ports and absorbing facet sets cannot touch layer cells.
 """
 struct CartesianPML
     cellsets::Vector{String}
@@ -96,6 +98,12 @@ function _pml_terms(pml::CartesianPML, dh, cv, pattern, cell_materials, mu0, eps
     end
     for (kind, names) in boundary_sets, name in names, facet in get(grid.facetsets, name, ())
         in_pml[facet[1]] && throw(ArgumentError("$kind facet set $(repr(name)) touches PML cells"))
+    end
+    for cell in findall(in_pml)
+        (; eps_r, mu_r) = cell_materials[cell]
+        real(eps_r) > 0 && mu_r > 0 || throw(
+            ArgumentError("PML cell $cell has eps_r = $eps_r and mu_r = $mu_r; a PML must be filled with materials of positive real permittivity and positive permeability (any loss is fine), because the stretching s = 1 - iα attenuates only the outgoing wave of an ordinary medium")
+        )
     end
     α = _pml_profile(pml, grid, in_pml, pml.omega * sqrt(mu0 * eps0), L)
 

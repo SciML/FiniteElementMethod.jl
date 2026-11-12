@@ -77,6 +77,8 @@ inner box (by default the bounding box of the other cells), into the uniaxial ab
 of the box, `α` grows as `α_max (ξ/d)^order` with the depth `ξ` into a layer of thickness `d`, and
 `α_max = -(order + 1) ln R / (2 k_ref d)` sets the normal-incidence round-trip reflection `R` of a PEC-backed
 layer at the reference angular frequency `omega`. Name the outer faces of the layer in `pec`.
+The layer must be filled with materials of positive real `eps_r` and positive `mu_r` (loss is allowed); a
+negative-index filling is rejected, because the stretching would amplify its outgoing wave.
 
 The stretching is frequency-independent (the usual `s = 1 - iσ/ω` frozen at `ω = omega`), so the layer is a
 fixed set of real blocks with polynomial coefficients in `ω`, like the rest of the operator, and a sweep still

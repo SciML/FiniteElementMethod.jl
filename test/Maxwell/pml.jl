@@ -136,3 +136,17 @@ end
         @test norm(A - B) / norm(A) < 1.0e-12
     end
 end
+
+@testset "a PML needs positive real permittivity and permeability" begin
+    grid = generate_grid(Tetrahedron, (1, 1, 4), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 4.0))
+    addcellset!(grid, "pml", x -> x[3] >= 3.0 - 1.0e-9)
+    addcellset!(grid, "all", x -> true)
+    build(material) = MaxwellModel(
+        grid; materials = Dict("all" => material), pec = ["left", "right", "front", "back", "top"],
+        pml = CartesianPML("pml"; omega = 2.0), eps0 = 1.0, mu0 = 1.0
+    )
+    for (eps_r, mu_r) in ((-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0))
+        @test_throws "positive real permittivity and positive permeability" build(MaxwellMaterial(; eps_r, mu_r))
+    end
+    @test build(MaxwellMaterial(; eps_r = 2.0 - 0.3im, mu_r = 1.5, sigma = 0.2)) isa MaxwellModel
+end
