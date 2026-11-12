@@ -115,6 +115,7 @@ function MaxwellModel(
     # Each boundary condition assembles its own term, so a facet in two of them would get both. An interior facet is
     # the same facet from both of its cells, so facets are compared by their nodes.
     conditions = [[("absorbing", name) for name in absorbing]; [("port", port.facetset) for port in ports]]
+    foreach(((_, name),) -> _check_facetset(grid, name), conditions)
     node_sets = Dict(name => _facet_node_sets(grid, name) for (_, name) in conditions)
     for (i, (kind_i, name_i)) in pairs(conditions), (kind_j, name_j) in conditions[(i + 1):end]
         isdisjoint(node_sets[name_i], node_sets[name_j]) ||
