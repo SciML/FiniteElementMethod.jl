@@ -5,10 +5,12 @@
 const _PARAMETER_KINDS = (:eps_r, :eps_r_imag, :mu_r, :sigma)
 
 # The adjoint of a port is its forward field only for a symmetric A, but `add_term!` takes any block with the
-# model's sparsity pattern.
+# model's sparsity pattern. Only the free dofs count: the constrained rows and columns are replaced by the identity,
+# so a large entry on a constrained dof must not hide the asymmetry of the operator that is solved.
 function _check_symmetric(model)
+    free = setdiff(axes(model.blocks.curlcurl, 1), model.ch.prescribed_dofs)
     for (k, term) in pairs(model.terms)
-        B = term.block
+        B = term.block[free, free]
         norm(B - transpose(B), 1) <= 1.0e-12 * norm(B, 1) ||
             throw(ArgumentError("term $k of the model has a nonsymmetric block, so A is not symmetric and the adjoint needs transpose(A); the sensitivities support symmetric terms only"))
     end

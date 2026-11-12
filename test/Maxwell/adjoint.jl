@@ -172,6 +172,29 @@ end
     )
 end
 
+@testset "the symmetry check ignores constrained dofs" begin
+    grid = generate_grid(Tetrahedron, (4, 2, 6), Vec(0.0, 0.0, 0.0), Vec(2.0, 1.0, 3.0))
+    ports = [WavePort("bottom"; a_direction = (1, 0, 0)), WavePort("top"; a_direction = (1, 0, 0))]
+    addcellset!(grid, "core", x -> 1.0 - 1.0e-9 <= x[3] <= 2.0 + 1.0e-9; all = true)
+    model = MaxwellModel(grid; pec = SLAB_WALLS, ports, eps0 = 1.0, mu0 = 1.0)
+    ω = 2.5
+    # A nonsymmetric block on the free dofs, padded with a huge symmetric entry on a PEC dof.
+    padded = copy(model.blocks.eps_real)
+    rows = rowvals(padded)
+    for j in axes(padded, 2), k in nzrange(padded, j)
+        nonzeros(padded)[k] *= 1 + 0.7 * sin(rows[k])
+    end
+    pec_dof = first(model.ch.prescribed_dofs)
+    padded[pec_dof, pec_dof] = 1.0e16
+    FiniteElementMethod.add_term!(model, padded, _ -> 3.0)
+    u = zeros(ComplexF64, ndofs(model.dh))
+    @test_throws "nonsymmetric" s_parameter_sensitivities(model, [ω], [(:eps_r, "core")])
+    @test_throws "nonsymmetric" s_parameter_sensitivities(
+        model, MaxwellSweep([ω], zeros(ComplexF64, 2, 2, 1), [zeros(ComplexF64, ndofs(model.dh), 2)]), [(:eps_r, "core")]
+    )
+    @test_throws "nonsymmetric" adjoint_gradient(model, ω, u, zeros(ndofs(model.dh)), [(:eps_r, "core")])
+end
+
 @testset "the absorbing boundary's derivative is finite at ω = 0" begin
     grid = slab_grid(3.0; abc = true)
     model = slab_model(grid, MaxwellMaterial(; eps_r = 2.2); abc = true)
