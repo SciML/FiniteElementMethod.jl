@@ -119,7 +119,10 @@ Krylov vector is therefore projected, along those gradients, onto the discretely
 null space never enters; eigenvalues with `|λ| < nullspace_tol ‖Kc‖₁/‖Mε‖₁` (such as the one constant mode of
 each further disconnected PEC body) are dropped as well, and the search widens until `nev` modes survive. By default
 `nullspace_tol = √eps(Float64)`, the relative precision to which an eigenvalue of the spectrum scale `‖Kc‖₁/‖Mε‖₁`
-can be told from zero, so every resolved physical mode is kept; a larger value discards modes below it.
+can be told from zero. This cutoff is a heuristic: a physical mode below it is discarded although it is still
+resolved, which happens when the spectrum scale exceeds the lowest mode by more than about `1/√eps`, as with strongly
+contrasting materials (a warning says so). A smaller explicit `nullspace_tol`, down to the floating-point zero bound
+of about `1e4 eps(Float64)`, recovers such modes; a larger value discards more.
 
 The shift `σ` is raised to at least `1e-6 ‖Kc‖₁/‖Mε‖₁`, which keeps `Kc - σ Mε` from being numerically singular; the
 modes are still ranked by distance from the target itself. Where `εr` or `μr` differ by more than a factor 1e6 between cells, the shifted
@@ -158,7 +161,8 @@ function maxwell_eigenmodes(
     # Classifying a mode as static is a question of precision: its λ is zero up to roundoff in the spectrum scale
     # ‖K‖/‖M‖, so the cutoff is relative to that scale, not to the target (a high target would discard the lowest
     # physical modes) and not to a conditioning bound (the shift floor below, which is far above the lowest modes
-    # of a model with strongly contrasting materials).
+    # of a model with strongly contrasting materials). It is a heuristic: sqrt(eps) of the scale can still lie above
+    # a resolved mode, which a smaller explicit nullspace_tol recovers.
     spectrum_scale = opnorm(K, 1) / opnorm(M, 1)
     λ_null = something(nullspace_tol, sqrt(eps())) * spectrum_scale
     # A shift near zero makes K - σ M numerically singular, because K itself is: raise a low target to a floor. It
