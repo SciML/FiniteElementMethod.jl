@@ -255,3 +255,10 @@ end
     model = MaxwellModel(grid; pec = walls, ports = Iterators.Stateful(ports), eps0 = 1.0, mu0 = 1.0)
     @test length(model.ports) == 2
 end
+
+@testset "wave port S-parameters at zero frequency are rejected, not NaN" begin
+    model = wr90(5.0, 10.0)
+    U = zeros(ComplexF64, ndofs(model.dh), 2)
+    @test_throws "ω = 0" FiniteElementMethod.s_parameters(model, 0.0, U)
+    @test_throws "ω = 0" FiniteElementMethod.port_excitations(model, 0.0)
+end
