@@ -378,7 +378,8 @@ function _recognise_boundaries(bcs, fields, pvals, ctx, domain, cells, ω)
             size(Q, 1) == 2 || throw(
                 ArgumentError("the conditions $where have $(size(Q, 1)) independent equations; the absorbing condition n × (ν curl E) = -sqrt(ε/μ) n × (n × ∂ₜE) has 2; $form")
             )
-            norm(Q' * Q - P' * P) <= 1.0e-8 || throw(
+            # A term in E has the weight of E itself, which the field units of the derivative columns can make small.
+            (any(!_iszero_expr, C[:, 13:15]) || norm(Q' * Q - P' * P) > 1.0e-8) && throw(
                 ArgumentError("the conditions $where are not n × (ν curl E) = -sqrt(ε/μ) n × (n × ∂ₜE) of the adjacent cell (ν = $nu, sqrt(ε/μ) = $c): the coefficient of curl E, the impedance or the sign differs, or a term in E is added; $form")
             )
         end

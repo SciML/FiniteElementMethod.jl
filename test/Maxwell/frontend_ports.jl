@@ -131,6 +131,9 @@ end
     bcs = [pec(Ω, WALLS); abc(Γ); Eb[3] ~ 0]
     @test occursin("independent equations", message(() -> discretize(system(Ω, bcs), edge_disc(Ω; omega = 1.0e12))))
     @test occursin("independent equations", message(() -> discretize(system(Ω, bcs), edge_disc(Ω; omega = 1.0))))
+    # A term in E next to the time derivative at a frequency where it is tiny in field units is still a term.
+    withE = cross(facet_normal(Γ), curl(Eb, X)) .~ -cross(facet_normal(Γ), cross(facet_normal(Γ), Dt.(Eb) .+ Eb))
+    @test occursin("are not n × (ν curl E)", message(() -> discretize(system(Ω, [pec(Ω, WALLS); withE]), edge_disc(Ω; omega = 1.0e12))))
     # Scaling an equation changes nothing: a tiny extra constraint is still one, and a tiny valid row is still valid.
     tiny = [pec(Ω, WALLS); abc(Γ); 1.0e-13 .* [Eb[3]] .~ 0]
     @test occursin("independent equations", message(() -> discretize(system(Ω, tiny), edge_disc(Ω; omega = 1.0))))
