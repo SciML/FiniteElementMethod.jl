@@ -98,6 +98,14 @@ end
     @test modes.frequency[1] ≈ 1 / (2π) rtol = 1.0e-6
 end
 
+@testset "strongly contrasting materials are warned about" begin
+    grid = unit_cube(3)
+    addcellset!(grid, "left", x -> x[1] <= 0.5)
+    model = MaxwellModel(grid; materials = Dict("left" => MaxwellMaterial(; mu_r = 1.0e-12)), pec = CUBE_FACES, eps0 = 1.0, mu0 = 1.0)
+    @test_logs (:warn, r"differ by a factor 1\.0e12") match_mode = :any maxwell_eigenmodes(model; nev = 1, target_frequency = 0.5)
+    @test_logs min_level = Base.CoreLogging.Warn maxwell_eigenmodes(box_model(2); nev = 1, target_frequency = 1.0)
+end
+
 @testset "lossy: nearest in complex ω, and the candidate bound holds" begin
     # eps_r = 1 - 100i scales ω by 1/√(1 - 100i): the lowest modes sit at Re f = 0.0592, 0.0794, 0.0854 with
     # Im f about as large. From 0.0854 the nearest in complex ω is the first, and shift-invert ranks the first

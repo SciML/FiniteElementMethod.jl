@@ -91,6 +91,12 @@ function _gradient_projection(G, M)
     return x -> x - G * (FG \ (GtM * x))
 end
 
+# The largest ratio between the εr (real part) or μr values of the cells.
+function _material_contrast(materials)
+    spread(values) = maximum(values) / minimum(values)
+    return max(spread(abs.(real.(getfield.(materials, :eps_r)))), spread(getfield.(materials, :mu_r)))
+end
+
 """
     maxwell_eigenmodes(model::MaxwellModel; nev, target_frequency, krylovdim = max(30, 2nev + 10),
                        tol = 1e-10, maxiter = 300, nullspace_tol = 1e-6)
@@ -112,6 +118,10 @@ off the PEC facets, less one per connected part of the mesh without PEC), which 
 Krylov vector is therefore projected, along those gradients, onto the discretely divergence-free fields, so the
 null space never enters; eigenvalues with `|λ| < nullspace_tol ‖Kc‖₁/‖Mε‖₁` (such as the one constant mode of
 each further disconnected PEC body) are dropped as well, and the search widens until `nev` modes survive.
+
+The cutoff is a property of the whole model, and the shifted solve is ill-conditioned with it: where `εr` or `μr`
+differ by more than a factor 1e6 between cells (a warning says so), `‖Kc‖₁/‖Mε‖₁` can exceed the lowest physical
+`λ` by many orders and the modes returned may be missing or inaccurate. This limitation is not removed.
 
 Returns `(; frequency, Q, omega, modes)`: `omega` the complex angular frequencies `ω = √λ / (L √(μ0 ε0))`,
 `frequency = Re(ω) / 2π` in Hz, `Q = Re(ω) / (2 Im(ω))` (`Inf` for a lossless model; with `exp(+iωt)` a passive
@@ -147,6 +157,9 @@ function maxwell_eigenmodes(
     # low one it would admit the static modes, whose roundoff λ is far above it. A target below the cutoff is
     # raised to it, which also keeps `K - σ M` from being numerically singular; it then has the same nearest modes.
     λ_null = nullspace_tol * opnorm(K, 1) / opnorm(M, 1)
+    # Both the cutoff and the conditioning of the shifted solve follow the spread of the material coefficients.
+    contrast = _material_contrast(model.materials)
+    contrast > 1.0e6 && @warn "maxwell_eigenmodes: the materials of the model differ by a factor $contrast in εr or μr; the null-space cutoff $λ_null then exceeds low physical modes and the shift-invert is ill-conditioned, so modes may be missing or inaccurate (see the nullspace_tol keyword)"
     ωt = max(2π * target_frequency, sqrt(λ_null / scale))
     σ = scale * ωt^2
     # A shift exactly on a discrete eigenvalue makes the factorisation singular; nudge it off.
