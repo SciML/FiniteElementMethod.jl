@@ -91,8 +91,10 @@ end
     Q2, Q1 = Lagrange{RefQuadrilateral, 2}(), Lagrange{RefQuadrilateral, 1}()
     disc = FEMDiscretization(Ω, t; spaces = Dict(u => Q2, v => Q2, p => Q1), pairing = Dict(eqs[3] => p), natural = [outlet], initializealg = CheckInit())
     prob = discretize(pdesys, disc)
-    abstol = [d ? 1.0e-6 : 1.0e8 for d in prob.differential_vars]
-    sol = solve(prob, DFBDF(linsolve = UMFPACKFactorization()); abstol, reltol = 1.0e-6)
+    # The default `algebraic_abstol = :auto` detects the index-2 pressure despite its periodic identification rows, so the
+    # problem carries the same tolerances as the non-periodic twin (1e8 on the algebraic rows) and no `abstol` is passed.
+    @test prob.kwargs[:abstol] == [d ? 1.0e-6 : 1.0e8 for d in prob.differential_vars]
+    sol = solve(prob, DFBDF(linsolve = UMFPACKFactorization()); reltol = 1.0e-6)
     @test SciMLBase.successful_retcode(sol)
     ys = collect(range(0.005, 0.995; length = 100))
     flux(x_) = sum(sol(2.0, [x_], ys; dv = U)) / length(ys)

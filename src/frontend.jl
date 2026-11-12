@@ -559,6 +559,7 @@ end
 function _index2(ops::FEMOperators, selfnonlinear)
     free = trues(size(ops.K, 1))
     free[ops.prescribed] .= false
+    free[first.(ops.ties)] .= false   # the identification rows of a periodic pair are not part of the saddle structure
     return any(ops.fields) do (name, r)
         rows = filter(i -> free[i], r)
         !isempty(rows) && !(name in selfnonlinear) && !any(ops.differential_vars[rows]) && iszero(ops.K[rows, r])
