@@ -191,3 +191,11 @@ end
     @test abs(S11 - expected) < 0.01
     @test abs(ignoring_σ - expected) > 0.03
 end
+
+@testset "one-pass port iterators are materialised once" begin
+    grid = generate_grid(Tetrahedron, (2, 1, 2), Vec(0.0, 0.0, 0.0), Vec(2.0, 1.0, 2.0))
+    ports = [WavePort("bottom"; a_direction = (1, 0, 0)), WavePort("top"; a_direction = (1, 0, 0))]
+    walls = ["left", "right", "front", "back"]
+    model = MaxwellModel(grid; pec = walls, ports = Iterators.Stateful(ports), eps0 = 1.0, mu0 = 1.0)
+    @test length(model.ports) == 2
+end
