@@ -149,6 +149,16 @@ function _paired(an, eqs, ctx, disc)
     )
 end
 
+# A SUPG whose τ and b name the coordinates and time of the PDESystem, rewritten onto the coordinate and time slots the
+# kernels evaluate; a `b` read from the equation is in slots already.
+function _slotted(space::SUPG, ctx, slots)
+    ivs = ctx.t === nothing ? ctx.sivs : [ctx.sivs; ctx.t]
+    to_slots = Dict(unwrap(iv) => unwrap(s) for (iv, s) in zip(ivs, ctx.t === nothing ? slots.X : [slots.X; slots.T]))
+    slot(ex) = substitute(ex, to_slots)
+    τ = space.τ isa Function ? (hK, b) -> slot(space.τ(hK, b)) : slot(space.τ)
+    return SUPG(τ, space.b === nothing ? nothing : map(slot, space.b))
+end
+
 # τ and b are compiled into the kernels as functions of the coordinates, time and hK only, so they cannot name a
 # parameter, whose value the kernels would not see.
 function _check_supg(test_space, an, ctx)
@@ -369,8 +379,9 @@ function _lower(pdesys, disc::FEMDiscretization)
     ctx = StrongForm.SlotContext(sys, v)
     an = _paired(StrongForm.analyse(sys, v, boundarymap; ibp = disc.ibp), pdesys.eqs, ctx, disc)
     isempty(an.periodic) || throw(ArgumentError(_PERIODIC_UNSUPPORTED))
-    disc.test_space isa SUPG && _check_supg(disc.test_space, an, ctx)
-    wf = weak_form(an; test_space = disc.test_space)
+    test_space = disc.test_space isa SUPG ? _slotted(disc.test_space, ctx, an.slots) : disc.test_space
+    test_space isa SUPG && _check_supg(test_space, an, ctx)
+    wf = weak_form(an; test_space)
     steady = disc.time === nothing
     _check_terms(wf)
     disc.test_space isa SUPG && any(term -> term.kind === :nonlinear, wf.volume) && throw(

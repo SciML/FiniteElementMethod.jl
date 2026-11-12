@@ -2,7 +2,8 @@
 # FEMDiscretization(Ω, t; test_space = SUPG(τ)) on a convection-dominated problem, against Galerkin.
 using Test
 using FiniteElementMethod: FiniteElementMethod, rectangle_grid
-using Ferrite: Ferrite, Triangle, Quadrilateral, Line, Vec
+using Ferrite: Ferrite, Triangle, Quadrilateral, Line, Vec, RefQuadrilateral
+using LinearAlgebra: norm, tr, ⋅
 
 include(joinpath(@__DIR__, "..", "frontend.jl"))
 
@@ -27,6 +28,79 @@ function boundary_layer(test_space; nel = 20)
     @test SciMLBase.successful_retcode(sol)
     steady = sol[u(t, x)][end, :]
     return steady, maximum(abs.(steady .- layer.(sol[x])))
+end
+
+# M and K of ∂ₜu = ε Δu − b·∇u on a P1 quadrilateral grid, assembled with Ferrite as the SUPG weak form
+# ∫ (v + τ b·∇v)(u_t) + ε ∇v·∇u + v b·∇u + τ (b·∇v)(−ε Δu + b·∇u), with the cell diameter hK and the front end's
+# quadrature order 2. A τ of 0 is Galerkin.
+function supg_reference(grid, τ, b)
+    ip = Ferrite.Lagrange{RefQuadrilateral, 1}()
+    dh = Ferrite.DofHandler(grid)
+    Ferrite.add!(dh, :u, ip)
+    Ferrite.close!(dh)
+    cv = Ferrite.CellValues(Ferrite.QuadratureRule{RefQuadrilateral}(2), ip; update_hessians = true)
+    M, K = Ferrite.allocate_matrix(dh), Ferrite.allocate_matrix(dh)
+    n = Ferrite.getnbasefunctions(cv)
+    Me, Ke = zeros(n, n), zeros(n, n)
+    for cell in Ferrite.CellIterator(dh)
+        Ferrite.reinit!(cv, cell)
+        fill!(Me, 0)
+        fill!(Ke, 0)
+        xs = Ferrite.getcoordinates(cell)
+        hK = maximum(norm(xs[i] - xs[j]) for i in eachindex(xs) for j in eachindex(xs))
+        for q in 1:Ferrite.getnquadpoints(cv)
+            dΩ = Ferrite.getdetJdV(cv, q)
+            bq = b(Ferrite.spatial_coordinate(cv, q, xs))
+            τq = τ(hK, bq)
+            for i in 1:n
+                v, ∇v = Ferrite.shape_value(cv, q, i), Ferrite.shape_gradient(cv, q, i)
+                for j in 1:n
+                    ψ, ∇ψ, Hψ = Ferrite.shape_value(cv, q, j), Ferrite.shape_gradient(cv, q, j), Ferrite.shape_hessian(cv, q, j)
+                    Me[i, j] += (v + τq * (bq ⋅ ∇v)) * ψ * dΩ
+                    Ke[i, j] += (EPS * (∇v ⋅ ∇ψ) + v * (bq ⋅ ∇ψ) + τq * (bq ⋅ ∇v) * (-EPS * tr(Hψ) + bq ⋅ ∇ψ)) * dΩ
+                end
+            end
+        end
+        dofs = Ferrite.celldofs(cell)
+        M[dofs, dofs] += Me
+        K[dofs, dofs] += Ke
+    end
+    return M, K
+end
+
+@testset "SUPG operators on quadrilaterals against a hand assembly" begin
+    Ω = MeshDomain(rectangle_grid(Quadrilateral, (8, 8)))
+    U = u(t, x, y)
+    bcs = [[u(t, g) ~ 0 for g in boundarypieces(Ω)]; u(0, x, y) ~ 0]
+    dom = [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)]
+    # coordinate-dependent advection velocity (1 + y, x), and a constant one (1, 1/2)
+    @named varying = PDESystem(
+        [Dt(U) ~ EPS * (Dx(Dx(U)) + Dy(Dy(U))) - (1 + y) * Dx(U) - x * Dy(U)], bcs, dom, [t, x, y], [U], []
+    )
+    @named constant = PDESystem(
+        [Dt(U) ~ EPS * (Dx(Dx(U)) + Dy(Dy(U))) - Dx(U) - 0.5 * Dy(U)], bcs, dom, [t, x, y], [U], []
+    )
+    b_varying(X) = Vec(1 + X[2], X[1])
+    b_constant(X) = Vec(1.0, 0.5)
+    quotient(hK, b) = hK / (2 * sqrt(b[1]^2 + b[2]^2))
+    # (name, system, test space, τ(hK, b), b(X)); every case discretizes and matches its hand assembly.
+    cases = [
+        ("Galerkin", varying, Galerkin(), (hK, b) -> 0.0, b_varying),
+        ("τ = hK / 2, b from the equation", varying, SUPG((hK, b) -> 0.5 * hK), (hK, b) -> 0.5 * hK, b_varying),
+        ("τ = hK / 2|b|, constant b", constant, SUPG(quotient), quotient, b_constant),
+        ("explicit b holding the coordinates", varying, SUPG(0.05; b = [1 + y, x]), (hK, b) -> 0.05, b_varying),
+        ("τ = hK / 2|b|, b from the equation", varying, SUPG(quotient), quotient, b_varying),
+        ("number τ, constant b", constant, SUPG(0.05), (hK, b) -> 0.05, b_constant),
+        ("τ function without hK", varying, SUPG((hK, b) -> 0.05), (hK, b) -> 0.05, b_varying),
+    ]
+    @testset "$name" for (name, pdesys, space, τ, b) in cases
+        disc = FEMDiscretization(Ω, t; test_space = space)
+        @test discretize(pdesys, disc) isa SciMLBase.DAEProblem
+        ops = FiniteElementMethod.operators(pdesys, disc)
+        M, K = supg_reference(Ω.mesh, τ, b)
+        @test norm(ops.M - M) <= 1.0e-12 * norm(M)
+        @test norm(ops.K - K) <= 1.0e-12 * norm(K)
+    end
 end
 
 @testset verbose = true "SUPG front end" begin
