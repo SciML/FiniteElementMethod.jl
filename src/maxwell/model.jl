@@ -123,7 +123,8 @@ function MaxwellModel(
     Ferrite.close!(ch)
     cv = Ferrite.CellValues(Ferrite.QuadratureRule{RefTetrahedron}(quadrature), ip)
 
-    blocks = _assemble_blocks(dh, cv, cell_materials)
+    pattern = _sparsity_pattern(dh, [_wave_port_dofs(port, dh) for port in ports])
+    blocks = _assemble_blocks(pattern, dh, cv, cell_materials)
     L2 = float(length_scale)^2
     k2 = mu0 * eps0 * L2
     terms = [
@@ -180,8 +181,22 @@ function _pec_dofs(dh, grid, pec)
     return sort!(collect(dofs))
 end
 
-function _assemble_blocks(dh, cv, cell_materials)
+# The cell pattern of `dh` plus every pair of edge dofs within each port face: a wave port couples its whole face.
+function _sparsity_pattern(dh, port_dofs)
     pattern = Ferrite.allocate_matrix(dh)
+    isempty(port_dofs) && return pattern
+    rows, cols, _ = findnz(pattern)
+    for dofs in port_dofs, i in dofs, j in dofs
+        push!(rows, i)
+        push!(cols, j)
+    end
+    n = Ferrite.ndofs(dh)
+    pattern = sparse(rows, cols, ones(length(rows)), n, n)
+    fill!(nonzeros(pattern), 0.0)
+    return pattern
+end
+
+function _assemble_blocks(pattern, dh, cv, cell_materials)
     mats = (curlcurl = pattern, eps_real = copy(pattern), eps_imag = copy(pattern), sigma = copy(pattern))
     assemblers = map(Ferrite.start_assemble, mats)
     n = Ferrite.getnbasefunctions(cv)
