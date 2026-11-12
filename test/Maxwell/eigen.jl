@@ -146,6 +146,34 @@ end
     @test issorted(maxwell_eigenmodes(model; nev = 12, target_frequency = 0.01).frequency)
 end
 
+@testset "restarts widen past the discarded static modes like the first search" begin
+    # 64 disconnected one-free-edge cubes with the eigenvalues 1..6 once, 10 and 20 twice and 54 distinct ones above, and
+    # a cutoff of 8: the six lowest are discarded, so a restart asking for a few candidates may see only those.
+    eigenvalues = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 10.0, 10.0, 20.0, 20.0, (40.0 + 3i for i in 1:54)...]
+    cube = generate_grid(Tetrahedron, (1, 1, 1), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0))
+    ncell, nnode = length(cube.cells), length(cube.nodes)
+    ncubes = length(eigenvalues)
+    grid = Grid(
+        [Tetrahedron(ntuple(k -> c.nodes[k] + nnode * i, 4)) for i in 0:(ncubes - 1) for c in cube.cells],
+        [Node(Vec(x.x[1] + 2i, x.x[2], x.x[3])) for i in 0:(ncubes - 1) for x in cube.nodes],
+    )
+    rim = union(values(cube.facetsets)...)
+    addfacetset!(grid, "wall", Set(FacetIndex(ncell * i + f[1], f[2]) for i in 0:(ncubes - 1) for f in rim))
+    materials = Dict{String, MaxwellMaterial}()
+    for λ in unique(eigenvalues)
+        addcellset!(grid, "λ$λ", Set(ncell * (i - 1) + c for (i, v) in enumerate(eigenvalues) if v == λ for c in 1:ncell))
+        materials["λ$λ"] = MaxwellMaterial(; eps_r = 20 / λ)
+    end
+    model = MaxwellModel(grid; materials, pec = ["wall"], eps0 = 1.0, mu0 = 1.0)
+    free = setdiff(1:ndofs(model.dh), FiniteElementMethod._pec_dofs(model.dh, model.grid, model.pec))
+    K, M = model.blocks.curlcurl[free, free], model.blocks.eps_real[free, free]
+    nullspace_tol = 8 / (opnorm(K, 1) / opnorm(M, 1))
+    f(λ) = sqrt(λ) / 2π
+    found = maxwell_eigenmodes(model; nev = 2, target_frequency = 0.001, nullspace_tol)
+    @test found.frequency ≈ fill(f(10.0), 2) rtol = 1.0e-8
+    @test maxwell_eigenmodes(model; nev = 3, target_frequency = 0.001, nullspace_tol).frequency ≈ [f(10.0), f(10.0), f(20.0)] rtol = 1.0e-8
+end
+
 @testset "lossy: nearest in complex ω, and the candidate bound holds" begin
     # eps_r = 1 - 100i scales ω by 1/√(1 - 100i): the lowest modes sit at Re f = 0.0592, 0.0794, 0.0854 with
     # Im f about as large. From 0.0854 the nearest in complex ω is the first, and shift-invert ranks the first

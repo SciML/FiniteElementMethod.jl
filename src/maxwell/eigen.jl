@@ -220,31 +220,39 @@ function maxwell_eigenmodes(
     # The dense spectrum also holds the projected-out gradients (θ = 0): their eigenvectors lie in the range of G,
     # which the projection annihilates, while every other eigenvector is left unchanged by it.
     physical(v) = norm(project(v)) > norm(v) / 2
-    howmany = 2nev
-    local λ, vecs, keep, dense
-    while true
-        dim = max(krylovdim, howmany + 20)
-        dense = dim >= length(free)
-        θ, vecs = dense ? _dense_eigs(op, length(free), T) :
-            _eigsolve(KrylovKitEigensolver(), op, x0, howmany; krylovdim = dim, tol, maxiter)
-        λ = σ .+ 1 ./ θ
-        lossy || (λ = real.(λ))
-        keep = findall(j -> physical(vecs[j]) && abs(λ[j]) >= λ_null, eachindex(λ))
-        dist = abs.(sqrt.(complex.(λ[keep]) ./ scale) .- ωt)
-        keep = keep[sortperm(dist)]
-        if length(keep) < nev
-            dense && break
-            howmany = 2howmany  # the filter took too many of the candidates, so look further out
-            continue
+    # The candidates of the operator `op_s` from `start`, widened until at least `need` of them survive the filters
+    # and, with the distance `d` (by default that of the `need`-th), they reach the bound above, or the space is
+    # exhausted (dense).
+    function search(op_s, start, need, d_fixed = nothing)
+        howmany = 2nev
+        while true
+            dim = max(krylovdim, howmany + 20)
+            dense = dim >= length(free)
+            θ, vecs = dense ? _dense_eigs(op_s, length(free), T) :
+                _eigsolve(KrylovKitEigensolver(), op_s, start, howmany; krylovdim = dim, tol, maxiter)
+            λ = σ .+ 1 ./ θ
+            lossy || (λ = real.(λ))
+            keep = findall(j -> isfinite(λ[j]) && physical(vecs[j]) && abs(λ[j]) >= λ_null, eachindex(λ))
+            dist = abs.(sqrt.(complex.(λ[keep]) ./ scale) .- ωt)
+            keep = keep[sortperm(dist)]
+            if length(keep) < need
+                dense && return λ, vecs, keep, dense
+                howmany = 2howmany  # the filter took too many of the candidates, so look further out
+                continue
+            end
+            d = something(d_fixed, sort(dist)[need])
+            (dense || maximum(l -> abs(l - σ), λ[keep]) >= (2ωt + d) * d * scale + shift_offset) &&
+                return λ, vecs, keep, dense
+            howmany = 2howmany
         end
-        d = sort(dist)[nev]
-        (dense || maximum(l -> abs(l - σ), λ[keep]) >= (2ωt + d) * d * scale + shift_offset) && break
-        howmany = 2howmany
+        return
     end
+    λ, vecs, keep, dense = search(op, x0, nev)
     if !dense && length(keep) >= nev
         # A Krylov space from one starting vector holds one vector per distinct eigenvalue, so a repeated eigenvalue
-        # may have been found once only. Restart from vectors M-orthogonal to everything found until a pass finds
-        # nothing nearer than the current nev-th mode: each pass can add one copy of a repeated eigenvalue.
+        # may have been found once only. Restart from vectors M-orthogonal to everything found, widening the
+        # candidates like the first search, until a pass finds nothing nearer than the current nev-th mode: each pass
+        # can add one copy of a repeated eigenvalue.
         pool_λ, pool_vecs = λ[keep], vecs[keep]
         pool_dist = abs.(sqrt.(complex.(pool_λ) ./ scale) .- ωt)
         for pass in 1:nev
@@ -252,10 +260,7 @@ function maxwell_eigenmodes(
             V = _orthonormal_basis(pool_vecs, M)
             deflate(x) = x - V * (transpose(V) * (M * x))
             start = deflate(project(T.(cos.(2.399963 .* pass .* (1:length(free)) .^ 1.37 .+ pass))))
-            θ, found = _eigsolve(KrylovKitEigensolver(), x -> deflate(op(x)), start, 2nev; krylovdim = max(krylovdim, 2nev + 20), tol, maxiter)
-            λ_found = σ .+ 1 ./ θ
-            lossy || (λ_found = real.(λ_found))
-            new = findall(j -> isfinite(λ_found[j]) && physical(found[j]) && abs(λ_found[j]) >= λ_null, eachindex(λ_found))
+            λ_found, found, new, _ = search(x -> deflate(op(x)), start, 1, d_nev)
             dist_new = abs.(sqrt.(complex.(λ_found[new]) ./ scale) .- ωt)
             any(<(d_nev * (1 - 1.0e-8)), dist_new) || break
             append!(pool_λ, λ_found[new])
