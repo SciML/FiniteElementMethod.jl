@@ -42,10 +42,17 @@ wave ports, a negative one are an `ArgumentError`.
 function solve_sweep(model::MaxwellModel, omegas; fields::Bool = false, solver = umfpack_solver)
     isempty(model.ports) && throw(ArgumentError("the model has no ports"))
     omegas = float.(collect(omegas))
-    any(iszero, omegas) && throw(
-        ArgumentError("a port sweep has no static (ω = 0) formulation: the ports and their excitations vanish there")
-    )
-    any(data -> data isa WavePortData, model.ports) && !all(>(0), omegas) && throw(ArgumentError("wave ports need positive frequencies, got ω = $(omegas[findfirst(<=(0), omegas)])"))
+    wave = any(data -> data isa WavePortData, model.ports)
+    bad = findfirst(ω -> !isfinite(ω) || iszero(ω) || (wave && ω < 0), omegas)
+    if bad !== nothing
+        ω = omegas[bad]
+        throw(
+            ArgumentError(
+                iszero(ω) ? "a port sweep has no static (ω = 0) formulation: the ports and their excitations vanish there" :
+                    wave ? "wave ports need finite positive frequencies, got ω = $ω" : "a port sweep needs finite frequencies, got ω = $ω"
+            )
+        )
+    end
     np = length(model.ports)
     S = zeros(ComplexF64, np, np, length(omegas))
     kept = fields ? Matrix{ComplexF64}[] : nothing
