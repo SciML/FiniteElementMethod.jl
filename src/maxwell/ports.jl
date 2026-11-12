@@ -273,10 +273,10 @@ function cutoff_frequency(model, port::Integer)
     return data.kc / (2π * sqrt(model.mu0 * model.eps0 * real(data.eps_r) * data.mu_r))
 end
 
-# n × μr⁻¹∇ × E = -(iβ/μr) c e - 2(iβ/μr) E0 e on the port, with c = pᵀu / norm the TE10 amplitude of the trace and
-# e the mode, gives +(iβ/μr) L p pᵀ / norm on the operator and +2(iβ/μr) L E0 p on the load, with E0 = 1. Only the
-# TE10 amplitude sees the port: the rest of the trace, which is evanescent, has the natural boundary condition and
-# absorbs no power.
+# For the outgoing exp(-iβζ) convention the port adds +(iβ/μr) c e - 2(iβ/μr) E0 e to the boundary residual, with
+# c = pᵀu / norm the TE10 amplitude of the trace, e the mode and E0 = 1 the incident amplitude: +(iβ/μr) L p pᵀ / norm
+# on the operator and +2(iβ/μr) L E0 p on the load. Only the TE10 amplitude sees the port: the rest of the trace, which
+# is evanescent, has the natural boundary condition and absorbs no power.
 function _port_term(data::WavePortData, mu0eps0, L)
     return MaxwellTerm(data.coupling, ω -> im * _propagation_constant(data, mu0eps0, _nonnegative_frequency(ω)) * L / data.mu_r)
 end
