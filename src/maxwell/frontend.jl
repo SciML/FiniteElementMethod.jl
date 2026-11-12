@@ -189,7 +189,7 @@ function _recognise_volume(an, s, fixed, xs)
             ArgumentError("ν differs between the component equations at x = $(Tuple(x)), so the medium is anisotropic; the coefficients must be scalars")
         )
     end
-    _check_lower_order(an, s, fixed, xs, dU, dG, dF, comps)
+    _check_lower_order(an, s, fixed, xs, B, dU, dG, dF, comps)
     ce = comps[1]
     nu, λ = B[1][mod1(ce + 1, 3), mod1(ce + 1, 3), ce], dU[1][ce]
     a = (a0 = substitute(λ, Dict(unwrap(x) => 0 for x in s)), a1 = Symbolics.derivative(λ, s[1]), a2 = Symbolics.derivative(λ, s[2]))
@@ -200,32 +200,35 @@ end
 # tolerances relative to the other coefficients, which a large one would hide behind: there is no first-order term,
 # the coefficients of E, ∂ₜE and ∂ₜ²E of an equation do not couple the components, and each is the same scalar
 # function in every equation. Only roundoff of an expression of unit scale counts as zero beyond the symbolic test.
-function _check_lower_order(an, s, fixed, xs, dU, dG, dF, comps)
+function _check_lower_order(an, s, fixed, xs, B, dU, dG, dF, comps)
     X = an.slots.X
-    # The indices of `exs` that are not zero.
-    function nonvanishing(exs)
+    szero = Dict(unwrap(si) => 0 for si in s)
+    orders = (ex -> substitute(ex, szero), ex -> Symbolics.derivative(ex, s[1]), ex -> Symbolics.derivative(ex, s[2]))
+    # The indices of `exs` that are not zero in equation `e`: not symbolically zero and, at some point, above the
+    # roundoff of the largest coefficient of that equation, so that scaling an equation changes nothing.
+    function nonvanishing(e, exs)
         exs = [substitute(ex, fixed) for ex in exs]
         open = findall(ex -> !_iszero_expr(ex), exs)
         isempty(open) && return open
-        f = Symbolics.build_function(exs[open], X...; expression = Val(false))[1]
+        parts = [vec(B[e]); [order(dU[e][c]) for c in 1:3, order in orders]]
+        f = Symbolics.build_function(
+            [exs[open]; [substitute(ex, fixed) for ex in parts]], X...; expression = Val(false)
+        )[1]
         big = falses(length(open))
         for x in xs
-            big .|= abs.(_real_values(f(x...), "a coefficient")) .> 100eps()
+            v = abs.(_real_values(f(x...), "a coefficient"))
+            big .|= v[1:length(open)] .> 100eps() * maximum(v[(length(open) + 1):end])
         end
         return open[big]
     end
     for e in 1:3
-        isempty(nonvanishing(dF[e])) ||
+        isempty(nonvanishing(e, dF[e])) ||
             throw(ArgumentError("equation $e has a first-order term inside a derivative; $_MAXWELL_FORM"))
-        isempty(nonvanishing(dG[e])) || throw(
+        isempty(nonvanishing(e, dG[e])) || throw(
             ArgumentError("equation $e has a first-order term in the derivatives of E, which curl(ν*curl(E)) does not have; $_MAXWELL_FORM")
         )
-    end
-    szero = Dict(unwrap(si) => 0 for si in s)
-    orders = (ex -> substitute(ex, szero), ex -> Symbolics.derivative(ex, s[1]), ex -> Symbolics.derivative(ex, s[2]))
-    for e in 1:3
         off = [order(dU[e][c]) for c in setdiff(1:3, comps[e]) for order in orders]
-        isempty(nonvanishing(off)) || throw(
+        isempty(nonvanishing(e, off)) || throw(
             ArgumentError("the zeroth-order term of equation $e couples the components of E; the coefficients of E and its time derivatives must be scalars")
         )
     end
