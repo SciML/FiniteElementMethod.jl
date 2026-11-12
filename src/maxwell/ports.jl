@@ -100,11 +100,11 @@ function tangential_mass(model, facetsets; weight = Returns(1.0))
 end
 
 # sqrt(εc / μr) on the outgoing branch: the principal root, except for a negative real εc / μr (no loss), where it is
-# the limit from the lossy side, -i sqrt(|εc / μr|), so that the exterior field decays and the term is continuous
-# in the loss.
-function _admittance(εc, μr)
+# the limit from the lossy side at the sign of ω, -i sign(ω) sqrt(|εc / μr|), so that the exterior field decays, the
+# term is continuous in the loss and A(-ω) = conj(A(ω)).
+function _admittance(εc, μr, ω)
     z = εc / μr
-    return imag(z) == 0 && real(z) < 0 ? -im * sqrt(-real(z)) : sqrt(z)
+    return imag(z) == 0 && real(z) < 0 ? -im * sign(ω) * sqrt(-real(z)) : sqrt(z)
 end
 
 # First-order absorbing boundary n × (μr⁻¹ ∇ × E) = -i k0 ηr⁻¹ n × (n × E), with ηr⁻¹ = sqrt(εc / μr) and
@@ -116,7 +116,7 @@ function _absorbing_terms(dh, pattern, names, cell_materials, mu0, eps0, L)
         # The coefficient is ω √εc with εc ~ 1/ω for a conductor, so it tends to 0 as ω → 0.
         MaxwellTerm(
             block,
-            ω -> iszero(ω) ? 0.0im : im * ω * sqrt(mu0 * eps0) * L * _admittance(m.eps_r - im * m.sigma / (ω * eps0), m.mu_r)
+            ω -> iszero(ω) ? 0.0im : im * ω * sqrt(mu0 * eps0) * L * _admittance(m.eps_r - im * m.sigma / (ω * eps0), m.mu_r, ω)
         )
     end
 end
