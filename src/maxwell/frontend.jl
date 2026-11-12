@@ -472,7 +472,8 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
     source_at = compile(coeffs.sources)
     cells = map(enumerate(centroids)) do (cell, x)
         nu, a0, a1, a2 = _real_values(coefficient_at(x...), "a coefficient")
-        iszero(nu) && throw(ArgumentError("ν = $nu in cell $cell; ν = 1/μ must be nonzero"))
+        (iszero(nu) || iszero(1 / nu) || !isfinite(1 / nu)) &&
+            throw(ArgumentError("ν = $nu in cell $cell; ν = 1/μ must be nonzero" * (iszero(nu) ? "" : " and 1/ν must be representable")))
         (; nu, a0, a1, a2)
     end
     (; pec, absorbing) = _recognise_boundaries(
