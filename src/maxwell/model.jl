@@ -110,6 +110,7 @@ function MaxwellModel(
         throw(ArgumentError("MaxwellModel needs a grid of Tetrahedron cells, got $(Ferrite.getcelltype(grid))"))
     pec = String.(collect(pec))
     absorbing = String.(collect(absorbing))
+    ports = collect(ports)
     foreach(name -> _check_facetset(grid, name), pec)
     foreach(name -> _check_facetset(grid, name), absorbing)
     # Each boundary condition assembles its own term, so a facet in two of them would get both. An interior facet is

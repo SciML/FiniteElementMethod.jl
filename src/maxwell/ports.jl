@@ -6,7 +6,8 @@
 
 A TE10 wave port of a rectangular waveguide on the planar boundary facet set `facetset` of a
 [`MaxwellModel`](@ref). The port face must be the full guide cross-section, a rectangle with PEC on its rim,
-filled with one lossless-or-dielectric material (no conductivity).
+filled with one material of real permittivity and zero conductivity: a complex `eps_r` (a lossy dielectric) or a
+nonzero conductivity is rejected.
 
 `a_direction` is a vector along the broad wall (the side of length `a`); the mode is
 `e = ê sin(π ξ / a)`, with `ξ` the distance from the edge of the rectangle along `a_direction` and `ê` the
