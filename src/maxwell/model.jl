@@ -70,7 +70,9 @@ sparse blocks on one sparsity pattern, each with a complex coefficient that is a
 `Kc = ∫ μr⁻¹ ∇×Nᵢ ⋅ ∇×Nⱼ`, `Mε' = ∫ Re(εr) Nᵢ⋅Nⱼ`, `Mε'' = ∫ Im(εr) Nᵢ⋅Nⱼ` and `Mσ = ∫ σ Nᵢ⋅Nⱼ` over the
 mesh (so `Im(εr) = -ε''` gives the `+iω²μ0ε0L² ε''` loss term). The absorbing boundary adds
 `+i k0 L ∮ sqrt(εc/μr) (n × Nᵢ)⋅(n × Nⱼ) dS` (`k0 = ω sqrt(μ0 ε0)`, material of the adjacent cell) and each
-wave port `+i (β(ω)/μr) L ∮ (n × Nᵢ)⋅(n × Nⱼ) dS` over its face. `A` is complex symmetric, not Hermitian.
+wave port `+i (β(ω)/μr) L p pᵀ / norm`, the rank-one term of the TE10 projection of its face (see [`WavePort`](@ref) and
+[`FiniteElementMethod.WavePortData`](@ref)), whose dof pairs widen the cell-based sparsity pattern. `A` is complex
+symmetric, not Hermitian.
 
 Fields: `grid`, `dh`, `ch` (zero `AffineConstraint`s on the PEC edge dofs), `cellvalues`, `materials` (one
 per cell), `pec`, `eps0`, `mu0`, `length_scale`, `blocks` (the volume blocks `curlcurl`, `eps_real`,
@@ -246,7 +248,8 @@ _same_pattern(A, B) = A.colptr == B.colptr && rowvals(A) == rowvals(B)
     add_term!(model::MaxwellModel, block, coefficient)
 
 Append the term `coefficient(ω) * block` to the system matrix of `model`. `block` must have the sparsity
-pattern of `model.blocks`, as every matrix from `Ferrite.allocate_matrix(model.dh)` does.
+pattern of `model.blocks`, which a wave port widens beyond that of `Ferrite.allocate_matrix(model.dh)`: make it as a copy
+of `model.blocks.curlcurl` with its values zeroed, or with `tangential_mass` for a boundary term.
 """
 function add_term!(model::MaxwellModel, block::SparseMatrixCSC{Float64, Int}, coefficient)
     _same_pattern(block, model.blocks.curlcurl) ||
