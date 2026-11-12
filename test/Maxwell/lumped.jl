@@ -110,7 +110,7 @@ end
     len, d, hz = PLATE_LEN, 6.0, 1.0
     grid = generate_grid(Tetrahedron, (2, 2, round(Int, (len + d) / hz)), Vec(0.0, 0.0, 0.0), Vec(PLATE_W, PLATE_H, len + d))
     plane = FacetIndex[]
-    for cell in 1:getncells(grid), (k, facet) in pairs(Ferrite.reference_facets(RefTetrahedron))
+    for cell in 1:getncells(grid), (k, facet) in pairs(FiniteElementMethod._TET_FACET_NODES)
         x = getcoordinates(grid, cell)
         all(i -> x[i][3] ≈ len, facet) && push!(plane, FacetIndex(cell, k))
     end
@@ -181,8 +181,8 @@ end
     # Parallel normals and a matching projected area, but two halves at different heights.
     split = generate_grid(Tetrahedron, (2, 1, 1))
     halves = [
-        [f for f in getfacetset(split, "bottom") if all(x -> x[1] <= 0, getcoordinates(split, f[1])[collect(Ferrite.reference_facets(RefTetrahedron)[f[2]])])];
-        [f for f in getfacetset(split, "top") if all(x -> x[1] >= 0, getcoordinates(split, f[1])[collect(Ferrite.reference_facets(RefTetrahedron)[f[2]])])]
+        [f for f in getfacetset(split, "bottom") if all(x -> x[1] <= 0, getcoordinates(split, f[1])[collect(FiniteElementMethod._TET_FACET_NODES[f[2]])])];
+        [f for f in getfacetset(split, "top") if all(x -> x[1] >= 0, getcoordinates(split, f[1])[collect(FiniteElementMethod._TET_FACET_NODES[f[2]])])]
     ]
     addfacetset!(split, "steps", halves)
     @test_throws "not planar" MaxwellModel(split; ports = [LumpedPort("steps"; direction = (0, 1, 0))])
