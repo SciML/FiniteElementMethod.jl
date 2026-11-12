@@ -249,8 +249,8 @@ end
     face = setdiff(findall(!iszero, diag(data.block)), model.ch.prescribed_dofs)
     c = Matrix(data.block[face, face]) \ data.profile[face]
     @test dot(data.profile[face], c) ≈ data.norm
-    flux(ω) = real(propagation_constant(model, 1, ω)) / ω / 2 * real(dot(c, data.block[face, face] * c))
-    wave_power(ω) = data.norm * abs(propagation_constant(model, 1, ω)) / ω / 2  # |a|²/2
+    flux(ω) = real(FiniteElementMethod.propagation_constant(model, 1, ω)) / ω / 2 * real(dot(c, data.block[face, face] * c))
+    wave_power(ω) = data.norm * abs(FiniteElementMethod.propagation_constant(model, 1, ω)) / ω / 2  # |a|²/2
     @test flux(2.0) ≈ wave_power(2.0) rtol = 1.0e-12
     @test flux(1.0) == 0
     @test wave_power(1.0) > 0.1
