@@ -52,8 +52,10 @@ sweep.S[2, 1, 5]  # S21 at 10 GHz: |S21| ≈ 1, angle ≈ -93.3°
 ```
 
 `Sᵢⱼ` is referred to the port faces, or to planes `deembed` mesh units inside them. Ports on different guides
-are normalised to power waves through the TE10 wave impedance `ωμ0μr/β`. Below cutoff the propagation
-constant is `β = -iα`, the evanescent branch.
+are normalised through the TE10 wave impedance `ωμ0μr/β`. For a propagating port these are power waves. Below cutoff
+the propagation constant is `β = -iα`, the evanescent branch, which carries no real axial power: the coefficients
+are then generalized traveling-wave coefficients with the same normalisation, still supported, but without an
+individual incident or outgoing power, and `S` is not power conserving.
 
 A port must lie in a lossless material: a complex `eps_r` or a nonzero conductivity at a port is rejected, because the
 power-wave normalisation above holds for a real wave impedance. Put loss behind the port, not in its face, and a
@@ -68,7 +70,8 @@ current `I/w` along `direction`; its voltage is the sheet average of the line in
 `iωμ0 L/(w² Z0) g gᵀ` (`gᵢ = ∮ l̂⋅Nᵢ dS`) to the operator, and the driven port adds a 1 A current source in
 parallel, so `Sᵢⱼ = 2Vᵢ/sqrt(Z0ᵢZ0ⱼ) - δᵢⱼ`. Because the load, the source and the voltage use the same `g`,
 these circuit identities hold exactly for the discrete system: a lossless structure gives a unitary `S`.
-Wave and lumped ports can share one model and one sweep, both normalised to power waves.
+Wave and lumped ports can share one model and one sweep; lumped ports and propagating wave ports are
+normalised to power waves.
 
 ```julia
 using FiniteElementMethod, Ferrite
