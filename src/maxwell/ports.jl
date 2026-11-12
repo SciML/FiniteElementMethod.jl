@@ -237,10 +237,13 @@ end
 
 _excitation(model, data::WavePortData, ω) =
     (2im * _propagation_constant(data, model.mu0 * model.eps0, ω) * model.length_scale / data.mu_r) .* data.profile
-# The propagation constants of the wave ports at ω. At exact cutoff β = 0, the wave impedance ωμ/β is infinite and the
+# The propagation constants of the wave ports at ω. At ω = 0 and at exact cutoff β = 0, the wave impedance ωμ/β is infinite and the
 # power-wave scale of the S-parameters is 0/0, so it is an error rather than a NaN matrix.
 function _check_not_at_cutoff(model, ω)
     for (j, data) in pairs(model.ports)
+        data isa WavePortData && iszero(ω) && throw(
+            ArgumentError("ω = 0 is below the TE10 cutoff of wave port $j, where its wave impedance is infinite and its S-parameters are undefined; use a positive frequency")
+        )
         data isa WavePortData && iszero(_propagation_constant(data, model.mu0 * model.eps0, float(ω))) && throw(
             ArgumentError("ω = $ω is exactly the TE10 cutoff of wave port $j, where its wave impedance is infinite and its S-parameters are undefined; use a nearby frequency")
         )
@@ -290,7 +293,8 @@ The scattering matrix `Sᵢⱼ = bᵢ / aⱼ` from the solutions `U[:, j]` with 
 `bᵢ = (pᵢᵀuⱼ / Pᵢ - δᵢⱼ) sqrt(Pᵢ / Zᵢ) exp(iβᵢdᵢ)`, with `Pᵢ = ∮ e⋅e dS`, the TE10 wave impedance
 `Zᵢ = ωμ0μr / βᵢ` and the de-embedding distances `dᵢ`. A lumped port has `aⱼ = sqrt(Z0ⱼ) / 2` and
 `bᵢ = (2Vᵢ - Z0ᵢ δᵢⱼ) / (2 sqrt(Z0ᵢ))`, so between lumped ports `Sᵢⱼ = 2Vᵢ / sqrt(Z0ᵢ Z0ⱼ) - δᵢⱼ`. At exactly a wave port's cutoff `βᵢ = 0`, `Zᵢ` is
-infinite and the S-parameters are undefined, so this throws an `ArgumentError`.
+infinite and the S-parameters are undefined, so this throws an `ArgumentError`; so does `ω = 0` with a wave port, whose
+`Zᵢ` is infinite below cutoff.
 """
 function s_parameters(model, ω::Real, U::AbstractMatrix)
     ω = float(ω)
