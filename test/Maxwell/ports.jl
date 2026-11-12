@@ -250,3 +250,21 @@ end
     @test midpoint(-1.0 - 1.0e-12im) ≈ exact atol = 0.015
     @test midpoint(-1.0) ≈ midpoint(-1.0 - 1.0e-12im) atol = 1.0e-6
 end
+
+@testset "the absorbing operator is conjugate symmetric in ω" begin
+    grid = generate_grid(Tetrahedron, (2, 2, 2))
+    addcellset!(grid, "all", x -> true)
+    for material in (MaxwellMaterial(), MaxwellMaterial(; eps_r = -1.0), MaxwellMaterial(; eps_r = 2.0, mu_r = 1.5, sigma = 0.3))
+        model = MaxwellModel(grid; materials = Dict("all" => material), pec = ["front", "back"], absorbing = ["top"], eps0 = 1.0, mu0 = 1.0)
+        @test maxwell_operator(model, -1.3).nzval ≈ conj.(maxwell_operator(model, 1.3).nzval)
+    end
+end
+
+@testset "the absorbing operator is finite at ω = 0" begin
+    grid = generate_grid(Tetrahedron, (1, 1, 1))
+    addcellset!(grid, "all", x -> true)
+    for material in (MaxwellMaterial(), MaxwellMaterial(; sigma = 0.5))
+        m = MaxwellModel(grid; absorbing = ["top"], materials = Dict("all" => material), eps0 = 1.0, mu0 = 1.0)
+        @test all(isfinite, maxwell_operator(m, 0.0).nzval)
+    end
+end
