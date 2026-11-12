@@ -9,7 +9,7 @@ const _PARAMETER_KINDS = (:eps_r, :eps_r_imag, :mu_r, :sigma)
 function _check_symmetric(model)
     for (k, term) in pairs(model.terms)
         B = term.block
-        norm(B - transpose(B), 1) <= 1.0e-12 * max(norm(B, 1), 1.0) ||
+        norm(B - transpose(B), 1) <= 1.0e-12 * norm(B, 1) ||
             throw(ArgumentError("term $k of the model has a nonsymmetric block, so A is not symmetric and the adjoint needs transpose(A); the sensitivities support symmetric terms only"))
     end
     return nothing

@@ -1,6 +1,6 @@
 # Discrete adjoint material sensitivities of the WR-90 dielectric slab: against central finite differences of
 # the forward sweep (both discrete, so they agree to many digits) and against the closed-form slab.
-using FiniteElementMethod, Ferrite, LinearAlgebra, Test
+using FiniteElementMethod, Ferrite, LinearAlgebra, SparseArrays, Test
 
 const SLAB_A, SLAB_B = 22.86, 10.16  # mm
 const SLAB_LEAD, SLAB_D = 10.0, 10.0  # mm of vacuum guide on each side of the slab, and the slab
@@ -155,6 +155,15 @@ end
     extra = copy(model.blocks.sigma)
     nonzeros(extra) .= rand(nnz(extra))
     FiniteElementMethod.add_term!(model, extra, ω -> 1.0)
+    # A tiny block with a huge coefficient is as nonsymmetric as a large one.
+    tiny = copy(model.blocks.sigma)
+    nonzeros(tiny) .= 0
+    rows, cols = findnz(tiny)
+    scaled = slab_model(slab_grid(3.0), MaxwellMaterial(; eps_r = 2.2))
+    i = findfirst(k -> rows[k] != cols[k] && rows[k] ∉ scaled.ch.prescribed_dofs && cols[k] ∉ scaled.ch.prescribed_dofs, eachindex(rows))
+    nonzeros(tiny)[i] = 1.0e-13
+    FiniteElementMethod.add_term!(scaled, tiny, ω -> 1.0e13)
+    @test_throws "nonsymmetric" s_parameter_sensitivities(scaled, [SLAB_F], [(:eps_r, "slab")])
     u = zeros(ComplexF64, ndofs(model.dh))
     @test_throws "nonsymmetric" s_parameter_sensitivities(model, [SLAB_F], [(:eps_r, "slab")])
     @test_throws "nonsymmetric" adjoint_gradient(model, SLAB_F, u, zeros(ndofs(model.dh)), [(:eps_r, "slab")])
