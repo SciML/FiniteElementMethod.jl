@@ -279,3 +279,28 @@ end
     @test flux(1.0) == 0
     @test wave_power(1.0) > 0.1
 end
+
+@testset "wave ports reject non-positive frequencies before any solve" begin
+    model = wr90(5.0, 10.0)
+    @test_throws "positive frequencies" solve_sweep(model, [2π * 10.0e9, -2π * 10.0e9])
+    @test_throws "positive frequencies" solve_sweep(model, [-2.0])
+    @test_throws "is negative" FiniteElementMethod.port_excitations(model, -2.0)
+end
+
+@testset "the absorbing boundary of a lossless negative-permittivity material is outgoing" begin
+    # eps_r = -1 at ω = 1: -E'' + E = 1, E'(0) = 0, E'(1) + E(1) = 0, so E(z) = 1 - exp(-1) cosh(z).
+    grid = generate_grid(Tetrahedron, (4, 4, 8), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0))
+    addcellset!(grid, "all", x -> true)
+    midpoint(eps_r) = begin
+        model = MaxwellModel(
+            grid; materials = Dict("all" => MaxwellMaterial(; eps_r)), pec = ["front", "back"], absorbing = ["top"],
+            eps0 = 1.0, mu0 = 1.0
+        )
+        sol = solve_driven(model, 1.0, x -> (0.0, 1.0im, 0.0))
+        return field_values(sol, [Vec(0.5, 0.5, 0.5)]).E[1][2]
+    end
+    exact = 1 - exp(-1) * cosh(0.5)
+    @test midpoint(-1.0) ≈ exact atol = 0.015  # the discretisation error; the incoming branch gives -2.08
+    @test midpoint(-1.0 - 1.0e-12im) ≈ exact atol = 0.015
+    @test midpoint(-1.0) ≈ midpoint(-1.0 - 1.0e-12im) atol = 1.0e-6
+end
