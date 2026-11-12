@@ -152,9 +152,32 @@ end
     @test all(isnan, vals.E[2]) && all(isnan, vals.curlE[2])
 end
 
-@testset "facet edge dof and node tables match Ferrite's tetrahedron" begin
-    @test FiniteElementMethod._TET_FACET_EDGE_DOFS == Ferrite.dirichlet_facetdof_indices(FiniteElementMethod._NEDELEC)
-    @test FiniteElementMethod._TET_FACET_NODES == Ferrite.reference_facets(RefTetrahedron)
+@testset "facet edge dof and node tables match the geometry and the tangential traces of a tetrahedron" begin
+    # A skewed single tetrahedron, so that no facet is axis-aligned.
+    nodes = Node.([(0.1, 0.0, 0.0), (1.2, 0.2, 0.0), (0.0, 0.9, 0.1), (0.3, 0.2, 1.1)])
+    grid = Grid([Tetrahedron((1, 2, 3, 4))], nodes)
+    dh = DofHandler(grid)
+    add!(dh, :E, FiniteElementMethod._NEDELEC)
+    close!(dh)
+    fv = FacetValues(FacetQuadratureRule{RefTetrahedron}(3), FiniteElementMethod._NEDELEC)
+    cell = first(CellIterator(dh))
+    coords = getcoordinates(cell)
+    for lf in 1:4
+        reinit!(fv, cell, lf)
+        facet = collect(FiniteElementMethod._TET_FACET_NODES[lf])
+        # The facet nodes are on the facet: their centroid is the quadrature centroid of the facet, and the
+        # remaining node is on the inner side of the facet normal.
+        area = sum(getdetJdV(fv, q) for q in 1:getnquadpoints(fv))
+        centroid = sum(getdetJdV(fv, q) * spatial_coordinate(fv, q, coords) for q in 1:getnquadpoints(fv)) / area
+        @test sum(coords[facet]) / 3 ≈ centroid atol = 1.0e-12
+        n = getnormal(fv, 1)
+        @test dot(coords[only(setdiff(1:4, facet))] - coords[facet[1]], n) < 0
+        # The edge dofs of the facet carry its tangential trace; every other edge basis function has none on it.
+        on_facet = collect(FiniteElementMethod._TET_FACET_EDGE_DOFS[lf])
+        trace(j) = maximum(norm(cross(n, shape_value(fv, q, j))) for q in 1:getnquadpoints(fv))
+        @test all(trace(j) < 1.0e-12 for j in setdiff(1:6, on_facet))
+        @test all(trace(j) > 1.0e-3 for j in on_facet)
+    end
 end
 
 @testset "the linear Lagrange facet dofs are the facet nodes" begin
