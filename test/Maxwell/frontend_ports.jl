@@ -143,6 +143,26 @@ end
     @test discretize(system(Ω, [pec(Ω, WALLS); scaled]), edge_disc(Ω; omega = 1.0)) isa LinearProblem
 end
 
+@testset "normal-dependent factors are judged at the actual normal" begin
+    Ω = MeshDomain(guide(10.0, 5.0))
+    Γ = boundarypiece(Ω, :top)  # n = (0, 0, 1), so n[1] = 0 on it
+    n, Eb = facet_normal(Γ), trace(Γ)
+    walls = pec(Ω, WALLS)
+    solve_with(extra) = discretize(system(Ω, [walls; abc(Γ); extra]), edge_disc(Ω))
+    base = solve_with(Equation[])
+    # (n[1] + 1e-13) ∂ₜE_z = 0 is a 1e-13 multiple of an independent constraint, not a vanishing row.
+    @test occursin("independent equations", message(() -> solve_with([(n[1] + 1.0e-13) * Dt(Eb[3]) ~ 0])))
+    @test occursin("independent equations", message(() -> solve_with([(n[1] + 1.0e-8) * Dt(Eb[3]) ~ 0])))
+    # The whole absorbing condition times a tiny factor is still the absorbing condition.
+    factor = n[1] + 1.0e-13
+    @test discretize(system(Ω, [walls; [factor * e.lhs ~ factor * e.rhs for e in abc(Γ)]]), edge_disc(Ω)) isa LinearProblem
+    # n[1] E_z = 0 and n[1] ∂ₜE_z = 0 vanish identically on top and change nothing.
+    for vanishing in (n[1] * Eb[3], n[1] * Dt(Eb[3]))
+        prob = solve_with([vanishing ~ 0])
+        @test prob.A == base.A && prob.b == base.b
+    end
+end
+
 @testset "rejections of absorbing conditions and ports" begin
     grid = guide(10.0, 5.0)
     addfacetset!(grid, "lid", x -> x[3] ≈ 10.0)  # the facets of top again

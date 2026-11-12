@@ -290,10 +290,12 @@ function _absorbing_target(n, ν, c)
 end
 
 # An orthonormal basis of the row space of M, as rows. Each row is scaled to unit length first, so that the result
-# does not depend on how the equations are scaled; a row counts as zero when it is below 1e-12 of `ref[i]`, the size
-# the same row has at generic normals (a row can vanish at the actual normal of a facet).
+# does not depend on how the equations are scaled; a row counts as zero when it is below `_ROW_ZERO` of `ref[i]`, the
+# size the same row has at generic normals: a row vanishes at the actual normal of a facet only by roundoff in the
+# normal, so a tiny factor that is really there (1e-13) still makes a row.
+const _ROW_ZERO = 1.0e-14
 function _rowspace(M, ref)
-    keep = findall(i -> norm(M[i, :]) > 1.0e-12 * ref[i], axes(M, 1))
+    keep = findall(i -> norm(M[i, :]) > _ROW_ZERO * ref[i], axes(M, 1))
     M = M[keep, :] ./ norm.(eachrow(M[keep, :]))
     F = svd(M)
     return F.Vt[1:count(>(1.0e-10 * maximum(F.S; init = 0.0)), F.S), :]
@@ -370,6 +372,10 @@ function _recognise_boundaries(bcs, fields, pvals, ctx, domain, cells, ω)
             # the same size (ν k = c ω) whatever the unit system, where the raw coefficients can differ by many orders.
             scale = [fill(ω * sqrt(a2 / nu), 9); fill(ω, 3); ones(3)]'
             rows(ns) = [maximum(norm((reshape(C_at(m...), length(Bs), 15) .* scale)[i, :]) for m in ns) for i in eachindex(Bs)]
+            # A term in E is judged at the actual normal too: n[1] * E vanishes on a facet with n[1] = 0.
+            e_rows(ns) = [maximum(norm(reshape(C_at(m...), length(Bs), 15)[i, 13:15]) for m in ns) for i in eachindex(Bs)]
+            e_ref = e_rows(_GENERIC_NORMALS)
+            has_e_term = any(i -> norm(Cn[i, 13:15]) > _ROW_ZERO * e_ref[i], eachindex(Bs))
             Q = _rowspace(Cn .* scale, rows(_GENERIC_NORMALS))
             P = _rowspace(
                 _absorbing_target(n, nu, c) .* scale,
@@ -379,7 +385,7 @@ function _recognise_boundaries(bcs, fields, pvals, ctx, domain, cells, ω)
                 ArgumentError("the conditions $where have $(size(Q, 1)) independent equations; the absorbing condition n × (ν curl E) = -sqrt(ε/μ) n × (n × ∂ₜE) has 2; $form")
             )
             # A term in E has the weight of E itself, which the field units of the derivative columns can make small.
-            (any(!_iszero_expr, C[:, 13:15]) || norm(Q' * Q - P' * P) > 1.0e-8) && throw(
+            (has_e_term || norm(Q' * Q - P' * P) > 1.0e-8) && throw(
                 ArgumentError("the conditions $where are not n × (ν curl E) = -sqrt(ε/μ) n × (n × ∂ₜE) of the adjacent cell (ν = $nu, sqrt(ε/μ) = $c): the coefficient of curl E, the impedance or the sign differs, or a term in E is added; $form")
             )
         end
