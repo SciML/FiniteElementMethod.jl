@@ -150,14 +150,17 @@ end
     walls = pec(Ω, WALLS)
     solve_with(extra) = discretize(system(Ω, [walls; abc(Γ); extra]), edge_disc(Ω))
     base = solve_with(Equation[])
-    # (n[1] + 1e-13) ∂ₜE_z = 0 is a 1e-13 multiple of an independent constraint, not a vanishing row.
-    @test occursin("independent equations", message(() -> solve_with([(n[1] + 1.0e-13) * Dt(Eb[3]) ~ 0])))
-    @test occursin("independent equations", message(() -> solve_with([(n[1] + 1.0e-8) * Dt(Eb[3]) ~ 0])))
-    # The whole absorbing condition times a tiny factor is still the absorbing condition.
-    factor = n[1] + 1.0e-13
-    @test discretize(system(Ω, [walls; [factor * e.lhs ~ factor * e.rhs for e in abc(Γ)]]), edge_disc(Ω)) isa LinearProblem
+    independent(eq) = occursin("independent equations", message(() -> solve_with([eq])))
+    # A factor that is 1e-13, 1e-16, 1e-20 or exactly 1 at the actual normal, however it is written, is a factor.
+    for factor in (n[1] + 1.0e-8, n[1] + 1.0e-13, n[1] + 1.0e-16, n[1] + 1.0e-20, 1.0e16 * n[1] + 1)
+        @test independent(factor * Dt(Eb[3]) ~ 0)
+        # The same factor on the whole absorbing condition is still the absorbing condition.
+        @test discretize(system(Ω, [walls; [factor * e.lhs ~ factor * e.rhs for e in abc(Γ)]]), edge_disc(Ω)) isa LinearProblem
+    end
+    # A nonzero E_z equation is a third equation, whichever way its factor is written.
+    @test message(() -> solve_with([(1.0e16 * n[1] + 1) * Eb[3] ~ 0])) != "no error"
     # n[1] E_z = 0 and n[1] ∂ₜE_z = 0 vanish identically on top and change nothing.
-    for vanishing in (n[1] * Eb[3], n[1] * Dt(Eb[3]))
+    for vanishing in (n[1] * Eb[3], n[1] * Dt(Eb[3]), 1.0e16 * n[1] * Dt(Eb[3]))
         prob = solve_with([vanishing ~ 0])
         @test prob.A == base.A && prob.b == base.b
     end
