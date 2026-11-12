@@ -120,3 +120,19 @@ end
     A, Aneg = maxwell_operator(model, 2.0), maxwell_operator(model, -2.0)
     @test norm(Aneg - conj(A)) / norm(A) < 1.0e-12
 end
+
+@testset "equivalent descriptions of dielectric loss give the same PML operator at both signs of ω" begin
+    grid = generate_grid(Tetrahedron, (1, 1, 4), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 4.0))
+    addcellset!(grid, "pml", x -> x[3] >= 3.0 - 1.0e-9)
+    addcellset!(grid, "all", x -> true)
+    walls = ["left", "right", "front", "back", "top"]
+    operator(material, ω) = maxwell_operator(
+        MaxwellModel(grid; materials = Dict("all" => material), pec = walls, pml = CartesianPML("pml"; omega = 2.0, R = 1.0e-3), eps0 = 1.0, mu0 = 1.0), ω
+    )
+    for ω in (2.0, -2.0)
+        # εc = eps_r - iσ/ω: a conductivity 0.6 is the permittivity 2 - 0.6i/ω at this frequency.
+        A = operator(MaxwellMaterial(; eps_r = 2 - 0.6im / ω, mu_r = 1.5), ω)
+        B = operator(MaxwellMaterial(; eps_r = 2.0, mu_r = 1.5, sigma = 0.6), ω)
+        @test norm(A - B) / norm(A) < 1.0e-12
+    end
+end

@@ -99,8 +99,8 @@ function _pml_terms(pml::CartesianPML, dh, cv, pattern, cell_materials, mu0, eps
     end
     α = _pml_profile(pml, grid, in_pml, pml.omega * sqrt(mu0 * eps0), L)
 
-    names = (:curl_re, :curl_im, :eps_re, :eps_im, :sigma_re, :sigma_im)
-    mats = NamedTuple{names}(ntuple(_ -> copy(pattern), 6))
+    names = (:curl_re, :curl_im, :eps_rr, :eps_ri, :eps_ir, :eps_ii, :sigma_re, :sigma_im)
+    mats = NamedTuple{names}(ntuple(_ -> copy(pattern), 8))
     assemblers = map(Ferrite.start_assemble, mats)
     n = Ferrite.getnbasefunctions(cv)
     kc, m = zeros(ComplexF64, n, n), zeros(ComplexF64, n, n)
@@ -126,18 +126,22 @@ function _pml_terms(pml::CartesianPML, dh, cv, pattern, cell_materials, mu0, eps
         dofs = Ferrite.celldofs(cc)
         Ferrite.assemble!(assemblers.curl_re, dofs, real.(kc) ./ mu_r)
         Ferrite.assemble!(assemblers.curl_im, dofs, imag.(kc) ./ mu_r)
-        Ferrite.assemble!(assemblers.eps_re, dofs, real.(eps_r .* m))
-        Ferrite.assemble!(assemblers.eps_im, dofs, imag.(eps_r .* m))
+        # eps_r (m_re + i m_im) with eps_r = er + i ei: the material is not conjugated when the stretching is.
+        Ferrite.assemble!(assemblers.eps_rr, dofs, real(eps_r) .* real.(m))
+        Ferrite.assemble!(assemblers.eps_ri, dofs, real(eps_r) .* imag.(m))
+        Ferrite.assemble!(assemblers.eps_ir, dofs, imag(eps_r) .* real.(m))
+        Ferrite.assemble!(assemblers.eps_ii, dofs, imag(eps_r) .* imag.(m))
         Ferrite.assemble!(assemblers.sigma_re, dofs, sigma .* real.(m))
         Ferrite.assemble!(assemblers.sigma_im, dofs, sigma .* imag.(m))
     end
     k2, μL2 = mu0 * eps0 * L^2, mu0 * L^2
-    # For ω < 0 the stretching is conjugated (the imaginary blocks change sign), so that A(-ω) = conj(A(ω)) and the layer
-    # still attenuates the outgoing wave.
+    # For ω < 0 the stretching m = m_re + i m_im is conjugated (its imaginary blocks change sign) and the supplied
+    # material is not, so that the layer still attenuates the outgoing wave and equivalent descriptions of loss agree:
+    # -k2 ω² (er + i ei)(m_re + i s m_im) = -k2 ω² (er m_re + i s er m_im + i ei m_re - s ei m_im).
     sgn(ω) = ω < 0 ? -1.0 : 1.0
     coefficients = (
         Returns(1.0 + 0.0im), ω -> im * sgn(ω), ω -> complex(-k2 * ω^2), ω -> -im * k2 * ω^2 * sgn(ω),
-        ω -> im * μL2 * ω, ω -> complex(-μL2 * ω * sgn(ω)),
+        ω -> -im * k2 * ω^2, ω -> complex(k2 * ω^2 * sgn(ω)), ω -> im * μL2 * ω, ω -> complex(-μL2 * ω * sgn(ω)),
     )
     terms = [MaxwellTerm(block, c) for (block, c) in zip(mats, coefficients)]
     return filter(term -> any(!iszero, nonzeros(term.block)), terms)
