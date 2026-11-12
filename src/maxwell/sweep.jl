@@ -36,11 +36,15 @@ as a [`MaxwellSweep`](@ref). Each frequency recombines the nonzero values of one
 [`maxwell_operator!`](@ref), applies the PEC constraints, and solves for all port excitations at once with
 `solver(A, B, cache)` (see [`FiniteElementMethod.umfpack_solver`](@ref)), which may keep its factorisation
 between frequencies in `cache`. `fields = true` keeps the solutions (`ndofs × nports` complex values per
-frequency). An empty `omegas` gives an empty sweep.
+frequency). An empty `omegas` gives an empty sweep. A zero frequency (no static formulation of the ports) and, with
+wave ports, a negative one are an `ArgumentError`.
 """
 function solve_sweep(model::MaxwellModel, omegas; fields::Bool = false, solver = umfpack_solver)
     isempty(model.ports) && throw(ArgumentError("the model has no ports"))
     omegas = float.(collect(omegas))
+    any(iszero, omegas) && throw(
+        ArgumentError("a port sweep has no static (ω = 0) formulation: the ports and their excitations vanish there")
+    )
     any(data -> data isa WavePortData, model.ports) && !all(>(0), omegas) && throw(ArgumentError("wave ports need positive frequencies, got ω = $(omegas[findfirst(<=(0), omegas)])"))
     np = length(model.ports)
     S = zeros(ComplexF64, np, np, length(omegas))

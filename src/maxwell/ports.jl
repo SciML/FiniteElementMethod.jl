@@ -255,6 +255,9 @@ _excitation(model, data::WavePortData, ω) =
 # rather than a NaN matrix.
 function _check_not_at_cutoff(model, ω)
     for (j, data) in pairs(model.ports)
+        data isa LumpedPortData && iszero(ω) && throw(
+            ArgumentError("ω = 0 is not supported for lumped port $j: its excitation and loading vanish there and there is no static formulation; use a positive frequency")
+        )
         data isa WavePortData && iszero(ω) && throw(
             ArgumentError("ω = 0 is not supported for wave port $j: the amplitude factor sqrt(β/(ωμ)) of its S-parameter normalisation diverges there; use a positive frequency")
         )
