@@ -45,7 +45,7 @@ end
 # d sqrt(εc/μr) / dp for the material `m`, with εc = εr - iσ/(ωε0).
 function _abc_admittance_derivative(kind, m, ω, eps0)
     εc = m.eps_r - im * m.sigma / (ω * eps0)
-    y = _admittance(εc, m.mu_r)
+    y = _admittance(εc, m.mu_r, ω)
     kind === :mu_r && return -y / (2 * m.mu_r)
     dεc = kind === :eps_r ? 1.0 + 0.0im : kind === :eps_r_imag ? 1.0im : -im / (ω * eps0)
     return y / (2εc) * dεc
