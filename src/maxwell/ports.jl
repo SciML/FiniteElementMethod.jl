@@ -99,6 +99,14 @@ function tangential_mass(model, facetsets; weight = Returns(1.0))
     return _tangential_mass(model.dh, model.blocks.curlcurl, names, weight)
 end
 
+# sqrt(εc / μr) on the outgoing branch: the principal root, except for a negative real εc / μr (no loss), where it is
+# the limit from the lossy side, -i sqrt(|εc / μr|), so that the exterior field decays and the term is continuous
+# in the loss.
+function _admittance(εc, μr)
+    z = εc / μr
+    return imag(z) == 0 && real(z) < 0 ? -im * sqrt(-real(z)) : sqrt(z)
+end
+
 # First-order absorbing boundary n × (μr⁻¹ ∇ × E) = -i k0 ηr⁻¹ n × (n × E), with ηr⁻¹ = sqrt(εc / μr) and
 # εc = εr - iσ/(ωε0) of the adjacent cell: the term +i k0 L ηr⁻¹ ∮ (n × E)⋅(n × v) dS, one block per material.
 function _absorbing_terms(dh, pattern, names, cell_materials, mu0, eps0, L)
@@ -108,7 +116,7 @@ function _absorbing_terms(dh, pattern, names, cell_materials, mu0, eps0, L)
         # The coefficient is ω √εc with εc ~ 1/ω for a conductor, so it tends to 0 as ω → 0.
         MaxwellTerm(
             block,
-            ω -> iszero(ω) ? 0.0im : im * ω * sqrt(mu0 * eps0) * L * sqrt((m.eps_r - im * m.sigma / (ω * eps0)) / m.mu_r)
+            ω -> iszero(ω) ? 0.0im : im * ω * sqrt(mu0 * eps0) * L * _admittance(m.eps_r - im * m.sigma / (ω * eps0), m.mu_r)
         )
     end
 end
@@ -237,6 +245,9 @@ end
 # The propagation constants of all ports at ω. At exact cutoff β = 0, the wave impedance ωμ/β is infinite and the
 # power-wave scale of the S-parameters is 0/0, so it is an error rather than a NaN matrix.
 function _port_betas(model, ω)
+    ω > 0 || throw(
+        ArgumentError("ω = $ω is not supported for wave ports: the propagation constant and the S-parameter normalisation are defined for positive frequencies only, and a real system has S(-ω) = conj(S(ω))")
+    )
     β = [_propagation_constant(data, model.mu0 * model.eps0, float(ω)) for data in model.ports]
     j = findfirst(iszero, β)
     j === nothing || throw(
