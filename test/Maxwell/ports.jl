@@ -344,3 +344,38 @@ end
     end
     @test build(2.0, 1.5) isa MaxwellModel
 end
+
+@testset "a wave port conserves power in lossless single-mode structures" begin
+    walls = ["left", "right", "front", "back"]
+    ports = [WavePort(f; a_direction = (1, 0, 0)) for f in ("bottom", "top")]
+    function power(grid, materials = Dict{String, MaxwellMaterial}())
+        model = MaxwellModel(grid; materials, pec = walls, ports, eps0 = 1.0, mu0 = 1.0)
+        S = solve_sweep(model, [2.0]).S[:, :, 1]  # only TE10 propagates at ω = 2
+        @test S[1, 2] ≈ S[2, 1] atol = 1.0e-12
+        return sum(abs2, S[:, 1])
+    end
+    # A taper from width 2 to 3.
+    n = 2
+    taper = generate_grid(Tetrahedron, (2n, n, n), Vec(0.0, 0.0, 0.0), Vec(2.0, 0.5, 0.5))
+    for i in eachindex(taper.nodes)
+        x = taper.nodes[i].x
+        taper.nodes[i] = Node(Vec(x[1] * (1 + x[3]), x[2], x[3]))
+    end
+    @test power(taper) ≈ 1 atol = 1.0e-8
+    # A dielectric insert in a guide.
+    guide = generate_grid(Tetrahedron, (8, 4, 8), Vec(0.0, 0.0, 0.0), Vec(2.0, 1.0, 2.0))
+    addcellset!(guide, "insert", x -> x[1] <= 1 && 0.25 <= x[3] <= 1.75)
+    @test power(guide) ≈ 1 atol = 1.0e-8
+    @test power(guide, Dict("insert" => MaxwellMaterial(; eps_r = 4.0))) ≈ 1 atol = 1.0e-8
+    # A short inclusion next to the ports.
+    short = generate_grid(Tetrahedron, (6, 3, 4), Vec(0.0, 0.0, 0.0), Vec(2.0, 1.0, 1.0))
+    addcellset!(short, "load", x -> x[1] <= 1 + 1.0e-10 && 0.25 - 1.0e-10 <= x[3] <= 0.75 + 1.0e-10; all = true)
+    @test power(short, Dict("load" => MaxwellMaterial(; eps_r = 9.0))) ≈ 1 atol = 1.0e-8
+end
+
+@testset "frequencies that are not finite are rejected before any solve" begin
+    model = wr90(5.0, 10.0)
+    for ω in (NaN, Inf, -Inf)
+        @test_throws "finite positive frequencies" solve_sweep(model, [2π * 10.0e9, ω])
+    end
+end
