@@ -84,6 +84,16 @@ end
     @test all(isfinite, solve_sweep(model, [ωc * (1 + 1.0e-6)]).S)
 end
 
+@testset "PEC covering part of a port face is rejected" begin
+    n = (5, 3, 4)
+    grid = generate_grid(Tetrahedron, n, Vec(0.0, 0.0, 0.0), Vec(WR90_A, WR90_B, 10.0))
+    addfacetset!(grid, "patch", [first(Ferrite.getfacetset(grid, "bottom"))])
+    walls = ["left", "right", "front", "back"]
+    @test_throws "part of the face of port" MaxwellModel(
+        grid; pec = [walls; "patch"], ports = [WavePort("bottom"; a_direction = (1, 0, 0))], length_scale = 1.0e-3
+    )
+end
+
 @testset "evanescent TE10 below cutoff" begin
     len = 10.0
     model = wr90(2.0, len)
