@@ -301,8 +301,34 @@ end
 @testset "the absorbing operator is conjugate symmetric in ω" begin
     grid = generate_grid(Tetrahedron, (2, 2, 2))
     addcellset!(grid, "all", x -> true)
-    for material in (MaxwellMaterial(), MaxwellMaterial(; eps_r = -1.0), MaxwellMaterial(; eps_r = 2.0, mu_r = 1.5, sigma = 0.3))
+    for material in (MaxwellMaterial(), MaxwellMaterial(; eps_r = -1.0), MaxwellMaterial(; mu_r = -1.0), MaxwellMaterial(; eps_r = -1.0, mu_r = -1.0), MaxwellMaterial(; eps_r = 2.0, mu_r = 1.5, sigma = 0.3))
         model = MaxwellModel(grid; materials = Dict("all" => material), pec = ["front", "back"], absorbing = ["top"], eps0 = 1.0, mu0 = 1.0)
         @test maxwell_operator(model, -1.3).nzval ≈ conj.(maxwell_operator(model, 1.3).nzval)
     end
+end
+
+@testset "the lossless absorbing admittance is the lossy-side limit for every sign of eps_r, mu_r and ω" begin
+    admittance(eps_r, mu_r, ω, σ) = FiniteElementMethod._admittance(eps_r - im * σ / ω, mu_r, ω)
+    for (eps_r, mu_r, ω) in ((1.0, -1.0, 1.0), (1.0, -1.0, -1.0), (-1.0, 1.0, 1.0), (-1.0, 1.0, -1.0), (-1.0, -1.0, 1.0), (-1.0, -1.0, -1.0), (2.0, 1.5, 1.0), (2.0, 1.5, -1.0))
+        y = admittance(eps_r, mu_r, ω, 0.0)
+        @test y ≈ admittance(eps_r, mu_r, ω, 1.0e-12) atol = 1.0e-9
+        @test real(y) >= 0  # passive: the exterior wave carries power outwards or decays
+        @test y ≈ conj(admittance(eps_r, mu_r, -ω, 0.0))
+    end
+    # eps_r = 1, mu_r = -1: -E'' / mu_r - E = E'' - E = 1, E'(0) = 0 and the decaying exterior E'(1) = -E(1) give
+    # E(z) = -1 + exp(-1) cosh(z); the wrong sign would impose E'(1) = +E(1).
+    grid = generate_grid(Tetrahedron, (4, 4, 8), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0))
+    addcellset!(grid, "all", x -> true)
+    model = MaxwellModel(
+        grid; materials = Dict("all" => MaxwellMaterial(; mu_r = -1.0)), pec = ["front", "back"], absorbing = ["top"],
+        eps0 = 1.0, mu0 = 1.0
+    )
+    sol = solve_driven(model, 1.0, x -> (0.0, 1.0im, 0.0))
+    @test field_values(sol, [Vec(0.5, 0.5, 0.5)]).E[1][2] ≈ -1 + exp(-1) * cosh(0.5) atol = 0.015
+end
+
+@testset "wave-port operators reject non-positive frequencies like the sweeps" begin
+    model = wr90(5.0, 10.0)
+    @test_throws "positive frequencies" maxwell_operator(model, -2.0)
+    @test_throws "positive frequencies" solve_driven(model, -2.0, x -> (0.0, 1.0, 0.0))
 end
