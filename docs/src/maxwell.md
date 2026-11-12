@@ -70,7 +70,8 @@ current `I/w` along `direction`; its voltage is the sheet average of the line in
 `iωμ0 L/(w² Z0) g gᵀ` (`gᵢ = ∮ l̂⋅Nᵢ dS`) to the operator, and the driven port adds a 1 A current source in
 parallel, so `Sᵢⱼ = 2Vᵢ/sqrt(Z0ᵢZ0ⱼ) - δᵢⱼ`. Because the load, the source and the voltage use the same `g`,
 these circuit identities hold exactly for the discrete system: a lossless structure gives a unitary `S`.
-Wave and lumped ports can share one model and one sweep, both normalised to power waves.
+Wave and lumped ports can share one model and one sweep; lumped ports and propagating wave ports are
+normalised to power waves.
 
 ```julia
 using FiniteElementMethod, Ferrite

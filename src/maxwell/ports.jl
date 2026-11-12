@@ -242,12 +242,13 @@ end
 
 _excitation(model, data::WavePortData, ω) =
     (2im * _propagation_constant(data, model.mu0 * model.eps0, ω) * model.length_scale / data.mu_r) .* data.profile
-# The propagation constants of the wave ports at ω. At ω = 0 and at exact cutoff β = 0, the wave impedance ωμ/β is infinite and the
-# power-wave scale of the S-parameters is 0/0, so it is an error rather than a NaN matrix.
+# The S-parameter normalisation scales a wave port by sqrt(β/(ωμ)). At exact cutoff β = 0 the wave impedance ωμ/β is
+# infinite and the scale is 0/0; at ω = 0, β = -i kc and Z = ωμ/β is 0, and the scale diverges. Both are an error
+# rather than a NaN matrix.
 function _check_not_at_cutoff(model, ω)
     for (j, data) in pairs(model.ports)
         data isa WavePortData && iszero(ω) && throw(
-            ArgumentError("ω = 0 is below the TE10 cutoff of wave port $j, where its wave impedance is infinite and its S-parameters are undefined; use a positive frequency")
+            ArgumentError("ω = 0 is not supported for wave port $j: the amplitude factor sqrt(β/(ωμ)) of its S-parameter normalisation diverges there; use a positive frequency")
         )
         data isa WavePortData && iszero(_propagation_constant(data, model.mu0 * model.eps0, float(ω))) && throw(
             ArgumentError("ω = $ω is exactly the TE10 cutoff of wave port $j, where its wave impedance is infinite and its S-parameters are undefined; use a nearby frequency")
@@ -274,7 +275,8 @@ function port_excitations(model, ω::Real)
     return B
 end
 
-# Power waves (peak phasors, |a|²/2 watts) of a port for the excitation of `port_excitations`: the incident
+# Wave coefficients of a port for the excitation of `port_excitations`, power waves (peak phasors, |a|²/2 watts) for a
+# lumped port and a propagating wave port, generalized traveling-wave coefficients below cutoff: the incident
 # wave `a` when the port is driven and the outgoing wave `b` in the solution `u`, `driven` or not.
 function _power_waves(model, data::WavePortData, ω, u, driven::Bool)
     β = _propagation_constant(data, model.mu0 * model.eps0, ω)
@@ -298,8 +300,8 @@ The scattering matrix `Sᵢⱼ = bᵢ / aⱼ` from the solutions `U[:, j]` with 
 `bᵢ = (pᵢᵀuⱼ / Pᵢ - δᵢⱼ) sqrt(Pᵢ / Zᵢ) exp(iβᵢdᵢ)`, with `Pᵢ = ∮ e⋅e dS`, the TE10 wave impedance
 `Zᵢ = ωμ0μr / βᵢ` and the de-embedding distances `dᵢ`. A lumped port has `aⱼ = sqrt(Z0ⱼ) / 2` and
 `bᵢ = (2Vᵢ - Z0ᵢ δᵢⱼ) / (2 sqrt(Z0ᵢ))`, so between lumped ports `Sᵢⱼ = 2Vᵢ / sqrt(Z0ᵢ Z0ⱼ) - δᵢⱼ`. At exactly a wave port's cutoff `βᵢ = 0`, `Zᵢ` is
-infinite and the S-parameters are undefined, so this throws an `ArgumentError`; so does `ω = 0` with a wave port, whose
-`Zᵢ` is infinite below cutoff.
+infinite and the S-parameters are undefined, so this throws an `ArgumentError`; so does `ω = 0` with a wave port, where the
+normalisation factor `sqrt(βᵢ / (ωμ0μr))` diverges (`βᵢ = -iπ/(aL)` and `Zᵢ = 0` there).
 The wave coefficients are power waves for propagating ports only; below cutoff they are generalized traveling-wave
 coefficients (see [`WavePort`](@ref)).
 """

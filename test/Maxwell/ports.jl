@@ -259,8 +259,8 @@ end
 @testset "wave port S-parameters at zero frequency are rejected, not NaN" begin
     model = wr90(5.0, 10.0)
     U = zeros(ComplexF64, ndofs(model.dh), 2)
-    @test_throws "ω = 0" FiniteElementMethod.s_parameters(model, 0.0, U)
-    @test_throws "ω = 0" FiniteElementMethod.port_excitations(model, 0.0)
+    @test_throws "ω = 0 is not supported" FiniteElementMethod.s_parameters(model, 0.0, U)
+    @test_throws "ω = 0 is not supported" FiniteElementMethod.port_excitations(model, 0.0)
 end
 
 @testset "axial power of the incident mode: propagating ports carry it, evanescent ones do not" begin
