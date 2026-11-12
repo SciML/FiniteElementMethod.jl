@@ -36,7 +36,7 @@ that is a function of `ω`, so a frequency sweep only recombines nonzero values 
 time-domain equation `curl(ν curl E) + a₂ ∂ₜ²E + a₁ ∂ₜE + a₀ E = f` for a vector unknown `E` at the angular
 frequency `omega`, and `discretize` returns the complex `LinearProblem` that [`driven_problem`](@ref) builds
 for the equivalent `MaxwellModel` (in units with `ε0 = μ0 = 1`). The operator is written with [`curl`](@ref)
-and the perfect conductor with [`facet_normal`](@ref), which needs a PDEBase with facet normals.
+and the perfect conductor with [`facet_normal`](@ref).
 
 ```julia
 using FiniteElementMethod, Ferrite, ModelingToolkit, LinearAlgebra, LinearSolve

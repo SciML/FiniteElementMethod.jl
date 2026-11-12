@@ -16,22 +16,32 @@ function Ferrite.curl(F::AbstractVector, x::NTuple{3, Any})
     return [D[2](F[3]) - D[3](F[2]), D[3](F[1]) - D[1](F[3]), D[1](F[2]) - D[2](F[1])]
 end
 
+# The symbolic outward unit normal of a boundary piece, `n(d)` for its component `d`, until PDEBase provides one
+# (SciML/PDEBase.jl#164). It only builds a term: `_recognise_pec` reads it off the condition.
+struct PieceNormal{D <: DomainSets.Domain} <: SymbolicUtils.Operator
+    piece::D
+end
+Base.isequal(a::PieceNormal, b::PieceNormal) = isequal(a.piece, b.piece)
+Base.:(==)(a::PieceNormal, b::PieceNormal) = isequal(a, b)
+Base.hash(a::PieceNormal, h::UInt) = hash(a.piece, hash(PieceNormal, h))
+SymbolicUtils.isbinop(::PieceNormal) = false
+Base.show(io::IO, n::PieceNormal) = print(io, "n_", n.piece.name)
+
 """
     facet_normal(Γ::BoundaryPiece)
 
-The symbolic outward unit normal of the boundary piece `Γ`, `PDEBase.normal(Γ)`, for boundary conditions
-such as the perfect conductor `cross(facet_normal(Γ), [E(t, Γ)[c] for c in 1:3]) .~ 0`. It needs a PDEBase
-with facet normals (SciML/PDEBase.jl#164); the name avoids DomainSets' own exported `normal`.
+The symbolic outward unit normal of the boundary piece `Γ`, as a vector of its three components, for boundary
+conditions such as the perfect conductor `cross(facet_normal(Γ), [E(t, Γ)[c] for c in 1:3]) .~ 0`. It is
+`PDEBase.normal(Γ)` where PDEBase defines it (SciML/PDEBase.jl#164) and a term of this package otherwise; the
+name avoids DomainSets' own exported `normal`. The normal itself is read off the facets of the mesh.
 """
 function facet_normal(Γ::PDEBase.BoundaryPiece)
-    hasmethod(PDEBase.normal, Tuple{typeof(Γ)}) || throw(
-        ArgumentError("facet_normal needs a PDEBase with PDEBase.normal(Γ) for boundary pieces (SciML/PDEBase.jl#164)")
-    )
-    return PDEBase.normal(Γ)
+    hasmethod(PDEBase.normal, Tuple{typeof(Γ)}) && return PDEBase.normal(Γ)
+    return [Num(SymbolicUtils.term(PieceNormal(Γ), d; type = Real)) for d in 1:3]
 end
 
-# PDEBase's facet normal operator, absent before SciML/PDEBase.jl#164.
-const _FacetNormal = isdefined(PDEBase, :FacetNormal) ? getfield(PDEBase, :FacetNormal) : Nothing
+# PDEBase's facet normal operator, once it exists (SciML/PDEBase.jl#164).
+const _FacetNormal = isdefined(PDEBase, :FacetNormal) ? Union{PieceNormal, getfield(PDEBase, :FacetNormal)} : PieceNormal
 
 # The outward unit normal of every facet of the facet set `name`, with the facet.
 function _facet_normals(grid, name)
@@ -154,7 +164,7 @@ function _recognise_volume(an, s, fixed, xs)
     e0 === nothing || throw(ArgumentError("equation $e0 has neither a curl-curl nor a reaction term in E"))
     sort(comps) == 1:3 || throw(ArgumentError("the equations test the components $comps of E; write one equation per component"))
     for (x, sv) in points
-        nus, lambdas = zeros(3), zeros(3)
+        nus = zeros(3)
         for (e, q) in enumerate(unpack(x, sv))
             ce = comps[e]
             other = mod1(ce + 1, 3)
@@ -173,29 +183,63 @@ function _recognise_volume(an, s, fixed, xs)
             abs(α + β) > tol && throw(
                 ArgumentError("the second-order part of equation $e adds a component-wise Laplacian of E to curl(ν*curl(E)), which is not H(curl)-conforming; $_MAXWELL_FORM")
             )
-            # No first-order term is allowed, so only roundoff of the larger coefficients may pass: a 1e-10 tolerance
-            # would hide a first-order term of size 1 next to ν = 1e12.
-            tol1 = 10eps() * max(maximum(abs, q.B), maximum(abs, q.λU), 1.0e-300)
-            maximum(abs, q.dF) > tol1 && throw(ArgumentError("equation $e has a first-order term inside a derivative; $_MAXWELL_FORM"))
-            maximum(abs, q.dG) > tol1 && throw(
-                ArgumentError("equation $e has a first-order term in the derivatives of E, which curl(ν*curl(E)) does not have; $_MAXWELL_FORM")
-            )
-            # A coupling is judged against the zeroth-order coefficients, not against a larger second-order one.
-            maximum(abs, q.λU[[c for c in 1:3 if c != ce]]) > 1.0e-10 * maximum(abs, q.λU) && throw(
-                ArgumentError("the zeroth-order term of equation $e couples the components of E; the coefficients of E and its time derivatives must be scalars")
-            )
-            nus[e], lambdas[e] = β, q.λU[ce]
+            nus[e] = β
         end
-        for (name, v) in (("ν", nus), ("the coefficient of E", lambdas))
-            maximum(abs, v .- v[1]) <= 1.0e-10 * maximum(abs, v) || throw(
-                ArgumentError("$name differs between the component equations at x = $(Tuple(x)), so the medium is anisotropic; the coefficients must be scalars")
-            )
-        end
+        maximum(abs, nus .- nus[1]) <= 1.0e-10 * maximum(abs, nus) || throw(
+            ArgumentError("ν differs between the component equations at x = $(Tuple(x)), so the medium is anisotropic; the coefficients must be scalars")
+        )
     end
+    _check_lower_order(an, s, fixed, xs, dU, dG, dF, comps)
     ce = comps[1]
     nu, λ = B[1][mod1(ce + 1, 3), mod1(ce + 1, 3), ce], dU[1][ce]
     a = (a0 = substitute(λ, Dict(unwrap(x) => 0 for x in s)), a1 = Symbolics.derivative(λ, s[1]), a2 = Symbolics.derivative(λ, s[2]))
     return (; nu, a..., sources = sources[invperm(comps)])
+end
+
+# The terms of lower order than the curl-curl, each judged on its own, with exact symbolic zero tests rather than
+# tolerances relative to the other coefficients, which a large one would hide behind: there is no first-order term,
+# the coefficients of E, ∂ₜE and ∂ₜ²E of an equation do not couple the components, and each is the same scalar
+# function in every equation. Only roundoff of an expression of unit scale counts as zero beyond the symbolic test.
+function _check_lower_order(an, s, fixed, xs, dU, dG, dF, comps)
+    X = an.slots.X
+    # The indices of `exs` that are not zero.
+    function nonvanishing(exs)
+        exs = [substitute(ex, fixed) for ex in exs]
+        open = findall(ex -> !_iszero_expr(ex), exs)
+        isempty(open) && return open
+        f = Symbolics.build_function(exs[open], X...; expression = Val(false))[1]
+        big = falses(length(open))
+        for x in xs
+            big .|= abs.(_real_values(f(x...), "a coefficient")) .> 100eps()
+        end
+        return open[big]
+    end
+    for e in 1:3
+        isempty(nonvanishing(dF[e])) ||
+            throw(ArgumentError("equation $e has a first-order term inside a derivative; $_MAXWELL_FORM"))
+        isempty(nonvanishing(dG[e])) || throw(
+            ArgumentError("equation $e has a first-order term in the derivatives of E, which curl(ν*curl(E)) does not have; $_MAXWELL_FORM")
+        )
+    end
+    szero = Dict(unwrap(si) => 0 for si in s)
+    orders = (ex -> substitute(ex, szero), ex -> Symbolics.derivative(ex, s[1]), ex -> Symbolics.derivative(ex, s[2]))
+    for e in 1:3
+        off = [order(dU[e][c]) for c in setdiff(1:3, comps[e]) for order in orders]
+        isempty(nonvanishing(off)) || throw(
+            ArgumentError("the zeroth-order term of equation $e couples the components of E; the coefficients of E and its time derivatives must be scalars")
+        )
+    end
+    diag = [orders[k](dU[e][comps[e]]) for e in 1:3, k in 1:3]
+    f = Symbolics.build_function(substitute.(diag, Ref(fixed)), X...; expression = Val(false))[1]
+    for x in xs
+        v = reshape(_real_values(f(x...), "a coefficient"), 3, 3)
+        for k in 1:3, e in 2:3
+            abs(v[e, k] - v[1, k]) <= 100eps() * max(abs(v[e, k]), abs(v[1, k])) || throw(
+                ArgumentError("the coefficient of E differs between the component equations at x = $(Tuple(x)), so the medium is anisotropic; the coefficients must be scalars")
+            )
+        end
+    end
+    return nothing
 end
 
 # n × E = 0 conditions: each residual is linear in the traces and the normal, tangential (C n = 0) and of rank 2

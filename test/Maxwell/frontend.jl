@@ -1,14 +1,11 @@
 # The PDESystem front end of the Maxwell model, against the operator-level MaxwellModel as oracle. Tests with a
-# perfect-conductor condition need PDEBase's facet normal (SciML/PDEBase.jl#164) and are skipped without it.
+# perfect-conductor condition use `facet_normal`.
 using FiniteElementMethod, Ferrite, ModelingToolkit, DomainSets, LinearAlgebra, SparseArrays, Test
 using LinearSolve: LinearSolve  # the default solver of the LinearProblem; its exports clash with Ferrite's
 using SciMLBase: LinearProblem, discretize, solve, symbolic_discretize
 using FiniteElementMethod: PDEBase
 using Symbolics: expand_derivatives
 include(joinpath(@__DIR__, "..", "shared", "maxwell.jl"))
-
-const HAS_NORMAL = hasmethod(PDEBase.normal, Tuple{PDEBase.BoundaryPiece})
-HAS_NORMAL || @warn "PDEBase has no facet normal (SciML/PDEBase.jl#164); the perfect-conductor tests are skipped"
 
 @parameters x y z t
 @variables E(..)[1:3]
@@ -46,7 +43,7 @@ end
     @test curl === Ferrite.curl  # one curl with both packages loaded
     Ω = MeshDomain(unit_cube(1))
     @test maxwell_disc(Ω, 2).omega === 2.0
-    for bad in (0, -1.0, Inf, 1 + 2im)
+    for bad in (0, -1.0, Inf, 1 + 2im, big"1e-400", big"1e400")
         @test_throws ArgumentError("omega must be a positive, finite angular frequency in rad/s, got $(repr(bad))") maxwell_disc(Ω, bad)
     end
     @test_throws ArgumentError("omega needs the time variable of the time-domain PDESystem, as FEMDiscretization(Ω, t; omega)") FEMDiscretization(Ω; omega = 1.0, spaces = edge_space())
@@ -66,17 +63,17 @@ end
     piecewise(a, b) = ifelse(x < 0.5, a, b)
     sys = maxwell_system(
         Ω; nu = piecewise(1.0, 0.5), a2 = piecewise(1.0, 4.0), a1 = piecewise(0.0, 0.3), f = source([x, y, z]),
-        bcs = HAS_NORMAL ? pec_conditions(Ω) : Equation[]
+        bcs = pec_conditions(Ω)
     )
     prob = discretize(sys, maxwell_disc(Ω, ω))
     @test prob isa LinearProblem
     @test eltype(prob.A) == ComplexF64
     oracle = MaxwellModel(
-        grid; materials = Dict("left" => left, "right" => right), pec = HAS_NORMAL ? CUBE_FACES : String[], eps0 = 1.0, mu0 = 1.0
+        grid; materials = Dict("left" => left, "right" => right), pec = CUBE_FACES, eps0 = 1.0, mu0 = 1.0
     )
     # -iω J = f gives the oracle's load ∫ f ⋅ Nᵢ.
     expected = driven_problem(oracle, ω, p -> im .* source(p) ./ ω)
-    @info "Maxwell front end oracle (two materials)" relerr(prob.A, expected.A) relerr(prob.b, expected.b) pec = HAS_NORMAL
+    @info "Maxwell front end oracle (two materials)" relerr(prob.A, expected.A) relerr(prob.b, expected.b)
     @test relerr(prob.A, expected.A) <= 1.0e-12
     @test relerr(prob.b, expected.b) <= 1.0e-12
     u = prob.A \ prob.b
@@ -110,30 +107,26 @@ end
 end
 
 @testset "PEC cavity, manufactured solution" begin
-    if !HAS_NORMAL
-        @test_skip "needs PDEBase.normal (SciML/PDEBase.jl#164)"
-    else
-        εr, μr, ω = 2.0, 2.0, 1.0
-        Es = E_smooth([x, y, z])
-        f = expand_derivatives.(curl(curl(Es, X) ./ μr, X)) .- ω^2 * εr .* Es
-        errs = map((4, 8, 16)) do n
-            grid = unit_cube(n)
-            Ω = MeshDomain(grid)
-            sys = maxwell_system(Ω; nu = 1 / μr, a2 = εr, f, bcs = pec_conditions(Ω))
-            disc = maxwell_disc(Ω, ω)
-            (; model, omega) = maxwell_model(sys, disc)
-            sol = solve(discretize(sys, disc))
-            msol = MaxwellSolution(model, omega, sol.u)
-            p = Vec(0.4, 0.55, 0.6)
-            point = norm(collect(only(field_values(msol, [p]).E)) - E_smooth(p))
-            (; hcurl_errors(model, sol.u, E_smooth)..., point)
-        end
-        hs = 1 ./ (4, 8, 16)
-        @info "Maxwell front end MMS (PEC cavity)" errs rates(getfield.(errs, :hcurl), hs)
-        @test all(>=(0.9), rates(getfield.(errs, :hcurl), hs))
-        @test all(>=(0.9), rates(getfield.(errs, :l2), hs))
-        @test last(errs).point < first(errs).point / 2
+    εr, μr, ω = 2.0, 2.0, 1.0
+    Es = E_smooth([x, y, z])
+    f = expand_derivatives.(curl(curl(Es, X) ./ μr, X)) .- ω^2 * εr .* Es
+    errs = map((4, 8, 16)) do n
+        grid = unit_cube(n)
+        Ω = MeshDomain(grid)
+        sys = maxwell_system(Ω; nu = 1 / μr, a2 = εr, f, bcs = pec_conditions(Ω))
+        disc = maxwell_disc(Ω, ω)
+        (; model, omega) = maxwell_model(sys, disc)
+        sol = solve(discretize(sys, disc))
+        msol = MaxwellSolution(model, omega, sol.u)
+        p = Vec(0.4, 0.55, 0.6)
+        point = norm(collect(only(field_values(msol, [p]).E)) - E_smooth(p))
+        (; hcurl_errors(model, sol.u, E_smooth)..., point)
     end
+    hs = 1 ./ (4, 8, 16)
+    @info "Maxwell front end MMS (PEC cavity)" errs rates(getfield.(errs, :hcurl), hs)
+    @test all(>=(0.9), rates(getfield.(errs, :hcurl), hs))
+    @test all(>=(0.9), rates(getfield.(errs, :l2), hs))
+    @test last(errs).point < first(errs).point / 2
 end
 
 @testset "rejections of the volume equation" begin
@@ -202,6 +195,23 @@ end
         "the zeroth-order term of equation 1 couples the components of E; the coefficients of E and its time derivatives must be scalars"
 end
 
+@testset "a large reaction coefficient hides no other coefficient" begin
+    Ω = MeshDomain(unit_cube(2))
+    D = Differential.(collect(X))
+    rejected(ω; kw...) = message(() -> discretize(maxwell_system(Ω; kw...), maxwell_disc(Ω, ω))) != "no error"
+    # a0 - ω² a2 = 0: a first-order term must not vanish into the cancelling reaction and inertia.
+    @test rejected(2.0; a0 = 4.0e16, a2 = 1.0e16, extra = c -> D[1](Ev[c]))
+    # Couplings and component-dependent reactions next to a large a0 - ω² a2.
+    @test rejected(2.0; a0 = 4.0e12, a2 = 1.0e12, extra = c -> Ev[mod1(c + 1, 3)])
+    @test rejected(2.0; a0 = 4.0e12, a2 = 1.0e12, extra = c -> Dt(Ev[mod1(c + 1, 3)]))
+    @test rejected(2.0; a0 = 4.0e12, a2 = 1.0e12, extra = c -> c * Ev[c])
+    # Unequal inertia next to a large reaction.
+    @test rejected(2.0e6; a0 = 1.0e12, a2 = 1.0, extra = c -> (c - 1) * Dt(Dt(Ev[c])))
+    @test rejected(2.0e6; a0 = 1.0e12, a2 = 1.0, extra = c -> (c - 1) * Dt(Ev[c]))
+    # The same large coefficients with scalar lower-order terms are fine.
+    @test !rejected(2.0e6; a0 = 1.0e12, a2 = 2.0, a1 = 3.0)
+end
+
 @testset "rejections of the unknowns, spaces and mesh" begin
     Ω = MeshDomain(unit_cube(1))
     sys = maxwell_system(Ω)
@@ -256,36 +266,32 @@ end
 end
 
 @testset "rejections of the boundary conditions" begin
-    if !HAS_NORMAL
-        @test_skip "needs PDEBase.normal (SciML/PDEBase.jl#164)"
-    else
-        Ω = MeshDomain(unit_cube(1))
-        Γ = boundarypiece(Ω, :left)
-        n = facet_normal(Γ)
-        Etr = [E(t, Γ)[c] for c in 1:3]
-        pform = "write the perfect conductor as cross(facet_normal(Γ), [E(t, Γ)[c] for c in 1:3]) .~ 0"
-        bad(bcs) = discretize(maxwell_system(Ω; bcs), maxwell_disc(Ω, 1.0))
-        @test bad(cross(Etr, n) .~ 0) isa LinearProblem
-        # The facets of `left` have the normal -e₁, on which E₂ ~ 0 is tangential but E₁ ~ 0 is not.
-        @test occursin(r"^the conditions on left at facet \(\d+, \d+\) with normal \(-1\.0, -?0\.0, -?0\.0\) constrain the normal component of E", message(() -> bad([Etr[1] ~ 0])))
-        @test occursin(r"^the conditions on left at facet .* constrain 1 of the two tangential components of E", message(() -> bad([cross(n, Etr)[2] ~ 0])))
-        # (n × E)₁ = n₂E₃ - n₃E₂ vanishes identically where n = -e₁.
-        @test occursin(r"constrain 0 of the two tangential components", message(() -> bad([cross(n, Etr)[1] ~ 0])))
-        @test occursin(r"constrain 1 of the two tangential components", message(() -> bad([Etr[2] ~ 0])))
-        # Codex r3: a factor that vanishes on the actual normal of the piece is no conductor there.
-        Γt = boundarypiece(Ω, :top)
-        top(bcs) = discretize(maxwell_system(Ω; bcs), maxwell_disc(Ω, 1.0))
-        @test occursin(
-            r"^the conditions on top at facet .* constrain 0 of the two tangential components of E",
-            message(() -> top(facet_normal(Γt)[1] .* cross(facet_normal(Γt), [E(t, Γt)[c] for c in 1:3]) .~ 0))
-        )
-        @test top(facet_normal(Γt)[3] .* cross(facet_normal(Γt), [E(t, Γt)[c] for c in 1:3]) .~ 0) isa LinearProblem
-        @test_throws ArgumentError("the conditions on left prescribe a nonzero tangential field, which is not supported; $pform") bad(cross(n, Etr) .~ [1.0, 0, 0])
-        @test_throws ArgumentError("the conditions on left are nonlinear in E; $pform") bad(cross(n, Etr .^ 2) .~ 0)
-        @test_throws ArgumentError("the conditions on left prescribe a nonzero tangential field, which is not supported; $pform") bad(cross(n, Etr) .~ cross(n, [1.0, 0, 0]))
-        @test_throws ArgumentError("the conditions on left prescribe a nonzero tangential field, which is not supported; $pform") bad(cross(n, Etr) .+ [n[2] * n[3], 0, 0] .~ 0)
-        @test_throws ArgumentError bad([NormalDerivative(Γ)(Etr[1]) ~ 0])
-        other = MeshDomain(unit_cube(1))
-        @test_throws ArgumentError bad(cross(facet_normal(boundarypiece(other, :left)), [E(t, boundarypiece(other, :left))[c] for c in 1:3]) .~ 0)
-    end
+    Ω = MeshDomain(unit_cube(1))
+    Γ = boundarypiece(Ω, :left)
+    n = facet_normal(Γ)
+    Etr = [E(t, Γ)[c] for c in 1:3]
+    pform = "write the perfect conductor as cross(facet_normal(Γ), [E(t, Γ)[c] for c in 1:3]) .~ 0"
+    bad(bcs) = discretize(maxwell_system(Ω; bcs), maxwell_disc(Ω, 1.0))
+    @test bad(cross(Etr, n) .~ 0) isa LinearProblem
+    # The facets of `left` have the normal -e₁, on which E₂ ~ 0 is tangential but E₁ ~ 0 is not.
+    @test occursin(r"^the conditions on left at facet \(\d+, \d+\) with normal \(-1\.0, -?0\.0, -?0\.0\) constrain the normal component of E", message(() -> bad([Etr[1] ~ 0])))
+    @test occursin(r"^the conditions on left at facet .* constrain 1 of the two tangential components of E", message(() -> bad([cross(n, Etr)[2] ~ 0])))
+    # (n × E)₁ = n₂E₃ - n₃E₂ vanishes identically where n = -e₁.
+    @test occursin(r"constrain 0 of the two tangential components", message(() -> bad([cross(n, Etr)[1] ~ 0])))
+    @test occursin(r"constrain 1 of the two tangential components", message(() -> bad([Etr[2] ~ 0])))
+    # A factor that vanishes on the actual normal of the piece is no conductor there.
+    Γt = boundarypiece(Ω, :top)
+    top(bcs) = discretize(maxwell_system(Ω; bcs), maxwell_disc(Ω, 1.0))
+    @test occursin(
+        r"^the conditions on top at facet .* constrain 0 of the two tangential components of E",
+        message(() -> top(facet_normal(Γt)[1] .* cross(facet_normal(Γt), [E(t, Γt)[c] for c in 1:3]) .~ 0))
+    )
+    @test top(facet_normal(Γt)[3] .* cross(facet_normal(Γt), [E(t, Γt)[c] for c in 1:3]) .~ 0) isa LinearProblem
+    @test_throws ArgumentError("the conditions on left prescribe a nonzero tangential field, which is not supported; $pform") bad(cross(n, Etr) .~ [1.0, 0, 0])
+    @test_throws ArgumentError("the conditions on left are nonlinear in E; $pform") bad(cross(n, Etr .^ 2) .~ 0)
+    @test_throws ArgumentError("the conditions on left prescribe a nonzero tangential field, which is not supported; $pform") bad(cross(n, Etr) .~ cross(n, [1.0, 0, 0]))
+    @test_throws ArgumentError("the conditions on left prescribe a nonzero tangential field, which is not supported; $pform") bad(cross(n, Etr) .+ [n[2] * n[3], 0, 0] .~ 0)
+    @test_throws ArgumentError bad([NormalDerivative(Γ)(Etr[1]) ~ 0])
+    other = MeshDomain(unit_cube(1))
+    @test_throws ArgumentError bad(cross(facet_normal(boundarypiece(other, :left)), [E(t, boundarypiece(other, :left))[c] for c in 1:3]) .~ 0)
 end
