@@ -211,12 +211,12 @@ function _check_lower_order(an, s, fixed, xs, B, dU, dG, dF, comps)
         open = findall(ex -> !_iszero_expr(ex), exs)
         isempty(open) && return open
         parts = [vec(B[e]); [order(dU[e][c]) for c in 1:3, order in orders]]
-        f = Symbolics.build_function(
+        g = Symbolics.build_function(
             [exs[open]; [substitute(ex, fixed) for ex in parts]], X...; expression = Val(false)
         )[1]
         big = falses(length(open))
         for x in xs
-            v = abs.(_real_values(f(x...), "a coefficient"))
+            v = abs.(_real_values(g(x...), "a coefficient"))
             big .|= v[1:length(open)] .> 100eps() * maximum(v[(length(open) + 1):end])
         end
         return open[big]
