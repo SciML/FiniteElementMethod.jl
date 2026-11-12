@@ -201,6 +201,8 @@ end
     for (ω, a0) in ((1.0e-160, 1.0),)
         @test occursin("not representable", message(() -> discretize(maxwell_system(Ω; a0), maxwell_disc(Ω, ω))))
     end
+    # a0/ω² underflows to zero next to a dominant curl-curl term, so the reaction would be silently dropped.
+    @test occursin("not representable", message(() -> discretize(maxwell_system(Ω; nu = 1.0e-30, a2 = 0, a0 = 1.0e-20), maxwell_disc(Ω, 1.0e154))))
 end
 
 @testset "a large reaction coefficient hides no other coefficient" begin
