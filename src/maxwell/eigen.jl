@@ -91,19 +91,34 @@ function _gradient_projection(G, M)
     return x -> x - G * (FG \ (GtM * x))
 end
 
-# The columns of `vecs` made orthonormal in the bilinear form xᵀ M y (the eigenvectors of the complex symmetric
-# pencil are orthogonal in it), skipping any that are already in the span.
+# A deflation basis for `vecs`: columns `B` and `U` with Uᵀ B = I, so that x - B (Uᵀ x) removes the span of `vecs` from x.
+# The vectors are made orthogonal in the bilinear form xᵀ M y (the eigenvectors of the complex symmetric pencil are),
+# which may be indefinite (negative Re(εr)): they are scaled by sqrt(|s|) with s = bᵀ M b, not sqrt(s). A vector that is
+# nearly isotropic in the form (|s| tiny) is deflated in the Euclidean form instead, and one already in the span is
+# skipped.
 function _orthonormal_basis(vecs, M)
-    basis = Vector{eltype(first(vecs))}[]
+    T = promote_type(eltype(first(vecs)), eltype(M))
+    n = length(first(vecs))
+    B, U = Vector{T}[], Vector{T}[]
+    mscale = opnorm(M, 1)
     for v in vecs
-        w = copy(v)
-        for _ in 1:2, b in basis
-            w .-= b .* (transpose(b) * (M * w))
+        w = T.(v)
+        for _ in 1:2, (b, u) in zip(B, U)
+            w .-= b .* (transpose(u) * w)
         end
-        s = transpose(w) * (M * w)
-        abs(s) > 1.0e-10 * abs(transpose(v) * (M * v)) && push!(basis, w ./ sqrt(s))
+        norm(w) > 1.0e-10 * norm(v) || continue
+        sw = transpose(w) * (M * w)
+        if abs(sw) > 1.0e-10 * mscale * norm(w)^2
+            σ = sw / abs(sw)
+            b = w ./ sqrt(abs(sw))
+            push!(B, b)
+            push!(U, (M * b) ./ σ)
+        else
+            push!(B, w)
+            push!(U, w ./ (transpose(w) * w))
+        end
     end
-    return reduce(hcat, basis)
+    return isempty(B) ? (zeros(T, n, 0), zeros(T, n, 0)) : (reduce(hcat, B), reduce(hcat, U))
 end
 
 # The largest ratio between the εr (real part) or μr values of the cells.
@@ -257,8 +272,8 @@ function maxwell_eigenmodes(
         pool_dist = abs.(sqrt.(complex.(pool_λ) ./ scale) .- ωt)
         for pass in 1:nev
             d_nev = sort(pool_dist)[nev]
-            V = _orthonormal_basis(pool_vecs, M)
-            deflate(x) = x - V * (transpose(V) * (M * x))
+            B, U = _orthonormal_basis(pool_vecs, M)
+            deflate(x) = x - B * (transpose(U) * x)
             start = deflate(project(T.(cos.(2.399963 .* pass .* (1:length(free)) .^ 1.37 .+ pass))))
             λ_found, found, new, _ = search(x -> deflate(op(x)), start, 1, d_nev)
             dist_new = abs.(sqrt.(complex.(λ_found[new]) ./ scale) .- ωt)

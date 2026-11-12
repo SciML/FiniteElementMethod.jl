@@ -174,6 +174,45 @@ end
     @test maxwell_eigenmodes(model; nev = 3, target_frequency = 0.001, nullspace_tol).frequency ≈ [f(10.0), f(10.0), f(20.0)] rtol = 1.0e-8
 end
 
+@testset "restart deflation works with an indefinite mass form" begin
+    basis = FiniteElementMethod._orthonormal_basis
+    # A negative mass norm, an isotropic vector (zero norm), a vector already in the span and a complex one.
+    B, U = basis([[1.0]], reshape([-1.0], 1, 1))
+    @test transpose(U) * B ≈ [1.0;;]
+    M = [1.0 0.0; 0.0 -1.0]
+    B, U = basis([[1.0, 1.0], [2.0, 2.0], [1.0, -1.0]], M)
+    @test size(B, 2) == 2 && transpose(U) * B ≈ [1.0 0.0; 0.0 1.0]
+    @test B - B * (transpose(U) * B) ≈ zeros(2, 2)
+    B, U = basis([[1.0 + 0.5im, 2.0]], [-2.0 0.0; 0.0 1.0])
+    @test transpose(U) * B ≈ [1.0;;]
+    # Lossless negative-permittivity cavities: 63 cubes of eigenvalues 2..64 and one with εr = -200 (λ = -0.1).
+    cube = generate_grid(Tetrahedron, (1, 1, 1), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0))
+    ncell, nnode = length(cube.cells), length(cube.nodes)
+    epss = [-200.0; [20 / λ for λ in 2.0:64.0]]
+    ncubes = length(epss)
+    grid = Grid(
+        [Tetrahedron(ntuple(k -> c.nodes[k] + nnode * i, 4)) for i in 0:(ncubes - 1) for c in cube.cells],
+        [Node(Vec(x.x[1] + 2i, x.x[2], x.x[3])) for i in 0:(ncubes - 1) for x in cube.nodes],
+    )
+    rim = union(values(cube.facetsets)...)
+    addfacetset!(grid, "wall", Set(FacetIndex(ncell * i + f[1], f[2]) for i in 0:(ncubes - 1) for f in rim))
+    materials = Dict{String, MaxwellMaterial}()
+    for (i, eps_r) in enumerate(epss)
+        addcellset!(grid, "cube$i", Set(ncell * (i - 1) + c for c in 1:ncell))
+        materials["cube$i"] = MaxwellMaterial(; eps_r)
+    end
+    model = MaxwellModel(grid; materials, pec = ["wall"], eps0 = 1.0, mu0 = 1.0)
+    free = setdiff(1:ndofs(model.dh), FiniteElementMethod._pec_dofs(model.dh, model.grid, model.pec))
+    λ = real.(eigvals(Matrix(model.blocks.curlcurl[free, free]), Matrix(model.blocks.eps_real[free, free])))
+    ω = sqrt.(complex.(sort(λ)))
+    target = 0.01
+    nearest = sort(ω; by = x -> abs(x - 2π * target))
+    for nev in 1:3
+        found = maxwell_eigenmodes(model; nev, target_frequency = target)
+        @test sort(abs.(found.omega .- 2π * target)) ≈ sort(abs.(nearest[1:nev] .- 2π * target)) rtol = 1.0e-8
+    end
+end
+
 @testset "lossy: nearest in complex ω, and the candidate bound holds" begin
     # eps_r = 1 - 100i scales ω by 1/√(1 - 100i): the lowest modes sit at Re f = 0.0592, 0.0794, 0.0854 with
     # Im f about as large. From 0.0854 the nearest in complex ω is the first, and shift-invert ranks the first
