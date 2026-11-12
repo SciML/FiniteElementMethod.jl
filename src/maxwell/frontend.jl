@@ -370,7 +370,7 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
         (iszero(nu) || iszero(1 / nu) || !isfinite(1 / nu)) &&
             throw(ArgumentError("ν = $nu in cell $cell; ν = 1/μ must be nonzero" * (iszero(nu) ? "" : " and 1/ν must be representable")))
         eps_r = a2 - a0 / ω^2
-        isfinite(eps_r) || throw(
+        isfinite(eps_r) && (iszero(a0) || abs(a0 / ω^2) >= floatmin()) || throw(
             ArgumentError("ε = a₂ - a₀/ω² = $a2 - $a0/$ω^2 in cell $cell is not representable at this tiny ω; use a larger frequency or a MaxwellModel directly")
         )
         MaxwellMaterial(; eps_r, mu_r = 1 / nu, sigma = a1)
