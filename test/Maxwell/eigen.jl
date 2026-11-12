@@ -123,6 +123,29 @@ end
     end
 end
 
+@testset "repeated eigenvalues of disconnected cavities keep their multiplicity" begin
+    # 32 disconnected PEC unit cubes of one free edge each, with εr cycling through 1, 2, 4, 8: the eigenvalues are
+    # 20/εr, eight times each, and the nearest to a low target is 20/8 (0.25164606 Hz) eight times over.
+    cube = generate_grid(Tetrahedron, (1, 1, 1), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0))
+    ncell, nnode = length(cube.cells), length(cube.nodes)
+    nodes = [Node(Vec(x.x[1] + 2i, x.x[2], x.x[3])) for i in 0:31 for x in cube.nodes]
+    cells = [Tetrahedron(ntuple(k -> c.nodes[k] + nnode * i, 4)) for i in 0:31 for c in cube.cells]
+    grid = Grid(cells, nodes)
+    for (k, eps_r) in enumerate((1.0, 2.0, 4.0, 8.0))
+        addcellset!(grid, "eps$k", Set(ncell * i + c for i in 0:31 if mod(i, 4) == k - 1 for c in 1:ncell))
+    end
+    rim = union(values(cube.facetsets)...)  # the six outer faces of one cube
+    addfacetset!(grid, "wall", Set(FacetIndex(ncell * i + f[1], f[2]) for i in 0:31 for f in rim))
+    materials = Dict("eps$k" => MaxwellMaterial(; eps_r) for (k, eps_r) in enumerate((1.0, 2.0, 4.0, 8.0)))
+    model = MaxwellModel(grid; materials, pec = ["wall"], eps0 = 1.0, mu0 = 1.0)
+    f(eps_r) = sqrt(20 / eps_r) / 2π
+    found = maxwell_eigenmodes(model; nev = 2, target_frequency = 0.01)
+    @test found.frequency ≈ fill(f(8), 2) rtol = 1.0e-8
+    @test maxwell_eigenmodes(model; nev = 3, target_frequency = 0.01).frequency ≈ fill(f(8), 3) rtol = 1.0e-8
+    @test maxwell_eigenmodes(model; nev = 9, target_frequency = 0.01).frequency ≈ [fill(f(8), 8); f(4)] rtol = 1.0e-8
+    @test issorted(maxwell_eigenmodes(model; nev = 12, target_frequency = 0.01).frequency)
+end
+
 @testset "lossy: nearest in complex ω, and the candidate bound holds" begin
     # eps_r = 1 - 100i scales ω by 1/√(1 - 100i): the lowest modes sit at Re f = 0.0592, 0.0794, 0.0854 with
     # Im f about as large. From 0.0854 the nearest in complex ω is the first, and shift-invert ranks the first

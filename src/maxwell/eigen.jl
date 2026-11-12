@@ -91,6 +91,21 @@ function _gradient_projection(G, M)
     return x -> x - G * (FG \ (GtM * x))
 end
 
+# The columns of `vecs` made orthonormal in the bilinear form xᵀ M y (the eigenvectors of the complex symmetric
+# pencil are orthogonal in it), skipping any that are already in the span.
+function _orthonormal_basis(vecs, M)
+    basis = Vector{eltype(first(vecs))}[]
+    for v in vecs
+        w = copy(v)
+        for _ in 1:2, b in basis
+            w .-= b .* (transpose(b) * (M * w))
+        end
+        s = transpose(w) * (M * w)
+        abs(s) > 1.0e-10 * abs(transpose(v) * (M * v)) && push!(basis, w ./ sqrt(s))
+    end
+    return reduce(hcat, basis)
+end
+
 # The largest ratio between the εr (real part) or μr values of the cells.
 function _material_contrast(materials)
     spread(values) = maximum(values) / minimum(values)
@@ -111,7 +126,11 @@ facets, which are eliminated rather than constrained, with `λ = ω² μ0 ε0 L�
 shift-invert Arnoldi: one sparse LU of `Kc - σ Mε` at `σ` from `target_frequency` (complex when a material is
 lossy), with KrylovKit's `eigsolve` on `u ↦ (Kc - σ Mε) \\ (Mε u)`. Shift-invert ranks modes by distance in
 `λ ∝ ω²`, so it computes at least `2nev` candidates, enough to contain the `nev` nearest in `ω`, and returns
-those; `krylovdim` grows with the candidate count.
+those; `krylovdim` grows with the candidate count. A Krylov space from one starting vector holds one vector per
+distinct eigenvalue, so repeated eigenvalues (such as those of disconnected or symmetric parts) would be found once;
+after the first pass the search is therefore restarted from vectors M-orthogonal to everything found, until a restart
+finds nothing nearer than the current `nev`-th mode (at most `nev` restarts), which preserves multiplicities. The
+extra restart costs about one more Krylov solve with the same factorisation.
 
 Edge elements carry the gradients of the nodal hat functions as an exact `λ = 0` null space (one mode per node
 off the PEC facets, less one per connected part of the mesh without PEC), which would swamp the shift-invert for any target below the lowest physical mode. Every
@@ -198,8 +217,11 @@ function maxwell_eigenmodes(
     # |ω - ωt| ≤ d has |λ - σ| ≤ scale |ω - ωt| |ω + ωt| + |σ - scale ωt²| ≤ scale d (2ωt + d) + shift_offset,
     # complex ω included, so the candidates (all modes within the largest λ distance found) hold the nev nearest
     # in ω once it reaches that.
+    # The dense spectrum also holds the projected-out gradients (θ = 0): their eigenvectors lie in the range of G,
+    # which the projection annihilates, while every other eigenvector is left unchanged by it.
+    physical(v) = norm(project(v)) > norm(v) / 2
     howmany = 2nev
-    local λ, vecs, keep
+    local λ, vecs, keep, dense
     while true
         dim = max(krylovdim, howmany + 20)
         dense = dim >= length(free)
@@ -207,9 +229,6 @@ function maxwell_eigenmodes(
             _eigsolve(KrylovKitEigensolver(), op, x0, howmany; krylovdim = dim, tol, maxiter)
         λ = σ .+ 1 ./ θ
         lossy || (λ = real.(λ))
-        # The dense spectrum also holds the projected-out gradients (θ = 0): their eigenvectors lie in the range of
-        # G, which the projection annihilates, while every other eigenvector is left unchanged by it.
-        physical(v) = norm(project(v)) > norm(v) / 2
         keep = findall(j -> physical(vecs[j]) && abs(λ[j]) >= λ_null, eachindex(λ))
         dist = abs.(sqrt.(complex.(λ[keep]) ./ scale) .- ωt)
         keep = keep[sortperm(dist)]
@@ -221,6 +240,30 @@ function maxwell_eigenmodes(
         d = sort(dist)[nev]
         (dense || maximum(l -> abs(l - σ), λ[keep]) >= (2ωt + d) * d * scale + shift_offset) && break
         howmany = 2howmany
+    end
+    if !dense && length(keep) >= nev
+        # A Krylov space from one starting vector holds one vector per distinct eigenvalue, so a repeated eigenvalue
+        # may have been found once only. Restart from vectors M-orthogonal to everything found until a pass finds
+        # nothing nearer than the current nev-th mode: each pass can add one copy of a repeated eigenvalue.
+        pool_λ, pool_vecs = λ[keep], vecs[keep]
+        pool_dist = abs.(sqrt.(complex.(pool_λ) ./ scale) .- ωt)
+        for pass in 1:nev
+            d_nev = sort(pool_dist)[nev]
+            V = _orthonormal_basis(pool_vecs, M)
+            deflate(x) = x - V * (transpose(V) * (M * x))
+            start = deflate(project(T.(cos.(2.399963 .* pass .* (1:length(free)) .^ 1.37 .+ pass))))
+            θ, found = _eigsolve(KrylovKitEigensolver(), x -> deflate(op(x)), start, 2nev; krylovdim = max(krylovdim, 2nev + 20), tol, maxiter)
+            λ_found = σ .+ 1 ./ θ
+            lossy || (λ_found = real.(λ_found))
+            new = findall(j -> isfinite(λ_found[j]) && physical(found[j]) && abs(λ_found[j]) >= λ_null, eachindex(λ_found))
+            dist_new = abs.(sqrt.(complex.(λ_found[new]) ./ scale) .- ωt)
+            any(<(d_nev * (1 - 1.0e-8)), dist_new) || break
+            append!(pool_λ, λ_found[new])
+            append!(pool_vecs, found[new])
+            append!(pool_dist, dist_new)
+        end
+        λ, vecs = pool_λ, pool_vecs
+        keep = sortperm(pool_dist)
     end
     length(keep) < nev && @warn "maxwell_eigenmodes found $(length(keep)) of $nev modes"
     keep = keep[1:min(nev, end)]
