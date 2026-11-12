@@ -44,6 +44,7 @@ end
     Ω = MeshDomain(guide(10.0, 5.0))
     @test edge_disc(Ω, [port("bottom")]).ports == [port("bottom")]
     @test WavePort(boundarypiece(Ω, :bottom); a_direction = (1, 0, 0)) == port("bottom")
+    @test edge_disc(Ω, Iterators.Stateful([port("bottom")])).ports == [port("bottom")]
     @test_throws ArgumentError("ports belong to the frequency-domain Maxwell path; give the angular frequency omega") FEMDiscretization(Ω, t; ports = [port("bottom")])
     @test_throws ArgumentError("ports must be WavePorts, as ports = [WavePort(Γ; a_direction = (1, 0, 0))]; got [\"bottom\"]") edge_disc(Ω, ["bottom"])
     @test_throws ArgumentError("solve_sweep needs wave ports; give them as FEMDiscretization(Ω, t; omega, spaces, ports = [WavePort(...)])") solve_sweep(system(Ω, Equation[]), edge_disc(Ω), [K0])

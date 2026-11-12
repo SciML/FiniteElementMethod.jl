@@ -182,6 +182,7 @@ function FEMDiscretization(
     )
     _check_reserved(kwargs)
     _check_omega(omega, time, spaces, test_space, regions, ibp, pairing)
+    ports = collect(ports)
     all(p -> p isa WavePort, ports) ||
         throw(ArgumentError("ports must be WavePorts, as ports = [WavePort(Γ; a_direction = (1, 0, 0))]; got $(repr(ports))"))
     omega === nothing && !isempty(ports) &&
