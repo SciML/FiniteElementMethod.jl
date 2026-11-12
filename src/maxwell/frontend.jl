@@ -496,7 +496,7 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
     ω = disc.omega
     materials = map(enumerate(cells)) do (cell, c)
         eps_r = c.a2 - c.a0 / ω^2
-        isfinite(eps_r) || throw(
+        isfinite(eps_r) && (iszero(c.a0) || abs(c.a0 / ω^2) >= floatmin()) || throw(
             ArgumentError("ε = a₂ - a₀/ω² = $(c.a2) - $(c.a0)/$ω^2 in cell $cell is not representable at this tiny ω; use a larger frequency or a MaxwellModel directly")
         )
         MaxwellMaterial(; eps_r, mu_r = 1 / c.nu, sigma = c.a1)
