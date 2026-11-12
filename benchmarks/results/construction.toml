@@ -2,17 +2,17 @@ benchmark = "(c) problem construction time, numeric path against ModelingToolkit
 description = "discretize(pdesys, FEMDiscretization(Ω, t)) for a P1 heat equation with Dirichlet conditions, minimum of 3 calls after a first call"
 
 [cold_first_call]
-seconds = 21.529622717
+seconds = 23.103324956
 unknowns = 2500
 
 [environment]
-cpu = "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S"
-cpu_threads = 32
-date = "2026-11-05T19:32:45.373Z"
-git_sha = "d973585c8462cf3bf7db85cf851718bc9ff84943"
-julia = "1.12.1"
+cpu = "AMD EPYC 9V45 96-Core Processor"
+cpu_threads = 4
+date = "2026-11-09T04:22:20.393Z"
+git_sha = "e8e9757c6277a28504b643787288eaf0f637c54b"
+julia = "1.13.3"
 julia_threads = 1
-origin = "local run, not CI"
+origin = "GitHub Actions run 42560107678 (Linux, shared runner)"
 os = "Linux x86_64-linux-gnu"
 
     [environment.packages]
@@ -20,13 +20,13 @@ os = "Linux x86_64-linux-gnu"
     DomainSets = "0.8.3"
     Ferrite = "1.7.0"
     FiniteElementMethod = "0.1.0 (path, see git_sha)"
-    LinearAlgebra = "1.12.0"
+    LinearAlgebra = "1.13.0"
     MethodOfLines = "1.6.0"
     ModelingToolkit = "11.46.1"
     OrdinaryDiffEqBDF = "2.4.14"
     PDEBase = "0.1.41"
     PDESystemLibrary = "0.1.11"
-    Pkg = "1.12.0"
+    Pkg = "1.13.0"
     Printf = "1.11.0"
     SciMLBase = "3.58.0"
     Symbolics = "7.48.0"
@@ -39,8 +39,8 @@ status = "not available today: codegen = :mtk is reserved until the upstream blo
 upstream_blockers = ["ModelingToolkit #5121", "ModelingToolkit #5312", "ModelingToolkit #5327", "ModelingToolkit #5325", "ModelingToolkit #5328", "SciMLBase #1602"]
 
 [[rows]]
-numeric_s = 0.017830579
+numeric_s = 0.024847059
 unknowns = 2500
 [[rows]]
-numeric_s = 0.092028731
+numeric_s = 0.083955302
 unknowns = 10000

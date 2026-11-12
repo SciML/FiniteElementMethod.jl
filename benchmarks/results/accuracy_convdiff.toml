@@ -4,13 +4,13 @@ fem_solver = "DFBDF(nlsolve = NLNewton(new_W_dt_cutoff = 0)) on the DAEProblem f
 mol_solver = "DFBDF() on the DAEProblem from MethodOfLines; reltol = 1.0e-9, abstol = 1.0e-11"
 
 [environment]
-cpu = "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S"
-cpu_threads = 32
-date = "2026-11-05T19:31:57.432Z"
-git_sha = "d973585c8462cf3bf7db85cf851718bc9ff84943"
-julia = "1.12.1"
+cpu = "AMD EPYC 9V45 96-Core Processor"
+cpu_threads = 4
+date = "2026-11-09T04:21:29.485Z"
+git_sha = "e8e9757c6277a28504b643787288eaf0f637c54b"
+julia = "1.13.3"
 julia_threads = 1
-origin = "local run, not CI"
+origin = "GitHub Actions run 42560107678 (Linux, shared runner)"
 os = "Linux x86_64-linux-gnu"
 
     [environment.packages]
@@ -18,13 +18,13 @@ os = "Linux x86_64-linux-gnu"
     DomainSets = "0.8.3"
     Ferrite = "1.7.0"
     FiniteElementMethod = "0.1.0 (path, see git_sha)"
-    LinearAlgebra = "1.12.0"
+    LinearAlgebra = "1.13.0"
     MethodOfLines = "1.6.0"
     ModelingToolkit = "11.46.1"
     OrdinaryDiffEqBDF = "2.4.14"
     PDEBase = "0.1.41"
     PDESystemLibrary = "0.1.11"
-    Pkg = "1.12.0"
+    Pkg = "1.13.0"
     Printf = "1.11.0"
     SciMLBase = "3.58.0"
     Symbolics = "7.48.0"
@@ -32,33 +32,33 @@ os = "Linux x86_64-linux-gnu"
 
 [[rows]]
 cells = 16
-fem_error = 0.0028721518407403
+fem_error = 0.002872151840407844
 fem_ndofs = 17
 fem_rate = nan
-mol_error = 0.047520850885127364
+mol_error = 0.04752085088113972
 mol_ndofs = 17
 mol_rate = nan
 [[rows]]
 cells = 32
-fem_error = 0.0007117829922109742
+fem_error = 0.0007117829916007956
 fem_ndofs = 33
-fem_rate = 2.0126226557648152
-mol_error = 0.025378268127156156
+fem_rate = 2.012622656834577
+mol_error = 0.025378268127186687
 mol_ndofs = 33
-mol_rate = 0.9049670489345625
+mol_rate = 0.9049670488117652
 [[rows]]
 cells = 64
-fem_error = 0.0001775604447812884
+fem_error = 0.0001775604450227064
 fem_ndofs = 65
-fem_rate = 2.003127232930541
-mol_error = 0.01314611851901637
+fem_rate = 2.003127229732242
+mol_error = 0.013146118522923522
 mol_ndofs = 65
-mol_rate = 0.9489567227696004
+mol_rate = 0.9489567223425532
 [[rows]]
 cells = 128
-fem_error = 4.43840318951616e-5
+fem_error = 4.438403154599646e-5
 fem_ndofs = 129
-fem_rate = 2.0001975930355846
-mol_error = 0.0066941791894175595
+fem_rate = 2.000197606346679
+mol_error = 0.006694179189436156
 mol_ndofs = 129
-mol_rate = 0.973657822223135
+mol_rate = 0.9736578226479101
