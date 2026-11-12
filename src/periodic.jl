@@ -46,7 +46,7 @@ difference of their centroids and each node of one must have a node of the other
 an `ArgumentError` names both pieces. A master is a `prescribed` (Dirichlet) dof of its class if it has one, else
 its lowest dof; prescribed dofs are never mirrors.
 """
-function periodic_ties(grid, dh, nodes, periodic, prescribed)
+function periodic_ties(grid, dh, nodes, periodic, prescribed; dirichlet = Dict{Int, Any}(), times = (0.0,))
     coords = [collect(Float64, Tuple(x)) for x in nodes]
     lo = reduce((a, b) -> min.(a, b), coords)
     hi = reduce((a, b) -> max.(a, b), coords)
@@ -84,11 +84,33 @@ function periodic_ties(grid, dh, nodes, periodic, prescribed)
     for members in values(classes)
         length(members) > 1 || continue
         master = members[something(findfirst(d -> isprescribed[d], members), 1)]
+        _check_dirichlet_agree(filter(d -> isprescribed[d], members), nodes, dirichlet, times, periodic)
         for d in members
             d == master || isprescribed[d] || push!(ties, d => master)
         end
     end
     return sort!(ties)
+end
+
+# Prescribed dofs of one periodic class are one value: `dirichlet` maps a prescribed dof to `(piece, g)`, and `g` is
+# compared at the `times` (just `g(x)` for data that do not take a time).
+function _check_dirichlet_agree(members, nodes, dirichlet, times, periodic)
+    length(members) > 1 || return nothing
+    value(d, t) = (g = last(dirichlet[d]); hasmethod(g, Tuple{typeof(nodes[d]), Float64}) ? g(nodes[d], t) : g(nodes[d]))
+    first_dof = first(members)
+    for d in members[2:end], t in times
+        a, b = value(first_dof, t), value(d, t)
+        abs(a - b) <= 1.0e-8 * max(1.0, abs(a), abs(b)) && continue
+        pairs = join(("Γ_$pa ~ Γ_$pb" for (_, pa, pb) in periodic), ", ")
+        throw(
+            ArgumentError(
+                "the Dirichlet data of periodic pieces ($pairs) disagree: the nodes at $(_tuple_str(collect(Float64, Tuple(nodes[first_dof])))) " *
+                    "and $(_tuple_str(collect(Float64, Tuple(nodes[d])))) are the same node of the periodic map, but Γ_$(first(dirichlet[first_dof])) " *
+                    "prescribes $a and Γ_$(first(dirichlet[d])) prescribes $b at t = $t"
+            )
+        )
+    end
+    return nothing
 end
 
 # The tied rows whose residual is summed into the master's row: those whose master is not prescribed.

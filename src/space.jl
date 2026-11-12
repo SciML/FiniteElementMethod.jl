@@ -6,7 +6,7 @@ The Ferrite discrete space of a mesh discretization (spec §6.2-6.4). `fields` i
 block of the global dof vector, in declaration order. `dirichlet` is a collection of
 `(field, facetset_name, g)` with `g(x, t)`. `periodic` is a collection of `(field, facetset_a, facetset_b)`
 that identify the dofs of `field` on two facet sets that are translates of each other (see `periodic_ties`).
-`quadrature` is the quadrature order shared by every field,
+`tend` is the end time, with `t0` the range over which the Dirichlet data of a periodic class are checked for agreement. `quadrature` is the quadrature order shared by every field,
 `2p` for the highest Lagrange order `p` by default (spec §5.6). The constraint handler is first
 updated at `t0`, the initial time, since Dirichlet data need not be defined before it.
 
@@ -40,7 +40,7 @@ _order(::Ferrite.Interpolation{shape, order}) where {shape, order} = order
 
 function FEMSpace(
         grid::Ferrite.Grid, fields; dirichlet = (), periodic = (), quadrature::Union{Nothing, Int} = nothing,
-        t0::Real = 0.0, regions = Dict(), hessians::Bool = false
+        t0::Real = 0.0, tend::Real = t0, regions = Dict(), hessians::Bool = false
     )
     names = Symbol[first(f) for f in fields]
     ips = Tuple(last(f) for f in fields)
@@ -84,8 +84,16 @@ function FEMSpace(
     facetvalues = NamedTuple{key}(map(ip -> Ferrite.FacetValues(fqr, ip, ip_geo), ips))
     ranges = NamedTuple{key}(_global_ranges(dh, names))
     pieces = Dict(Symbol(name) => name for name in keys(grid.facetsets))
+    owner = Dict{Int, Any}()
+    for (field, set, g) in dirichlet, d in _piece_dofs(dh, Symbol(field), grid, set)
+        owner[d] = (set, g)
+    end
+    times = range(t0, tend; length = 5)
     ties = isempty(periodic) ? Pair{Int, Int}[] :
-        periodic_ties(grid, dh, _dof_coordinates(grid, dh, names), [(Symbol(f), a, b) for (f, a, b) in periodic], ch.prescribed_dofs)
+        periodic_ties(
+            grid, dh, _dof_coordinates(grid, dh, names), [(Symbol(f), a, b) for (f, a, b) in periodic], ch.prescribed_dofs;
+            dirichlet = owner, times
+        )
     pattern = extend_pattern(Ferrite.allocate_matrix(dh, ch), ties, ch.prescribed_dofs)
     return FEMSpace(grid, dh, ch, names, cellvalues, facetvalues, ranges, pieces, pattern, zeros(Ferrite.ndofs(dh)), ties)
 end

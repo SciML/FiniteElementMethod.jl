@@ -216,7 +216,7 @@ function _parameter_values(pdesys, ctx)
     end
 end
 
-function _space(disc, ctx, analysis, dirichlet, periodic, pvals, t0)
+function _space(disc, ctx, analysis, dirichlet, periodic, pvals, t0, tend)
     grid = disc.domain.mesh
     shape = Ferrite.getrefshape(Ferrite.getcelltype(grid))
     names = Symbol[nameof(op) for op in ctx.ops]
@@ -242,7 +242,7 @@ function _space(disc, ctx, analysis, dirichlet, periodic, pvals, t0)
     end
     pairs = [(names[f], String(Γa.name), String(Γb.name)) for (f, Γa, Γb) in periodic]
     space = FEMSpace(
-        grid, names .=> ips; dirichlet = bcs, periodic = pairs, quadrature = disc.quadrature, t0, regions,
+        grid, names .=> ips; dirichlet = bcs, periodic = pairs, quadrature = disc.quadrature, t0, tend, regions,
         hessians = disc.test_space isa SUPG
     )
     return space, names, ips
@@ -422,7 +422,7 @@ function _lower(pdesys, disc::FEMDiscretization)
     pvals = _parameter_values(sys, ctx)
     dirichlet = emit_dirichlet(an)
     t0, t1 = steady ? (0.0, 0.0) : v.intervals[v.time]
-    space, names, ips = _space(disc, ctx, an, dirichlet, periodic, pvals, t0)
+    space, names, ips = _space(disc, ctx, an, dirichlet, periodic, pvals, t0, t1)
     _check_boundary_conditions(disc, an, ctx, periodic)
     timedep = findfirst(bc -> _depends(bc.g, [an.slots.T]), an.essential)
     disc.dirichlet === :eliminate && timedep !== nothing && throw(

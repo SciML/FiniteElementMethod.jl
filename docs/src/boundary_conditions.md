@@ -153,9 +153,18 @@ Taylor–Hood pair of a Navier–Stokes system, in the time-dependent and steady
 For a fully periodic box write one pair per direction. A corner node belongs to several pairs;
 the nodes of all pairs of a field are collected into classes of equal nodes, and each class keeps
 one master. Where a periodic piece meets a Dirichlet piece, the class contains a prescribed node
-and that node is the master, so the Dirichlet value holds at the shared corner.
+and that node is the master, so the Dirichlet value holds at the shared corner. If a class holds more than one
+prescribed node (a Dirichlet piece touching both ends of a periodic pair), their data must agree, at the initial time
+and at four further times of the time interval; otherwise `discretize` throws an `ArgumentError` naming the periodic pieces,
+the nodes and the two values.
 
 ```julia
+using FiniteElementMethod, ModelingToolkit, DomainSets, OrdinaryDiffEqBDF
+using Ferrite: generate_grid, Triangle, Vec
+using ModelingToolkit: t_nounits as t
+@variables x y u(..)
+Dt, Dx, Dy = Differential(t), Differential(x), Differential(y)
+
 Ω = MeshDomain(generate_grid(Triangle, (16, 16), Vec(0.0, 0.0), Vec(1.0, 1.0)))
 left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
 @named pdesys = PDESystem(

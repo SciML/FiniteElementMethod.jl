@@ -255,3 +255,27 @@ end
     end
     @test all(observed_rate(errors, 1 ./ ns) .> 1.7)
 end
+
+# PDE:    the 2D heat equation on the unit square, t in (0, 0.2), 4 x 4 triangle pairs
+# BCs:    periodic left and right; Dirichlet data on bottom and top whose corners are shared through the periodic map
+# Shows:  Dirichlet data that agree at the two ends of a periodic class are imposed and the solution is periodic; data that
+#         differ (at any time of the interval) are an error naming the pieces, the nodes and the two values.
+@testset "Dirichlet data on the corners of a periodic class must agree" begin
+    Ω = unit_square(Triangle, 4)
+    left, right, bottom, top = sides(Ω)
+    ic = u(0, x, y) ~ 1
+    build(bcs) = begin
+        @named pdesys = PDESystem([heat], bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.2)], [t, x, y], [u(t, x, y)], [])
+        discretize(pdesys, FEMDiscretization(Ω, t))
+    end
+    sol = solve(build([u(t, left) ~ u(t, right), u(t, bottom) ~ 1, u(t, top) ~ 1, ic]), DFBDF(); abstol = 1.0e-10, reltol = 1.0e-10)
+    edge = collect(range(0.0, 1.0; length = 5))
+    @test sol(0.2, [0.0], edge; dv = u(t, x, y)) ≈ sol(0.2, [1.0], edge; dv = u(t, x, y)) atol = 1.0e-12
+    @test sol(0.2, [0.0, 1.0], [0.0, 1.0]; dv = u(t, x, y)) ≈ ones(2, 2) atol = 1.0e-12
+    # Time-dependent data that agree: the same function of t on both corners.
+    @test build([u(t, left) ~ u(t, right), u(t, bottom) ~ 1 + t, u(t, top) ~ 1 + t, ic]) isa SciMLBase.DAEProblem
+    @test_throws "the Dirichlet data of periodic pieces (Γ_left ~ Γ_right) disagree" build([u(t, left) ~ u(t, right), u(t, bottom) ~ x, u(t, top) ~ 0, ic])
+    @test_throws "Γ_bottom prescribes 0.0 and Γ_bottom prescribes 1.0" build([u(t, left) ~ u(t, right), u(t, bottom) ~ x, u(t, top) ~ 0, ic])
+    # Data that agree at t = 0 and differ later.
+    @test_throws "disagree" build([u(t, left) ~ u(t, right), u(t, bottom) ~ t * x, u(t, top) ~ 0, ic])
+end
