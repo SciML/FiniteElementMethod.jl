@@ -124,6 +124,15 @@ end
     @test occursin("are not n × (ν curl E) = -sqrt(ε/μ) n × (n × ∂ₜE) of the adjacent cell", message(() -> si(1)))
 end
 
+@testset "a constraint added to the absorbing condition is seen at a large frequency" begin
+    Ω = MeshDomain(guide(10.0, 5.0))
+    Γ = boundarypiece(Ω, :top)
+    Eb = trace(Γ)
+    bcs = [pec(Ω, WALLS); abc(Γ); Eb[3] ~ 0]
+    @test occursin("independent equations", message(() -> discretize(system(Ω, bcs), edge_disc(Ω; omega = 1.0e12))))
+    @test occursin("independent equations", message(() -> discretize(system(Ω, bcs), edge_disc(Ω; omega = 1.0))))
+end
+
 @testset "rejections of absorbing conditions and ports" begin
     grid = guide(10.0, 5.0)
     addfacetset!(grid, "lid", x -> x[3] ≈ 10.0)  # the facets of top again

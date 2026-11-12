@@ -195,6 +195,13 @@ end
         "the zeroth-order term of equation 1 couples the components of E; the coefficients of E and its time derivatives must be scalars"
 end
 
+@testset "a frequency too small for the reaction coefficient is rejected, not turned into NaN" begin
+    Ω = MeshDomain(unit_cube(1))
+    for (ω, a0) in ((1.0e-200, 0.0), (1.0e-160, 1.0))
+        @test occursin("not representable", message(() -> discretize(maxwell_system(Ω; a0), maxwell_disc(Ω, ω))))
+    end
+end
+
 @testset "a large reaction coefficient hides no other coefficient" begin
     Ω = MeshDomain(unit_cube(2))
     D = Differential.(collect(X))

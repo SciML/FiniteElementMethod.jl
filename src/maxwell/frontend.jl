@@ -289,8 +289,12 @@ function _absorbing_target(n, ν, c)
     )
 end
 
-# An orthonormal basis of the row space of M, as rows.
+# An orthonormal basis of the row space of M, as rows. The rows are scaled to unit length first (rows below 1e-12 of
+# the longest are roundoff of a vanishing one and are dropped), so that a row of large coefficients cannot hide an
+# independent row of small ones from the relative singular value threshold.
 function _rowspace(M)
+    lengths = norm.(eachrow(M))
+    M = M[lengths .> 1.0e-12 * maximum(lengths; init = 0.0), :] ./ lengths[lengths .> 1.0e-12 * maximum(lengths; init = 0.0)]
     F = svd(M)
     return F.Vt[1:count(>(1.0e-10 * maximum(F.S; init = 0.0)), F.S), :]
 end
@@ -480,7 +484,13 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
         end
     end
     ω = disc.omega
-    materials = [MaxwellMaterial(; eps_r = c.a2 - c.a0 / ω^2, mu_r = 1 / c.nu, sigma = c.a1) for c in cells]
+    materials = map(enumerate(cells)) do (cell, c)
+        eps_r = c.a2 - c.a0 / ω^2
+        isfinite(eps_r) || throw(
+            ArgumentError("ε = a₂ - a₀/ω² = $(c.a2) - $(c.a0)/$ω^2 in cell $cell is not representable at this tiny ω; use a larger frequency or a MaxwellModel directly")
+        )
+        MaxwellMaterial(; eps_r, mu_r = 1 / c.nu, sigma = c.a1)
+    end
     model = MaxwellModel(
         grid; materials, pec, absorbing, ports, eps0 = 1.0, mu0 = 1.0, length_scale = 1.0,
         quadrature = something(disc.quadrature, 2),
