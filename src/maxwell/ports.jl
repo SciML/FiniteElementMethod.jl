@@ -15,6 +15,11 @@ in-plane unit vector perpendicular to it. By default `ê` is `n × â` with its 
 Cartesian component is positive, which gives both ends of a straight guide the same polarisation; pass
 `e_direction` to fix it explicitly. `deembed` moves the reference plane of the port a distance (in mesh units)
 from the port face into the device.
+
+Above cutoff the wave coefficients are power waves: the incident mode carries real axial power, and a lossless
+structure with only propagating ports has a unitary `S`. Below cutoff (`β = -iα`) the mode is evanescent and
+carries no real axial power, so the coefficients are generalized traveling-wave coefficients, normalised the same
+way and supported, but without an individual incident or outgoing power; `S` is then not power conserving.
 """
 struct WavePort
     facetset::String
@@ -295,6 +300,8 @@ The scattering matrix `Sᵢⱼ = bᵢ / aⱼ` from the solutions `U[:, j]` with 
 `bᵢ = (2Vᵢ - Z0ᵢ δᵢⱼ) / (2 sqrt(Z0ᵢ))`, so between lumped ports `Sᵢⱼ = 2Vᵢ / sqrt(Z0ᵢ Z0ⱼ) - δᵢⱼ`. At exactly a wave port's cutoff `βᵢ = 0`, `Zᵢ` is
 infinite and the S-parameters are undefined, so this throws an `ArgumentError`; so does `ω = 0` with a wave port, whose
 `Zᵢ` is infinite below cutoff.
+The wave coefficients are power waves for propagating ports only; below cutoff they are generalized traveling-wave
+coefficients (see [`WavePort`](@ref)).
 """
 function s_parameters(model, ω::Real, U::AbstractMatrix)
     ω = float(ω)
