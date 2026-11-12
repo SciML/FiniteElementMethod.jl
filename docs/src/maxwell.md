@@ -58,8 +58,9 @@ are then generalized traveling-wave coefficients with the same normalisation, st
 individual incident or outgoing power, and `S` is not power conserving. Wave ports need positive frequencies; a
 zero or negative `ω` is rejected, since a real system has `S(-ω) = conj(S(ω))`.
 
-A port must lie in a lossless material: a complex `eps_r` or a nonzero conductivity at a port is rejected, because the
-power-wave normalisation above holds for a real wave impedance. Put loss behind the port, not in its face, and a
+A port must lie in an ordinary passive material: a complex `eps_r`, a nonzero conductivity, a non-positive `eps_r`
+or a non-positive `mu_r` at a port is rejected, because the power-wave normalisation above holds for a real wave
+impedance and the outward power of the TE10 mode is `Re(β/μr) > 0` only for positive `μr` and `εr`. Put loss behind the port, not in its face, and a
 facet cannot belong to two ports or to both a port and an `absorbing` set.
 
 ## Lumped ports
