@@ -217,6 +217,7 @@ end
     @test rejected(2.0e6; a0 = 1.0e12, a2 = 1.0, extra = c -> (c - 1) * Dt(Ev[c]))
     # Scaling the whole equation changes nothing: a small coupling next to small coefficients is still a coupling.
     @test rejected(1.0; a2 = 1.0e-16, nu = 1.0e-16, extra = c -> 1.0e-16 * Ev[mod1(c + 1, 3)])
+    @test rejected(1.0e8; a2 = 1.0e-16, extra = c -> 1.0e-16 * Dt(Dt(Ev[mod1(c + 1, 3)])))
     # The same large coefficients with scalar lower-order terms are fine.
     @test !rejected(2.0e6; a0 = 1.0e12, a2 = 2.0, a1 = 3.0)
 end
