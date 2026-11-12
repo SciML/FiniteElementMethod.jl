@@ -332,3 +332,15 @@ end
     @test_throws "negative frequencies" maxwell_operator(model, -2.0)
     @test_throws "negative frequencies" solve_driven(model, -2.0, x -> (0.0, 1.0, 0.0))
 end
+
+@testset "a wave port needs positive permittivity and permeability" begin
+    grid = generate_grid(Tetrahedron, (2, 1, 2), Vec(0.0, 0.0, 0.0), Vec(2.0, 1.0, 2.0))
+    addcellset!(grid, "fill", x -> true)
+    walls = ["left", "right", "front", "back"]
+    ports = [WavePort("bottom"; a_direction = (1, 0, 0))]
+    build(eps_r, mu_r) = MaxwellModel(grid; materials = Dict("fill" => MaxwellMaterial(; eps_r, mu_r)), pec = walls, ports, eps0 = 1.0, mu0 = 1.0)
+    for (eps_r, mu_r) in ((-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0))
+        @test_throws "positive real permittivity and a positive permeability" build(eps_r, mu_r)
+    end
+    @test build(2.0, 1.5) isa MaxwellModel
+end
