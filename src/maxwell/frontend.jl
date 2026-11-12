@@ -231,10 +231,13 @@ function _check_lower_order(an, s, fixed, xs, dU, dG, dF, comps)
     end
     diag = [orders[k](dU[e][comps[e]]) for e in 1:3, k in 1:3]
     f = Symbolics.build_function(substitute.(diag, Ref(fixed)), X...; expression = Val(false))[1]
+    # Equal as expressions, or else equal as numbers: no tolerance, which would scale with coefficients (a large
+    # reaction against a large inertia) that cancel at the requested frequency.
+    same = [_iszero_expr(substitute(diag[e, k] - diag[1, k], fixed)) for e in 1:3, k in 1:3]
     for x in xs
         v = reshape(_real_values(f(x...), "a coefficient"), 3, 3)
         for k in 1:3, e in 2:3
-            abs(v[e, k] - v[1, k]) <= 100eps() * max(abs(v[e, k]), abs(v[1, k])) || throw(
+            same[e, k] || v[e, k] == v[1, k] || throw(
                 ArgumentError("the coefficient of E differs between the component equations at x = $(Tuple(x)), so the medium is anisotropic; the coefficients must be scalars")
             )
         end
