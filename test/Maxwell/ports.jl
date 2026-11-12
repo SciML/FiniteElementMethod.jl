@@ -312,6 +312,6 @@ end
 
 @testset "wave-port operators reject non-positive frequencies like the sweeps" begin
     model = wr90(5.0, 10.0)
-    @test_throws "positive frequencies" maxwell_operator(model, -2.0)
-    @test_throws "positive frequencies" solve_driven(model, -2.0, x -> (0.0, 1.0, 0.0))
+    @test_throws "negative frequencies" maxwell_operator(model, -2.0)
+    @test_throws "negative frequencies" solve_driven(model, -2.0, x -> (0.0, 1.0, 0.0))
 end
