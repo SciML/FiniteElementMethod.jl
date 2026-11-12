@@ -8,7 +8,7 @@
 # Tracking: move to PDEBase's `symbolic_discretize` with hook methods once the numeric path builds
 # its system through `generate_system` (PDEBase M0 release as the compat floor).
 
-const _PERIODIC_UNSUPPORTED = "periodic boundary conditions are not supported"
+const _PERIODIC_FORM = "a condition relating traces on two boundary pieces must be a periodic pair of the form u(t, Γa) ~ u(t, Γb)"
 
 _unwrap_arg(a) = SymbolicUtils.unwrap_const(unwrap(a))
 
@@ -106,10 +106,40 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
     return nothing
 end
 
-function _boundary_map(bcs, v, disc)
+# A condition on two pieces is a periodic pair `u(t, Γa) ~ u(t, Γb)` of one field; the pairs leave the conditions that
+# PDEBase parses, as `(field, Γa, Γb)`.
+function _split_periodic(bcs, ctx)
+    pairs, rest = Tuple{Int, Any, Any}[], []
     for eq in bcs
-        length(_trace_pieces(eq.lhs - eq.rhs)) > 1 && throw(ArgumentError("$(_PERIODIC_UNSUPPORTED): $eq"))
+        length(_trace_pieces(eq.lhs - eq.rhs)) > 1 || (push!(rest, eq); continue)
+        lhs, rhs = _unwrap_arg(eq.lhs), _unwrap_arg(eq.rhs)
+        f = _field_index(ctx, lhs)
+        (f !== nothing && f == _field_index(ctx, rhs) && length(_trace_pieces(lhs)) == 1 && length(_trace_pieces(rhs)) == 1) ||
+            throw(ArgumentError("$_PERIODIC_FORM: $eq"))
+        push!(pairs, (f, only(_trace_pieces(lhs)), only(_trace_pieces(rhs))))
     end
+    return pairs, rest
+end
+
+# A piece of a periodic pair carries no other condition on that field: the pair takes its place.
+function _check_periodic_conflicts(periodic, an, ctx)
+    for (f, Γa, Γb) in periodic, Γ in (Γa, Γb)
+        for (kind, pieces) in (
+                "Dirichlet" => [bc.piece for bc in an.essential if bc.field == f],
+                "Neumann or Robin" => [bc.piece for bc in an.natural if bc.eq == f],
+            )
+            any(isequal(Γ), pieces) && throw(
+                ArgumentError(
+                    "$(nameof(ctx.ops[f])) has a periodic condition on $Γ and a $kind condition on the same piece; " *
+                        "a periodic piece cannot carry another condition for that field"
+                )
+            )
+        end
+    end
+    return nothing
+end
+
+function _boundary_map(bcs, v, disc)
     orders = Dict(x => PDEBase.d_orders(x, bcs) for x in PDEBase.all_ivs(v))
     return PDEBase.parse_bcs(bcs, v, orders, disc)
 end
@@ -186,7 +216,7 @@ function _parameter_values(pdesys, ctx)
     end
 end
 
-function _space(disc, ctx, analysis, dirichlet, pvals, t0)
+function _space(disc, ctx, analysis, dirichlet, periodic, pvals, t0)
     grid = disc.domain.mesh
     shape = Ferrite.getrefshape(Ferrite.getcelltype(grid))
     names = Symbol[nameof(op) for op in ctx.ops]
@@ -201,8 +231,9 @@ function _space(disc, ctx, analysis, dirichlet, pvals, t0)
     ]
     regions = Dict(names[f] => String(disc.regions[op].name) for (f, op) in enumerate(ctx.ops) if haskey(disc.regions, op))
     _check_region_pieces(grid, regions, names, analysis)
+    pairs = [(names[f], String(Γa.name), String(Γb.name)) for (f, Γa, Γb) in periodic]
     space = FEMSpace(
-        grid, names .=> ips; dirichlet = bcs, quadrature = disc.quadrature, t0, regions,
+        grid, names .=> ips; dirichlet = bcs, periodic = pairs, quadrature = disc.quadrature, t0, regions,
         hessians = disc.test_space isa SUPG
     )
     return space, names, ips
@@ -226,16 +257,17 @@ function _check_region_pieces(grid, regions, names, analysis)
 end
 
 # Nodal coordinates of every dof; Lagrange interpolation of `x_d` gives them exactly.
-function _dof_coordinates(space)
-    dim = _meshdim(space.grid)
+_dof_coordinates(space) = _dof_coordinates(space.grid, space.dh, space.fields)
+function _dof_coordinates(grid, dh, names)
+    dim = _meshdim(grid)
     comps = map(1:dim) do d
-        a = zeros(Ferrite.ndofs(space.dh))
-        for name in space.fields
-            Ferrite.apply_analytical!(a, space.dh, name, x -> x[d])
+        a = zeros(Ferrite.ndofs(dh))
+        for name in names
+            Ferrite.apply_analytical!(a, dh, name, x -> x[d])
         end
         a
     end
-    return [Ferrite.Vec{dim}(ntuple(d -> comps[d][i], dim)) for i in 1:Ferrite.ndofs(space.dh)]
+    return [Ferrite.Vec{dim}(ntuple(d -> comps[d][i], dim)) for i in 1:Ferrite.ndofs(dh)]
 end
 
 # The Dirichlet values at `t` are evaluated from the symbolic data rather than through the
@@ -284,12 +316,12 @@ function _operators(space, wf, names, dirichlet, pvals, t0, timedep_dirichlet)
     assemble_linear!(M, K, F, ctx, static, pvals; t = t0)
     load = isempty(dynamic) ? F : (out, t) -> (assemble_sources!(out, _fresh_values(ctx), dynamic, pvals, t); out .+= F)
     nonlinear = any(k -> k.kind === :nonlinear, kernels) ?
-        FEMNonlinear(NonlinearOperator(_fresh_values(ctx), kernels; ch = space.ch), pvals) : nothing
+        FEMNonlinear(NonlinearOperator(_fresh_values(ctx), kernels; pattern = space.pattern), pvals) : nothing
     coords = _dof_coordinates(space)
     values!, values0 = _dirichlet_values(space, dirichlet, coords, pvals, t0)
     ops = FEMOperators(
         M, K, load, [name => field_range(space, name) for name in names];
-        prescribed = prescribed_dofs(space), dirichlet_values = timedep_dirichlet ? values! : values0, nonlinear
+        prescribed = prescribed_dofs(space), dirichlet_values = timedep_dirichlet ? values! : values0, nonlinear, ties = space.ties
     )
     raw = (; M, K, load, nonlinear = nonlinear !== nothing, prescribed = prescribed_dofs(space), dirichlet_values = values0, timedep_dirichlet)
     return ops, coords, raw
@@ -329,8 +361,8 @@ end
 
 # Boundary facets that carry no condition for a field whose equation has a flux get the natural zero-flux condition
 # silently, which hides a forgotten piece. A piece is covered for a field by a Dirichlet condition on that field, a
-# Neumann or Robin condition in its equation, or an entry in `disc.natural`.
-function _check_boundary_conditions(disc::FEMDiscretization, an, ctx)
+# Neumann or Robin condition in its equation, a periodic pair, or an entry in `disc.natural`.
+function _check_boundary_conditions(disc::FEMDiscretization, an, ctx, periodic)
     disc.boundary_check === :off && return nothing
     grid = disc.domain.mesh
     boundary = _boundary_facets(grid)
@@ -339,7 +371,7 @@ function _check_boundary_conditions(disc::FEMDiscretization, an, ctx)
     for (f, op) in enumerate(ctx.ops)
         all(c -> isequal(c, 0), an.conormal[f]) && continue
         covered = Set{Ferrite.FacetIndex}()
-        for name in [disc.natural; [bc.piece.name for bc in an.essential if bc.field == f]; [bc.piece.name for bc in an.natural if bc.eq == f]]
+        for name in [disc.natural; [bc.piece.name for bc in an.essential if bc.field == f]; [bc.piece.name for bc in an.natural if bc.eq == f]; [Γ.name for (g, Γa, Γb) in periodic if g == f for Γ in (Γa, Γb)]]
             union!(covered, facetsets[name])
         end
         cells = haskey(disc.regions, op) ? Set(Ferrite.getcellset(grid, String(disc.regions[op].name))) : nothing
@@ -364,11 +396,13 @@ function _lower(pdesys, disc::FEMDiscretization)
     sys, replaced = PDEBase.make_pdesys_compatible(pdesys)
     v = PDEBase.VariableMap(sys, disc; replaced_vars = replaced)
     PDEBase.interface_errors(sys, v, disc)
-    boundarymap = _boundary_map(sys.bcs, v, disc)
-    ics, _ = PDEBase.split_ics_bcs(boundarymap, v, disc)
     ctx = StrongForm.SlotContext(sys, v)
+    periodic, bcs = _split_periodic(sys.bcs, ctx)
+    boundarymap = _boundary_map(bcs, v, disc)
+    ics, _ = PDEBase.split_ics_bcs(boundarymap, v, disc)
     an = _paired(StrongForm.analyse(sys, v, boundarymap; ibp = disc.ibp), pdesys.eqs, ctx, disc)
-    isempty(an.periodic) || throw(ArgumentError(_PERIODIC_UNSUPPORTED))
+    isempty(an.periodic) || throw(ArgumentError(_PERIODIC_FORM))
+    _check_periodic_conflicts(periodic, an, ctx)
     disc.test_space isa SUPG && _check_supg(disc.test_space, an, ctx)
     wf = weak_form(an; test_space = disc.test_space)
     steady = disc.time === nothing
@@ -379,8 +413,8 @@ function _lower(pdesys, disc::FEMDiscretization)
     pvals = _parameter_values(sys, ctx)
     dirichlet = emit_dirichlet(an)
     t0, t1 = steady ? (0.0, 0.0) : v.intervals[v.time]
-    space, names, ips = _space(disc, ctx, an, dirichlet, pvals, t0)
-    _check_boundary_conditions(disc, an, ctx)
+    space, names, ips = _space(disc, ctx, an, dirichlet, periodic, pvals, t0)
+    _check_boundary_conditions(disc, an, ctx, periodic)
     timedep = findfirst(bc -> _depends(bc.g, [an.slots.T]), an.essential)
     disc.dirichlet === :eliminate && timedep !== nothing && throw(
         ArgumentError(
@@ -388,9 +422,15 @@ function _lower(pdesys, disc::FEMDiscretization)
                 "$(an.essential[timedep].piece.name) depends on time; use the default dirichlet = :algebraic"
         )
     )
+    disc.dirichlet === :eliminate && !isempty(periodic) && throw(
+        ArgumentError("dirichlet = :eliminate does not support periodic conditions; use the default dirichlet = :algebraic")
+    )
     ops, coords, raw = _operators(space, wf, names, dirichlet, pvals, t0, timedep !== nothing)
     u0 = _initial_values(Equation[b.eq for b in ics], ctx, space, coords, an, names, pvals)
     dirichlet_values!(view(u0, ops.prescribed), ops.load, t0)
+    for (m, s) in ops.ties
+        u0[m] = u0[s]
+    end
     elimination = nothing
     unknown_u0 = u0
     if disc.dirichlet === :eliminate
@@ -638,7 +678,7 @@ It is the linear, time-independent case only, and anything else raises an `Argum
 nonlinear term ("operators returns linear operators only, but the PDESystem has nonlinear
 terms"), a time-dependent source ("operators needs time-independent sources, but a source
 depends on time") and time-dependent Dirichlet data ("operators needs Dirichlet data that are
-constant in time"). Parameters are substituted by their values, as for the `DAEProblem`.
+constant in time"), and a periodic condition. Parameters are substituted by their values, as for the `DAEProblem`.
 """
 function operators(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
     parts = _lower(pdesys, disc)
@@ -646,6 +686,7 @@ function operators(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
     nonlinear && throw(ArgumentError("operators returns linear operators only, but the PDESystem has nonlinear terms"))
     load isa AbstractVector || throw(ArgumentError("operators needs time-independent sources, but a source depends on time"))
     timedep_dirichlet && throw(ArgumentError("operators needs Dirichlet data that are constant in time"))
+    isempty(parts.md.space.ties) || throw(ArgumentError("operators does not support periodic conditions; use discretize"))
     differential_vars = falses(size(M, 1))
     for (k, i) in enumerate(rowvals(M))
         iszero(nonzeros(M)[k]) || (differential_vars[i] = true)

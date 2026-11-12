@@ -75,10 +75,17 @@ dirichlet(Ω) = [u(t, Γ) ~ 0 for Γ in sides(Ω)]
 
     @testset "periodic conditions" begin
         Ω = box()
-        Γl, Γr = sides(Ω)
+        Γl, Γr, Γb, Γt = sides(Ω)
+        Γ = [u(t, Γb) ~ 0, u(t, Γt) ~ 0]
+        @test lower([heat], [u(t, Γl) ~ u(t, Γr); Γ; ic], Ω) isa SciMLBase.DAEProblem
         @test_throws ArgumentError(
-            "periodic boundary conditions are not supported: u(t, Γ_left) ~ u(t, Γ_right)"
-        ) lower([heat], [u(t, Γl) ~ u(t, Γr), ic], Ω)
+            "a condition relating traces on two boundary pieces must be a periodic pair of the form u(t, Γa) ~ u(t, Γb): " *
+                "u(t, Γ_left) ~ 1 + u(t, Γ_right)"
+        ) lower([heat], [u(t, Γl) ~ 1 + u(t, Γr); Γ; ic], Ω)
+        @test occursin(
+            "periodic pieces Γ_left and Γ_bottom of u do not match under a translation",
+            errmsg(() -> lower([heat], [u(t, Γl) ~ u(t, Γb), u(t, Γr) ~ 0, u(t, Γt) ~ 0, ic], Ω))
+        )
     end
 
     @testset "reserved options" begin

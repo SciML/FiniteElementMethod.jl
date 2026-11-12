@@ -127,10 +127,11 @@ struct FEMNonlinear{T <: AbstractFloat}
     pool::Vector{Any}
     lock::ReentrantLock
     elimination::Any   # `nothing`, or `(e::DirichletElimination, nzmap)` with `nzmap` the positions of `J_N[free, free]` in `J_N`
+    ties::Any          # `nothing`, or `(summed, from, to)`: the summed `mirror => master` ties and the positions in `J_N` of the entries of mirror rows and of the entries of the master rows they are added to
 end
-function FEMNonlinear(op, p, prescribed = falses(0))
+function FEMNonlinear(op, p, prescribed = falses(0), ties = nothing)
     T = eltype(p) <: AbstractFloat ? eltype(p) : Float64
-    return FEMNonlinear(op, collect(T, p), prescribed, Any[], ReentrantLock(), nothing)
+    return FEMNonlinear(op, collect(T, p), prescribed, Any[], ReentrantLock(), nothing, ties)
 end
 Base.show(io::IO, ::FEMNonlinear) = print(io, "FEMNonlinear")
 
@@ -164,6 +165,7 @@ function add_full_nonlinear!(r, N::FEMNonlinear, u, t)
         for i in eachindex(r)
             N.prescribed[i] || (r[i] += op.r[i])
         end
+        N.ties === nothing || foreach(((m, s),) -> r[s] += op.r[m], first(N.ties))
         r
     end
 end
@@ -178,6 +180,7 @@ function add_full_nonlinear!(r, N::FEMNonlinear, u::AbstractVector{ForwardDiff.D
         for i in eachindex(r)
             N.prescribed[i] || (r[i] += ForwardDiff.Dual{T}(op.r[i], ForwardDiff.Partials(ntuple(k -> dr[i, k], Val(P)))))
         end
+        N.ties === nothing || foreach(((m, s),) -> r[s] += ForwardDiff.Dual{T}(op.r[m], ForwardDiff.Partials(ntuple(k -> dr[m, k], Val(P)))), first(N.ties))
         r
     end
 end
@@ -196,6 +199,12 @@ function add_nonlinear_jacobian!(J, N::FEMNonlinear, u, t)
             rows, vals, out = rowvals(JN), nonzeros(JN), nonzeros(J)
             for k in eachindex(rows)
                 N.prescribed[rows[k]] || (out[k] += vals[k])
+            end
+            if N.ties !== nothing
+                _, from, to = N.ties
+                for (a, b) in zip(from, to)
+                    out[b] += vals[a]
+                end
             end
         else
             e, nzmap = elimination
@@ -258,11 +267,14 @@ struct FEMOperators
     differential_vars::BitVector
     jac_prototype::SparseMatrixCSC{Float64, Int}
     nonlinear::Union{Nothing, FEMNonlinear}
+    ties::Vector{Pair{Int, Int}}
 end
+FEMOperators(M, K, load, fields, prescribed, differential_vars, jac_prototype, nonlinear) =
+    FEMOperators(M, K, load, fields, prescribed, differential_vars, jac_prototype, nonlinear, Pair{Int, Int}[])
 
 function FEMOperators(
         M::SparseMatrixCSC, K::SparseMatrixCSC, load, fields;
-        prescribed = Int[], dirichlet_values = 0.0, nonlinear = nothing
+        prescribed = Int[], dirichlet_values = 0.0, nonlinear = nothing, ties = Pair{Int, Int}[]
     )
     n = size(K, 1)
     size(M) == size(K) == (n, n) || throw(DimensionMismatch("M and K must be square of the same size; got $(size(M)) and $(size(K))"))
@@ -277,19 +289,25 @@ function FEMOperators(
     stop == n || throw(ArgumentError("field ranges cover 1:$stop but the operators have $n rows"))
     prescribed = collect(Int, prescribed)
     M, K = copy(SparseMatrixCSC{Float64, Int}(M)), copy(SparseMatrixCSC{Float64, Int}(K))
+    ties = collect(Pair{Int, Int}, ties)
+    apply_ties!(M, K, ties, prescribed)
     replace_dirichlet_rows!(M, K, prescribed)
     differential_vars = falses(n)
     for (k, i) in enumerate(rowvals(M))
         iszero(nonzeros(M)[k]) || (differential_vars[i] = true)
+    end
+    if !isempty(ties)
+        load = load isa AbstractVector ? apply_ties!(copy(load), ties, prescribed) :
+            (out, t) -> apply_ties!(load(out, t), ties, prescribed)
     end
     F = FEMLoad(load, prescribed, dirichlet_values, n)
     if nonlinear !== nothing
         J = nonlinear.op.J
         J.colptr == K.colptr && J.rowval == K.rowval ||
             throw(ArgumentError("the nonlinear operator's Jacobian must have the sparsity pattern of M and K, e.g. NonlinearOperator(ctx, kernels; ch) with the ConstraintHandler of allocate_matrix(dh, ch)"))
-        nonlinear = FEMNonlinear(nonlinear.op, nonlinear.p, isprescribed_mask(n, prescribed))
+        nonlinear = FEMNonlinear(nonlinear.op, nonlinear.p, isprescribed_mask(n, [prescribed; first.(ties)]), _tie_positions(J, ties, prescribed))
     end
-    return FEMOperators(M, K, F, fields, prescribed, differential_vars, copy(K), nonlinear)
+    return FEMOperators(M, K, F, fields, prescribed, differential_vars, copy(K), nonlinear, ties)
 end
 
 function isprescribed_mask(n, prescribed)
@@ -370,7 +388,7 @@ function eliminate_dirichlet(ops::FEMOperators)
     N === nothing && return reduced, elimination
     # The positions of the stored entries of K[free, free], which has the pattern of N's Jacobian block.
     positions = SparseMatrixCSC(n, n, ops.K.colptr, ops.K.rowval, collect(eachindex(nonzeros(ops.K))))
-    Nfree = FEMNonlinear(N.op, N.p, N.prescribed, Any[], ReentrantLock(), (elimination, nonzeros(positions[free, free])))
+    Nfree = FEMNonlinear(N.op, N.p, N.prescribed, Any[], ReentrantLock(), (elimination, nonzeros(positions[free, free])), nothing)
     (; M, K, load, fields, prescribed, differential_vars, jac_prototype) = reduced
     return FEMOperators(M, K, load, fields, prescribed, differential_vars, jac_prototype, Nfree), elimination
 end
@@ -444,19 +462,25 @@ algebraic variable, and the solution and its dense output do not depend on it.
 """
 function consistent_du0(ops::FEMOperators, u0, t0)
     dd = ops.differential_vars
-    isprescribed = falses(length(u0))
+    n = length(u0)
+    # `du` of a tied dof is its master's, so the columns of tied dofs fold into their masters'.
+    mirrors, masters = first.(ops.ties), last.(ops.ties)
+    kept = setdiff(1:n, mirrors)
+    fold = isempty(ops.ties) ? I : sparse([kept; mirrors], [kept; masters], 1.0, n, n)
+    M = ops.M * fold
+    isprescribed = falses(n)
     isprescribed[ops.prescribed] .= true
-    for j in axes(ops.M, 2)
-        dd[j] || isprescribed[j] || all(iszero, view(nonzeros(ops.M), nzrange(ops.M, j))) ||
+    for j in axes(M, 2)
+        dd[j] || isprescribed[j] || all(iszero, view(nonzeros(M), nzrange(M, j))) ||
             throw(ArgumentError("variable $j is algebraic (its row of M is zero) but its column of M is not, so a consistent du0 cannot be computed; pass du0 explicitly"))
     end
-    du0 = zeros(promote_type(eltype(u0), eltype(ops.M)), length(u0))
+    du0 = zeros(promote_type(eltype(u0), eltype(ops.M)), n)
     du0[ops.prescribed] = dirichlet_rates(ops.load, t0)
-    any(dd) || return du0
-    rhs = load!(zeros(length(u0)), ops.load, t0) - ops.K * u0 - ops.M * du0
-    ops.nonlinear === nothing || (rhs .-= nonlinear_residual!(zeros(length(u0)), ops.nonlinear, u0, t0))
-    du0[dd] = ops.M[dd, dd] \ rhs[dd]
-    return du0
+    any(dd) || return fold * du0
+    rhs = load!(zeros(n), ops.load, t0) - ops.K * u0 - M * du0
+    ops.nonlinear === nothing || (rhs .-= nonlinear_residual!(zeros(n), ops.nonlinear, u0, t0))
+    du0[dd] = M[dd, dd] \ rhs[dd]
+    return fold * du0
 end
 
 function check_pattern(J, A, name)
