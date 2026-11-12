@@ -15,6 +15,11 @@ in-plane unit vector perpendicular to it. By default `ê` is `n × â` with its 
 Cartesian component is positive, which gives both ends of a straight guide the same polarisation; pass
 `e_direction` to fix it explicitly. `deembed` moves the reference plane of the port a distance (in mesh units)
 from the port face into the device.
+
+Above cutoff the wave coefficients are power waves: the incident mode carries real axial power, and a lossless
+structure with only propagating ports has a unitary `S`. Below cutoff (`β = -iα`) the mode is evanescent and
+carries no real axial power, so the coefficients are generalized traveling-wave coefficients, normalised the same
+way and supported, but without an individual incident or outgoing power; `S` is then not power conserving.
 """
 struct WavePort
     facetset::String
@@ -261,12 +266,13 @@ end
 The scattering matrix from the solutions `U[:, j]` with port `j` driven by [`port_excitations`](@ref):
 `Sᵢⱼ = (pᵢᵀ uⱼ / Pᵢ - δᵢⱼ) sqrt(Pᵢ Zⱼ / (Pⱼ Zᵢ)) exp(iβᵢdᵢ + iβⱼdⱼ)`, with `Pᵢ = ∮ e⋅e dS`, the TE10 wave
 impedance `Zᵢ = ωμ0μr / βᵢ` and the de-embedding distances `dᵢ`. At exactly a port's cutoff `βᵢ = 0`, `Zᵢ` is
-infinite and the S-parameters are undefined, so this throws an `ArgumentError`.
+infinite and the S-parameters are undefined, so this throws an `ArgumentError`. The wave coefficients are power
+waves for propagating ports only; below cutoff they are generalized traveling-wave coefficients (see [`WavePort`](@ref)).
 """
 function s_parameters(model, ω::Real, U::AbstractMatrix)
     ports = model.ports
     β = _port_betas(model, ω)
-    # Power-wave scale: |a|² P / Z, with Z ∝ μr / β.
+    # Wave scale |a|² P / Z, with Z ∝ μr / β: a power for a propagating port, a generalized coefficient below cutoff.
     w = [sqrt(data.norm * β[i] / data.mu_r) for (i, data) in pairs(ports)]
     shift = [exp(im * β[i] * data.port.deembed * model.length_scale) for (i, data) in pairs(ports)]
     np = length(ports)
