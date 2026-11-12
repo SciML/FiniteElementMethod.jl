@@ -296,7 +296,7 @@ end
     s_parameters(model::MaxwellModel, ω, U)
 
 The scattering matrix `Sᵢⱼ = bᵢ / aⱼ` from the solutions `U[:, j]` with port `j` driven by
-[`port_excitations`](@ref), in power waves. A wave port has `aⱼ = sqrt(Pⱼ / Zⱼ) exp(-iβⱼdⱼ)` and
+[`port_excitations`](@ref), in wave coefficients, which are power waves for lumped ports and propagating wave ports. A wave port has `aⱼ = sqrt(Pⱼ / Zⱼ) exp(-iβⱼdⱼ)` and
 `bᵢ = (pᵢᵀuⱼ / Pᵢ - δᵢⱼ) sqrt(Pᵢ / Zᵢ) exp(iβᵢdᵢ)`, with `Pᵢ = ∮ e⋅e dS`, the TE10 wave impedance
 `Zᵢ = ωμ0μr / βᵢ` and the de-embedding distances `dᵢ`. A lumped port has `aⱼ = sqrt(Z0ⱼ) / 2` and
 `bᵢ = (2Vᵢ - Z0ᵢ δᵢⱼ) / (2 sqrt(Z0ᵢ))`, so between lumped ports `Sᵢⱼ = 2Vᵢ / sqrt(Z0ᵢ Z0ⱼ) - δᵢⱼ`. At exactly a wave port's cutoff `βᵢ = 0`, `Zᵢ` is
