@@ -43,7 +43,7 @@ end
     @test curl === Ferrite.curl  # one curl with both packages loaded
     Ω = MeshDomain(unit_cube(1))
     @test maxwell_disc(Ω, 2).omega === 2.0
-    for bad in (0, -1.0, Inf, 1 + 2im, big"1e-400", big"1e400")
+    for bad in (0, -1.0, Inf, 1 + 2im, big"1e-400", big"1e400", 1.0e-200, 1.0e160)
         @test_throws ArgumentError("omega must be a positive, finite angular frequency in rad/s, got $(repr(bad))") maxwell_disc(Ω, bad)
     end
     @test_throws ArgumentError("omega needs the time variable of the time-domain PDESystem, as FEMDiscretization(Ω, t; omega)") FEMDiscretization(Ω; omega = 1.0, spaces = edge_space())
@@ -197,7 +197,7 @@ end
 
 @testset "a frequency too small for the reaction coefficient is rejected, not turned into NaN" begin
     Ω = MeshDomain(unit_cube(1))
-    for (ω, a0) in ((1.0e-200, 0.0), (1.0e-160, 1.0))
+    for (ω, a0) in ((1.0e-160, 1.0),)
         @test occursin("not representable", message(() -> discretize(maxwell_system(Ω; a0), maxwell_disc(Ω, ω))))
     end
 end

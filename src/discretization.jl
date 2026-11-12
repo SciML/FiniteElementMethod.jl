@@ -195,7 +195,8 @@ function _check_omega(omega, time, spaces, test_space, regions, ibp, pairing)
         return nothing
     end
     # The value is stored as a Float64, so a BigFloat beyond its range (1e-400, 1e400) is judged after the conversion.
-    omega isa Real && (w = Float64(omega); isfinite(w) && w > 0) ||
+    # The solver divides by omega^2, so that must be representable too.
+    omega isa Real && (w = Float64(omega); isfinite(w) && w > 0 && isfinite(w^2) && w^2 > 0) ||
         throw(ArgumentError("omega must be a positive, finite angular frequency in rad/s, got $(repr(omega))"))
     time === nothing && throw(
         ArgumentError("omega needs the time variable of the time-domain PDESystem, as FEMDiscretization(Ω, t; omega)")
