@@ -242,10 +242,11 @@ end
 # n × μr⁻¹∇ × E = -(iβ/μr) n × (n × E) - 2(iβ/μr) E0 e on the port gives +(iβ/μr) L B on the operator and
 # +2(iβ/μr) L E0 p on the load, with E0 = 1.
 function _port_term(data::WavePortData, mu0eps0, L)
-    return MaxwellTerm(data.block, ω -> im * _propagation_constant(data, mu0eps0, _positive_frequency(ω)) * L / data.mu_r)
+    return MaxwellTerm(data.block, ω -> im * _propagation_constant(data, mu0eps0, _nonnegative_frequency(ω)) * L / data.mu_r)
 end
-# β depends on ω², so it is the outgoing condition for ω > 0 only; the operator path enforces it like the sweeps do.
-_positive_frequency(ω) = ω > 0 ? ω : throw(ArgumentError("wave ports need positive frequencies, got ω = $ω"))
+# β depends on ω², so it is the outgoing condition for ω ≥ 0 only; the operator is finite at ω = 0 (the S-parameter
+# normalisation is not, and the sweeps reject it).
+_nonnegative_frequency(ω) = ω >= 0 ? ω : throw(ArgumentError("wave ports are not defined for negative frequencies (ω = $ω): their propagation constant depends on ω² and is the outgoing condition for ω ≥ 0 only"))
 
 # The propagation constants of all ports at ω. At exact cutoff β = 0, the wave impedance ωμ/β is infinite and the
 # power-wave scale of the S-parameters is 0/0, so it is an error rather than a NaN matrix.
