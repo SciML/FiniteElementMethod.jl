@@ -18,6 +18,14 @@ Cartesian component is positive, which gives both ends of a straight guide the s
 `e_direction` to fix it explicitly. `deembed` moves the reference plane of the port a distance (in mesh units)
 from the port face into the device.
 
+The port is a single-mode termination: the outgoing TE10 admittance acts on the TE10 amplitude of the trace only,
+through the rank-one term `p pᵀ / norm` (see [`FiniteElementMethod.WavePortData`](@ref)), which couples all the dofs of
+the port face. The rest of the trace, the evanescent higher modes, sees the natural (magnetic-wall) boundary at the port
+plane: it is reflected, not absorbed, so a lossless single-mode structure conserves power. A discontinuity near the
+port then excites evanescent modes that the port does not terminate, and `S` depends on the lead length unless at
+least about one decay length of uniform guide, `1 / sqrt(kc² - k²)` for the first evanescent mode (`kc = 2π/a` for TE20,
+`π/b` for TE01, `k = ω sqrt(μ0 ε0 εr μr)`), separates the discontinuity from the port.
+
 Above cutoff the wave coefficients are power waves: the incident mode carries real axial power, and a lossless
 structure with only propagating ports has a unitary `S`. Below cutoff (`β = -iα`) the mode is evanescent and
 carries no real axial power, so the coefficients are generalized traveling-wave coefficients, normalised the same
@@ -41,12 +49,14 @@ A [`WavePort`](@ref) assembled on a [`MaxwellModel`](@ref), in `model.ports`. Fi
 tangential mass `∮ (n × Nᵢ)⋅(n × Nⱼ) dS` of the port face), `profile` (`pᵢ = ∮ e⋅Nᵢ dS`), `norm`
 (`pᵀ B⁻¹ p` over the unconstrained edge dofs of the face: `∮ e_h⋅e_h dS` of the L² projection `e_h` of the
 mode onto the discrete tangential traces, so that a port-face field `c e_h` gives exactly `pᵀu / norm = c`),
-`normal` (outward), `a`, `b` (mesh units), `kc` (`π / (a L)`, rad/m),
+`coupling` (the rank-one `p pᵀ / norm` on the face dofs, the port's boundary term: it acts on the TE10 amplitude
+`pᵀu / norm` only), `normal` (outward), `a`, `b` (mesh units), `kc` (`π / (a L)`, rad/m),
 `eps_r` and `mu_r` of the port material (lossless: complex `eps_r` is rejected).
 """
 struct WavePortData
     port::WavePort
     block::SparseMatrixCSC{Float64, Int}
+    coupling::SparseMatrixCSC{Float64, Int}
     profile::Vector{Float64}
     norm::Float64
     normal::Ferrite.Vec{3, Float64}
@@ -214,9 +224,28 @@ function _wave_port(port::WavePort, dh, pattern, cell_materials, length_scale, c
     any(dof -> count[dof] > 1 && dof in constrained, keys(count)) && throw(
         ArgumentError("part of the face of port $(repr(port.facetset)) is in `pec`; only its rim may be PEC")
     )
+    face = _wave_port_dofs(port, dh)
+    keep = falses(length(profile))
+    keep[face] .= true
+    profile[.!keep] .= 0  # the traces of the other edge functions vanish on the face, up to roundoff
     norm_h = dot(profile[free], block[free, free] \ profile[free])
     norm_h > 0 || throw(ArgumentError("the TE10 mode of port $(repr(port.facetset)) has no projection onto its free edge dofs"))
-    return WavePortData(port, block, profile, norm_h, normal, a, b, π / (a * length_scale), material.eps_r, material.mu_r)
+    coupling = copy(pattern)
+    fill!(nonzeros(coupling), 0.0)
+    for j in face, k in nzrange(coupling, j)
+        i = rowvals(coupling)[k]
+        keep[i] && (nonzeros(coupling)[k] = profile[i] * profile[j] / norm_h)
+    end
+    return WavePortData(port, block, coupling, profile, norm_h, normal, a, b, π / (a * length_scale), material.eps_r, material.mu_r)
+end
+
+# The edge dofs of the facets of the port.
+function _wave_port_dofs(port, dh)
+    dofs = Set{Int}()
+    for (cell, local_facet) in Ferrite.getfacetset(dh.grid, port.facetset), i in _TET_FACET_EDGE_DOFS[local_facet]
+        push!(dofs, Ferrite.celldofs(dh, cell)[i])
+    end
+    return sort!(collect(dofs))
 end
 
 # β = sqrt(k² - kc²) on the branch Im β ≤ 0, so that the outgoing exp(-iβζ) decays below cutoff.
@@ -244,10 +273,12 @@ function cutoff_frequency(model, port::Integer)
     return data.kc / (2π * sqrt(model.mu0 * model.eps0 * real(data.eps_r) * data.mu_r))
 end
 
-# n × μr⁻¹∇ × E = -(iβ/μr) n × (n × E) - 2(iβ/μr) E0 e on the port gives +(iβ/μr) L B on the operator and
-# +2(iβ/μr) L E0 p on the load, with E0 = 1.
+# n × μr⁻¹∇ × E = -(iβ/μr) c e - 2(iβ/μr) E0 e on the port, with c = pᵀu / norm the TE10 amplitude of the trace and
+# e the mode, gives +(iβ/μr) L p pᵀ / norm on the operator and +2(iβ/μr) L E0 p on the load, with E0 = 1. Only the
+# TE10 amplitude sees the port: the rest of the trace, which is evanescent, has the natural boundary condition and
+# absorbs no power.
 function _port_term(data::WavePortData, mu0eps0, L)
-    return MaxwellTerm(data.block, ω -> im * _propagation_constant(data, mu0eps0, _nonnegative_frequency(ω)) * L / data.mu_r)
+    return MaxwellTerm(data.coupling, ω -> im * _propagation_constant(data, mu0eps0, _nonnegative_frequency(ω)) * L / data.mu_r)
 end
 # β depends on ω², so it is the outgoing condition for ω ≥ 0 only; the operator is finite at ω = 0 (the S-parameter
 # normalisation is not, and the sweeps reject it).
