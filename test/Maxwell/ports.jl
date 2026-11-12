@@ -255,3 +255,20 @@ end
     model = MaxwellModel(grid; pec = walls, ports = Iterators.Stateful(ports), eps0 = 1.0, mu0 = 1.0)
     @test length(model.ports) == 2
 end
+
+@testset "axial power of the incident mode: propagating ports carry it, evanescent ones do not" begin
+    # Normalised guide with broad dimension a = 2, cutoff ω = π/2; the incident mode of unit amplitude is the
+    # L² projection of the TE10 mode onto the discrete traces, with H = β/(ωμ) n × E.
+    grid = generate_grid(Tetrahedron, (4, 2, 4), Vec(0.0, 0.0, 0.0), Vec(2.0, 1.0, 2.0))
+    ports = [WavePort("bottom"; a_direction = (1, 0, 0)), WavePort("top"; a_direction = (1, 0, 0))]
+    model = MaxwellModel(grid; pec = ["left", "right", "front", "back"], ports, eps0 = 1.0, mu0 = 1.0)
+    data = first(model.ports)
+    face = setdiff(findall(!iszero, diag(data.block)), model.ch.prescribed_dofs)
+    c = Matrix(data.block[face, face]) \ data.profile[face]
+    @test dot(data.profile[face], c) ≈ data.norm
+    flux(ω) = real(propagation_constant(model, 1, ω)) / ω / 2 * real(dot(c, data.block[face, face] * c))
+    wave_power(ω) = data.norm * abs(propagation_constant(model, 1, ω)) / ω / 2  # |a|²/2
+    @test flux(2.0) ≈ wave_power(2.0) rtol = 1.0e-12
+    @test flux(1.0) == 0
+    @test wave_power(1.0) > 0.1
+end
