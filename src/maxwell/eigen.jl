@@ -91,34 +91,16 @@ function _gradient_projection(G, M)
     return x -> x - G * (FG \ (GtM * x))
 end
 
-# A deflation basis for `vecs`: columns `B` and `U` with Uᵀ B = I, so that x - B (Uᵀ x) removes the span of `vecs` from x.
-# The vectors are made orthogonal in the bilinear form xᵀ M y (the eigenvectors of the complex symmetric pencil are),
-# which may be indefinite (negative Re(εr)): they are scaled by sqrt(|s|) with s = bᵀ M b, not sqrt(s). A vector that is
-# nearly isotropic in the form (|s| tiny) is deflated in the Euclidean form instead, and one already in the span is
-# skipped.
-function _orthonormal_basis(vecs, M)
-    T = promote_type(eltype(first(vecs)), eltype(M))
-    n = length(first(vecs))
-    B, U = Vector{T}[], Vector{T}[]
-    mscale = opnorm(M, 1)
-    for v in vecs
-        w = T.(v)
-        for _ in 1:2, (b, u) in zip(B, U)
-            w .-= b .* (transpose(u) * w)
-        end
-        norm(w) > 1.0e-10 * norm(v) || continue
-        sw = transpose(w) * (M * w)
-        if abs(sw) > 1.0e-10 * mscale * norm(w)^2
-            σ = sw / abs(sw)
-            b = w ./ sqrt(abs(sw))
-            push!(B, b)
-            push!(U, (M * b) ./ σ)
-        else
-            push!(B, w)
-            push!(U, w ./ (transpose(w) * w))
-        end
-    end
-    return isempty(B) ? (zeros(T, n, 0), zeros(T, n, 0)) : (reduce(hcat, B), reduce(hcat, U))
+# The projector that removes the span of `vecs` from a vector in the bilinear form xᵀ M y (the form of the symmetric
+# pencil, with the transpose also for complex data): x ↦ x - B G⁺ Bᵀ M x with B the vectors as columns and
+# G = Bᵀ M B their Gram matrix. There is no orthonormalisation, so an indefinite form (negative Re(εr)), a vector
+# isotropic in it or a dependent one needs no square root or division: the rank-revealing pseudo-inverse G⁺ drops the
+# directions that G cannot resolve.
+function _deflator(vecs, M)
+    B = reduce(hcat, vecs)
+    MB = M * B
+    Gp = pinv(transpose(B) * MB; rtol = 4 * sqrt(eps()))
+    return x -> x - B * (Gp * (transpose(MB) * x))
 end
 
 # The largest ratio between the εr (real part) or μr values of the cells.
@@ -272,9 +254,10 @@ function maxwell_eigenmodes(
         pool_dist = abs.(sqrt.(complex.(pool_λ) ./ scale) .- ωt)
         for pass in 1:nev
             d_nev = sort(pool_dist)[nev]
-            B, U = _orthonormal_basis(pool_vecs, M)
-            deflate(x) = x - B * (transpose(U) * x)
-            start = deflate(project(T.(cos.(2.399963 .* pass .* (1:length(free)) .^ 1.37 .+ pass))))
+            deflate = _deflator(pool_vecs, M)
+            raw = project(T.(cos.(2.399963 .* pass .* (1:length(free)) .^ 1.37 .+ pass)))
+            start = deflate(raw)
+            norm(start) > 1.0e-8 * norm(raw) || break  # nothing is left outside the span of what was found
             λ_found, found, new, _ = search(x -> deflate(op(x)), start, 1, d_nev)
             dist_new = abs.(sqrt.(complex.(λ_found[new]) ./ scale) .- ωt)
             any(<(d_nev * (1 - 1.0e-8)), dist_new) || break

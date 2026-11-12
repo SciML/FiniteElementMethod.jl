@@ -1,5 +1,5 @@
 # Eigenmodes of a PEC rectangular cavity against the analytic TE/TM frequencies.
-using FiniteElementMethod, Ferrite, KrylovKit, LinearAlgebra, Test
+using FiniteElementMethod, Ferrite, KrylovKit, LinearAlgebra, Random, Test
 include(joinpath(@__DIR__, "..", "shared", "maxwell.jl"))
 
 const BOX = (1.0, 0.5, 0.75)
@@ -175,16 +175,25 @@ end
 end
 
 @testset "restart deflation works with an indefinite mass form" begin
-    basis = FiniteElementMethod._orthonormal_basis
-    # A negative mass norm, an isotropic vector (zero norm), a vector already in the span and a complex one.
-    B, U = basis([[1.0]], reshape([-1.0], 1, 1))
-    @test transpose(U) * B ≈ [1.0;;]
-    M = [1.0 0.0; 0.0 -1.0]
-    B, U = basis([[1.0, 1.0], [2.0, 2.0], [1.0, -1.0]], M)
-    @test size(B, 2) == 2 && transpose(U) * B ≈ [1.0 0.0; 0.0 1.0]
-    @test B - B * (transpose(U) * B) ≈ zeros(2, 2)
-    B, U = basis([[1.0 + 0.5im, 2.0]], [-2.0 0.0; 0.0 1.0])
-    @test transpose(U) * B ≈ [1.0;;]
+    deflator = FiniteElementMethod._deflator
+    # The Gram identity Bᵀ M (x - P x) = 0, finite output, for an indefinite M, isotropic and dependent vectors.
+    gram_residual(B, M, x) = norm(transpose(B) * (M * deflator(collect(eachcol(B)), M)(x))) / (norm(B) * norm(M * x))
+    M = [1.0 0.0 0.0; 0.0 -1.0 0.0; 0.0 0.0 2.0]
+    B = [1.0 1.0; 1.0 -1.0; 0.0 1.0]  # the first column is isotropic in M
+    @test gram_residual(B, M, [0.3, -0.7, 1.1]) < 1.0e-12
+    x = deflator([[1.0, im]], Matrix(1.0I, 2, 2))([2.0, 3.0])  # an isotropic complex vector: Gram matrix 0
+    @test all(isfinite, x)
+    rng = Random.Xoshiro(7)
+    for T in (Float64, ComplexF64)
+        A = randn(rng, T, 6, 6)
+        M = A + transpose(A)  # symmetric, indefinite (complex symmetric for T = ComplexF64)
+        B = randn(rng, T, 6, 3)
+        B = [B B[:, 1]]  # a repeated column
+        x = randn(rng, T, 6)
+        P = deflator(collect(eachcol(B)), M)
+        @test all(isfinite, P(x))
+        @test gram_residual(B, M, x) < 1.0e-9
+    end
     # Lossless negative-permittivity cavities: 63 cubes of eigenvalues 2..64 and one with εr = -200 (λ = -0.1).
     cube = generate_grid(Tetrahedron, (1, 1, 1), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0))
     ncell, nnode = length(cube.cells), length(cube.nodes)
