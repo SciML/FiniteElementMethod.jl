@@ -19,7 +19,7 @@ Fields: `grid`, `dh` (the `DofHandler`), `ch` (the closed `ConstraintHandler`), 
 declaration order), `cellvalues` and `facetvalues` (`NamedTuple`s keyed by field), `ranges` (global dof
 range per field), `pieces` (piece name `=>` facet set name, for every facet set of the grid), `pattern`
 (`allocate_matrix(dh, ch)` plus the entries of the periodic ties, to be copied for every operator) and `ties`
-(`mirror => master` dofs of the periodic conditions).
+(`mirror => master` dofs of the periodic conditions) and `classes` (the prescribed dofs of each periodic class).
 """
 struct FEMSpace{G, DH, CH, CV <: NamedTuple, FV <: NamedTuple, R <: NamedTuple, A} <:
     PDEBase.AbstractDiscreteSpace
@@ -34,6 +34,7 @@ struct FEMSpace{G, DH, CH, CV <: NamedTuple, FV <: NamedTuple, R <: NamedTuple, 
     pattern::A
     gbuf::Vector{Float64}
     ties::Vector{Pair{Int, Int}}
+    classes::DirichletClasses
 end
 
 _order(::Ferrite.Interpolation{shape, order}) where {shape, order} = order
@@ -88,14 +89,14 @@ function FEMSpace(
     for (field, set, g) in dirichlet, d in _piece_dofs(dh, Symbol(field), grid, set)
         owner[d] = (set, g)
     end
-    times = range(t0, tend; length = 5)
-    ties = isempty(periodic) ? Pair{Int, Int}[] :
+    times = range(t0, tend; length = 17)
+    ties, classes = isempty(periodic) ? (Pair{Int, Int}[], DirichletClasses(Vector{Int}[], Dict{Int, Vector{Float64}}(), Dict{Int, String}(), Any[])) :
         periodic_ties(
             grid, dh, _dof_coordinates(grid, dh, names), [(Symbol(f), a, b) for (f, a, b) in periodic], ch.prescribed_dofs;
             dirichlet = owner, times
         )
     pattern = extend_pattern(Ferrite.allocate_matrix(dh, ch), ties, ch.prescribed_dofs)
-    return FEMSpace(grid, dh, ch, names, cellvalues, facetvalues, ranges, pieces, pattern, zeros(Ferrite.ndofs(dh)), ties)
+    return FEMSpace(grid, dh, ch, names, cellvalues, facetvalues, ranges, pieces, pattern, zeros(Ferrite.ndofs(dh)), ties, classes)
 end
 
 # One DofHandler for all fields, or, with regions, one SubDofHandler per distinct set of fields present on a cell;

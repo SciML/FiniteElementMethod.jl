@@ -292,7 +292,12 @@ function _dirichlet_values(space, dirichlet, coords, pvals, t0)
     end
     gs = [g for (_, _, g) in dirichlet]
     dofs = prescribed_dofs(space)
-    values!(out, t) = (foreach(((k, d),) -> out[k] = gs[owner[d]](coords[d], t, pvals), enumerate(dofs)); out)
+    position = Dict(d => k for (k, d) in enumerate(dofs))
+    function values!(out, t)
+        foreach(((k, d),) -> out[k] = gs[owner[d]](coords[d], t, pvals), enumerate(dofs))
+        check_agreement(space.classes, d -> out[position[d]], t)
+        return out
+    end
     return values!, values!(zeros(length(dofs)), t0)
 end
 

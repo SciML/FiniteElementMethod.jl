@@ -154,9 +154,9 @@ For a fully periodic box write one pair per direction. A corner node belongs to 
 the nodes of all pairs of a field are collected into classes of equal nodes, and each class keeps
 one master. Where a periodic piece meets a Dirichlet piece, the class contains a prescribed node
 and that node is the master, so the Dirichlet value holds at the shared corner. If a class holds more than one
-prescribed node (a Dirichlet piece touching both ends of a periodic pair), their data must agree, at the initial time
-and at four further times of the time interval; otherwise `discretize` throws an `ArgumentError` naming the periodic pieces,
-the nodes and the two values.
+prescribed node (a Dirichlet piece touching both ends of a periodic pair), their data must agree. `discretize` compares them at 17 evenly spaced times of the time interval, and
+time-dependent data are compared again at every evaluation by the solver; a difference beyond a relative `1e-8` is an
+`ArgumentError` naming the periodic pieces, the nodes, the two values and the time.
 
 ```julia
 using FiniteElementMethod, ModelingToolkit, DomainSets, OrdinaryDiffEqBDF

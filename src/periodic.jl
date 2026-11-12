@@ -40,7 +40,7 @@ end
 """
     periodic_ties(grid, dh, coords, periodic, prescribed) -> Vector{Pair{Int, Int}}
 
-`mirror => master` dof pairs that make the dofs matched by `periodic`, a collection of
+`(ties, classes)`: `mirror => master` dof pairs (and the prescribed dofs of each class, for `check_agreement`) that make the dofs matched by `periodic`, a collection of
 `(field, set_a, set_b)`, equal. The pieces of a pair must be translates of each other: the translation is the
 difference of their centroids and each node of one must have a node of the other at the translated place, or
 an `ArgumentError` names both pieces. A master is a `prescribed` (Dirichlet) dof of its class if it has one, else
@@ -81,34 +81,55 @@ function periodic_ties(grid, dh, nodes, periodic, prescribed; dirichlet = Dict{I
     isprescribed = falses(length(parent))
     isprescribed[prescribed] .= true
     ties = Pair{Int, Int}[]
+    groups = Vector{Int}[]
     for members in values(classes)
         length(members) > 1 || continue
         master = members[something(findfirst(d -> isprescribed[d], members), 1)]
-        _check_dirichlet_agree(filter(d -> isprescribed[d], members), nodes, dirichlet, times, periodic)
+        fixed = filter(d -> isprescribed[d], members)
+        length(fixed) > 1 && push!(groups, fixed)
         for d in members
             d == master || isprescribed[d] || push!(ties, d => master)
         end
     end
-    return sort!(ties)
+    classes = DirichletClasses(
+        groups, Dict(d => collect(Float64, Tuple(nodes[d])) for g in groups for d in g),
+        Dict(d => String(first(dirichlet[d])) for g in groups for d in g), collect(Any, periodic)
+    )
+    for t in times
+        check_agreement(classes, d -> (g = last(dirichlet[d]); hasmethod(g, Tuple{typeof(nodes[d]), Float64}) ? g(nodes[d], t) : g(nodes[d])), t)
+    end
+    return sort!(ties), classes
 end
 
-# Prescribed dofs of one periodic class are one value: `dirichlet` maps a prescribed dof to `(piece, g)`, and `g` is
-# compared at the `times` (just `g(x)` for data that do not take a time).
-function _check_dirichlet_agree(members, nodes, dirichlet, times, periodic)
-    length(members) > 1 || return nothing
-    value(d, t) = (g = last(dirichlet[d]); hasmethod(g, Tuple{typeof(nodes[d]), Float64}) ? g(nodes[d], t) : g(nodes[d]))
-    first_dof = first(members)
-    for d in members[2:end], t in times
-        a, b = value(first_dof, t), value(d, t)
-        abs(a - b) <= 1.0e-8 * max(1.0, abs(a), abs(b)) && continue
-        pairs = join(("Γ_$pa ~ Γ_$pb" for (_, pa, pb) in periodic), ", ")
-        throw(
-            ArgumentError(
-                "the Dirichlet data of periodic pieces ($pairs) disagree: the nodes at $(_tuple_str(collect(Float64, Tuple(nodes[first_dof])))) " *
-                    "and $(_tuple_str(collect(Float64, Tuple(nodes[d])))) are the same node of the periodic map, but Γ_$(first(dirichlet[first_dof])) " *
-                    "prescribes $a and Γ_$(first(dirichlet[d])) prescribes $b at t = $t"
+# The prescribed dofs of each periodic class that holds more than one, with what an error needs to name them.
+struct DirichletClasses
+    groups::Vector{Vector{Int}}
+    nodes::Dict{Int, Vector{Float64}}
+    pieces::Dict{Int, String}
+    periodic::Vector{Any}
+end
+
+"""
+    check_agreement(classes::DirichletClasses, value, t)
+
+Throw an `ArgumentError` when `value(d)`, the prescribed value of dof `d` at time `t`, differs between two prescribed dofs
+of one periodic class by more than `1e-8` relative to the data. Called at every evaluation of the Dirichlet data.
+"""
+function check_agreement(classes::DirichletClasses, value, t)
+    for group in classes.groups
+        a = ForwardDiff.value(value(first(group)))
+        for d in view(group, 2:length(group))
+            b = ForwardDiff.value(value(d))
+            abs(a - b) <= 1.0e-8 * max(1.0, abs(a), abs(b)) && continue
+            pairs = join(("Γ_$pa ~ Γ_$pb" for (_, pa, pb) in classes.periodic), ", ")
+            throw(
+                ArgumentError(
+                    "the Dirichlet data of periodic pieces ($pairs) disagree: the nodes at $(_tuple_str(classes.nodes[first(group)])) " *
+                        "and $(_tuple_str(classes.nodes[d])) are the same node of the periodic map, but Γ_$(classes.pieces[first(group)]) " *
+                        "prescribes $a and Γ_$(classes.pieces[d]) prescribes $b at t = $(ForwardDiff.value(t))"
+                )
             )
-        )
+        end
     end
     return nothing
 end

@@ -264,8 +264,8 @@ end
     Ω = unit_square(Triangle, 4)
     left, right, bottom, top = sides(Ω)
     ic = u(0, x, y) ~ 1
-    build(bcs) = begin
-        @named pdesys = PDESystem([heat], bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.2)], [t, x, y], [u(t, x, y)], [])
+    build(bcs; tend = 0.2) = begin
+        @named pdesys = PDESystem([heat], bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, tend)], [t, x, y], [u(t, x, y)], [])
         discretize(pdesys, FEMDiscretization(Ω, t))
     end
     sol = solve(build([u(t, left) ~ u(t, right), u(t, bottom) ~ 1, u(t, top) ~ 1, ic]), DFBDF(); abstol = 1.0e-10, reltol = 1.0e-10)
@@ -276,6 +276,11 @@ end
     @test build([u(t, left) ~ u(t, right), u(t, bottom) ~ 1 + t, u(t, top) ~ 1 + t, ic]) isa SciMLBase.DAEProblem
     @test_throws "the Dirichlet data of periodic pieces (Γ_left ~ Γ_right) disagree" build([u(t, left) ~ u(t, right), u(t, bottom) ~ x, u(t, top) ~ 0, ic])
     @test_throws "Γ_bottom prescribes 0.0 and Γ_bottom prescribes 1.0" build([u(t, left) ~ u(t, right), u(t, bottom) ~ x, u(t, top) ~ 0, ic])
+    # Data that agree at all of the 17 sample times of the interval but differ in between are caught when the solver
+    # evaluates them: x sin(16 pi t) agrees on the two bottom corners at t = 0, 1/16, ... 1 and differs by 1 at t = 1/32.
+    sneaky = build([u(t, left) ~ u(t, right), u(t, bottom) ~ x * sin(16pi * t), u(t, top) ~ 0, ic]; tend = 1.0)
+    @test sneaky isa SciMLBase.DAEProblem
+    @test_throws "the Dirichlet data of periodic pieces (Γ_left ~ Γ_right) disagree" sneaky.f(zeros(length(sneaky.u0)), zeros(length(sneaky.u0)), sneaky.u0, sneaky.p, 1 / 32)
     # Data that agree at t = 0 and differ later.
     @test_throws "disagree" build([u(t, left) ~ u(t, right), u(t, bottom) ~ t * x, u(t, top) ~ 0, ic])
 end
