@@ -110,6 +110,9 @@ function antenna_grid(;
     end
 end
 
+# The local node indices of the four facets of a tetrahedron, in Ferrite's facet order (Ferrite.facets is not public).
+const TET_FACETS = ((1, 3, 2), (1, 2, 4), (2, 3, 4), (1, 4, 3))
+
 """
     gmsh_grid()
 
@@ -131,7 +134,8 @@ function gmsh_grid()
     FerriteGmsh.reorient!(cells, nodes)
     cellsets = FerriteGmsh.tocellsets(3, element_tags)
     facets_of = Dict{Vector{Int}, Vector{Ferrite.FacetIndex}}()
-    for (i, cell) in pairs(cells), (k, facet) in pairs(Ferrite.facets(cell))
+    for (i, cell) in pairs(cells), (k, local_nodes) in pairs(TET_FACETS)
+        facet = map(j -> cell.nodes[j], local_nodes)
         push!(get!(facets_of, sort!(collect(facet)), Ferrite.FacetIndex[]), Ferrite.FacetIndex(i, k))
     end
     facetsets = Dict{String, Set{Ferrite.FacetIndex}}()

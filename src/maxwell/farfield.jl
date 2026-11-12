@@ -178,8 +178,9 @@ function far_field(sol::MaxwellSolution, surface::AbstractString, directions; ce
     return _far_field(_huygens_surface(sol, surface, center), sol.model, sol.omega, directions)
 end
 
-# Directions at the midpoints of an ntheta × nphi grid in (θ, φ) and their solid angles; the midpoint rule is
-# spectrally accurate for smooth functions on the sphere.
+# Directions at the midpoints of an ntheta × nphi grid in (θ, φ) and their solid angles; the midpoint rule in θ
+# converges at second order (the relative solid-angle error is 3e-4 at 36 points and 8e-5 at 72), the periodic
+# rule in φ can be spectrally accurate.
 function _sphere_grid(ntheta, nphi)
     θs = (0.5:ntheta) .* (π / ntheta)
     φs = (0:(nphi - 1)) .* (2π / nphi)
