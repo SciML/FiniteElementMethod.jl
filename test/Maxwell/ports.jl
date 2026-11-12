@@ -199,3 +199,12 @@ end
     model = MaxwellModel(grid; pec = walls, ports = Iterators.Stateful(ports), eps0 = 1.0, mu0 = 1.0)
     @test length(model.ports) == 2
 end
+
+@testset "a wave port in a material with complex permittivity is rejected" begin
+    grid = generate_grid(Tetrahedron, (2, 1, 2), Vec(0.0, 0.0, 0.0), Vec(2.0, 1.0, 2.0))
+    addcellset!(grid, "fill", x -> true)
+    materials = Dict("fill" => MaxwellMaterial(; eps_r = 2 - 0.2im, sigma = 0.0))
+    walls = ["left", "right", "front", "back"]
+    ports = [WavePort("bottom"; a_direction = (1, 0, 0))]
+    @test_throws "lossy material" MaxwellModel(grid; materials, pec = walls, ports, eps0 = 1.0, mu0 = 1.0)
+end

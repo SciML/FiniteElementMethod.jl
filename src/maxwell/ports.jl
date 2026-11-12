@@ -35,7 +35,7 @@ tangential mass `∮ (n × Nᵢ)⋅(n × Nⱼ) dS` of the port face), `profile` 
 (`pᵀ B⁻¹ p` over the unconstrained edge dofs of the face: `∮ e_h⋅e_h dS` of the L² projection `e_h` of the
 mode onto the discrete tangential traces, so that a port-face field `c e_h` gives exactly `pᵀu / norm = c`),
 `normal` (outward), `a`, `b` (mesh units), `kc` (`π / (a L)`, rad/m),
-`eps_r` and `mu_r` of the port material.
+`eps_r` and `mu_r` of the port material (lossless: complex `eps_r` is rejected).
 """
 struct WavePortData
     port::WavePort
@@ -152,6 +152,8 @@ function _wave_port(port::WavePort, dh, pattern, cell_materials, length_scale, c
     length(materials) == 1 || throw(ArgumentError("port $(repr(port.facetset)) touches more than one material"))
     material = only(materials)
     iszero(material.sigma) || throw(ArgumentError("port $(repr(port.facetset)) is in a conducting material"))
+    iszero(imag(material.eps_r)) ||
+        throw(ArgumentError("port $(repr(port.facetset)) is in a lossy material (complex eps_r); the S-parameter power normalisation of a wave port assumes a lossless one"))
 
     e(x) = ê * sin(π * (dot(x, â) - ξ0) / a)
     profile = zeros(Ferrite.ndofs(dh))
