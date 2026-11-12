@@ -6,8 +6,10 @@
 
 A TE10 wave port of a rectangular waveguide on the planar boundary facet set `facetset` of a
 [`MaxwellModel`](@ref). The port face must be the full guide cross-section, a rectangle with PEC on its rim,
-filled with one material of real permittivity and zero conductivity: a complex `eps_r` (a lossy dielectric) or a
-nonzero conductivity is rejected.
+filled with one ordinary passive material: positive real permittivity (`real(eps_r) > 0`, no imaginary part), positive
+permeability (`mu_r > 0`) and zero conductivity. A complex `eps_r` (a lossy dielectric), a nonzero conductivity and a
+non-positive `eps_r` or `mu_r` (a negative-index or double-negative filling, whose outward power does not follow
+`β/μr`) are rejected.
 
 `a_direction` is a vector along the broad wall (the side of length `a`); the mode is
 `e = ê sin(π ξ / a)`, with `ξ` the distance from the edge of the rectangle along `a_direction` and `ê` the
@@ -174,6 +176,9 @@ function _wave_port(port::WavePort, dh, pattern, cell_materials, length_scale, c
     iszero(material.sigma) || throw(ArgumentError("port $(repr(port.facetset)) is in a conducting material"))
     iszero(imag(material.eps_r)) ||
         throw(ArgumentError("port $(repr(port.facetset)) is in a lossy material (complex eps_r); the S-parameter power normalisation of a wave port assumes a lossless one"))
+    real(material.eps_r) > 0 && material.mu_r > 0 || throw(
+        ArgumentError("port $(repr(port.facetset)) is in a material with eps_r = $(material.eps_r) and mu_r = $(material.mu_r); a wave port needs a positive real permittivity and a positive permeability")
+    )
 
     e(x) = ê * sin(π * (dot(x, â) - ξ0) / a)
     profile = zeros(Ferrite.ndofs(dh))
