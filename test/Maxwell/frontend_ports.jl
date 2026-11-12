@@ -131,6 +131,12 @@ end
     bcs = [pec(Ω, WALLS); abc(Γ); Eb[3] ~ 0]
     @test occursin("independent equations", message(() -> discretize(system(Ω, bcs), edge_disc(Ω; omega = 1.0e12))))
     @test occursin("independent equations", message(() -> discretize(system(Ω, bcs), edge_disc(Ω; omega = 1.0))))
+    # Scaling an equation changes nothing: a tiny extra constraint is still one, and a tiny valid row is still valid.
+    tiny = [pec(Ω, WALLS); abc(Γ); 1.0e-13 .* [Eb[3]] .~ 0]
+    @test occursin("independent equations", message(() -> discretize(system(Ω, tiny), edge_disc(Ω; omega = 1.0))))
+    scaled = abc(Γ)
+    scaled[1] = scaled[1].lhs * 1.0e-13 ~ scaled[1].rhs * 1.0e-13
+    @test discretize(system(Ω, [pec(Ω, WALLS); scaled]), edge_disc(Ω; omega = 1.0)) isa LinearProblem
 end
 
 @testset "rejections of absorbing conditions and ports" begin

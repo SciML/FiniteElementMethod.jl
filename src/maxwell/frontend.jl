@@ -289,15 +289,18 @@ function _absorbing_target(n, ν, c)
     )
 end
 
-# An orthonormal basis of the row space of M, as rows. The rows are scaled to unit length first (rows below 1e-12 of
-# the longest are roundoff of a vanishing one and are dropped), so that a row of large coefficients cannot hide an
-# independent row of small ones from the relative singular value threshold.
-function _rowspace(M)
-    lengths = norm.(eachrow(M))
-    M = M[lengths .> 1.0e-12 * maximum(lengths; init = 0.0), :] ./ lengths[lengths .> 1.0e-12 * maximum(lengths; init = 0.0)]
+# An orthonormal basis of the row space of M, as rows. Each row is scaled to unit length first, so that the result
+# does not depend on how the equations are scaled; a row counts as zero when it is below 1e-12 of `ref[i]`, the size
+# the same row has at generic normals (a row can vanish at the actual normal of a facet).
+function _rowspace(M, ref)
+    keep = findall(i -> norm(M[i, :]) > 1.0e-12 * ref[i], axes(M, 1))
+    M = M[keep, :] ./ norm.(eachrow(M[keep, :]))
     F = svd(M)
     return F.Vt[1:count(>(1.0e-10 * maximum(F.S; init = 0.0)), F.S), :]
 end
+
+# Generic unit directions, at which no row of a boundary condition vanishes for a reason of geometry.
+const _GENERIC_NORMALS = [normalize([1.0, 2.0, 3.0]), normalize([-2.0, 1.0, 0.5]), normalize([0.3, -1.0, 2.0])]
 
 # The boundary conditions on each piece: the perfect conductor n × E = 0 (the residuals are linear in the traces and
 # the normal, tangential (C n = 0) and of rank 2 together) or, when they hold derivatives of the traces, the
@@ -366,7 +369,12 @@ function _recognise_boundaries(bcs, fields, pvals, ctx, domain, cells, ω)
             # The columns act on G ~ k E, V = ∂ₜE ~ ω E and U = E; in these units the curl and impedance parts are of
             # the same size (ν k = c ω) whatever the unit system, where the raw coefficients can differ by many orders.
             scale = [fill(ω * sqrt(a2 / nu), 9); fill(ω, 3); ones(3)]'
-            Q, P = _rowspace(Cn .* scale), _rowspace(_absorbing_target(n, nu, c) .* scale)
+            rows(ns) = [maximum(norm((reshape(C_at(m...), length(Bs), 15) .* scale)[i, :]) for m in ns) for i in eachindex(Bs)]
+            Q = _rowspace(Cn .* scale, rows(_GENERIC_NORMALS))
+            P = _rowspace(
+                _absorbing_target(n, nu, c) .* scale,
+                [maximum(norm((_absorbing_target(m, nu, c) .* scale)[i, :]) for m in _GENERIC_NORMALS) for i in 1:3]
+            )
             size(Q, 1) == 2 || throw(
                 ArgumentError("the conditions $where have $(size(Q, 1)) independent equations; the absorbing condition n × (ν curl E) = -sqrt(ε/μ) n × (n × ∂ₜE) has 2; $form")
             )

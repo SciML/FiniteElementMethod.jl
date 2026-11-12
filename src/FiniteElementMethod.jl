@@ -13,7 +13,7 @@ using DiffEqBase: BrownFullBasicInit
 using DomainSets: DomainSets
 using Ferrite: Ferrite, Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexahedron, curl
 using ForwardDiff: ForwardDiff
-using LinearAlgebra: cross, dot, lu, lu!, mul!, norm, rank, svd
+using LinearAlgebra: cross, dot, lu, lu!, mul!, norm, normalize, rank, svd
 using ModelingToolkit: ModelingToolkit, @parameters, @variables, Differential, MTKParameters,
     ProblemTypeCtx, System, complete, getmetadata
 using NonlinearSolveFirstOrder: NewtonRaphson
