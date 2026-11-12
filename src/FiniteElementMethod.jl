@@ -22,7 +22,7 @@ using PrecompileTools: PrecompileTools
 using RuntimeGeneratedFunctions: RuntimeGeneratedFunctions
 using SciMLBase: SciMLBase, DAEFunction, DAEProblem
 using SciMLBase.SymbolicIndexingInterface: SymbolicIndexingInterface, getp, parameter_index, variable_index
-using SparseArrays: SparseMatrixCSC, nonzeros, nzrange, rowvals
+using SparseArrays: SparseMatrixCSC, nnz, nonzeros, nzrange, rowvals
 using SymbolicUtils: SymbolicUtils
 using Symbolics: Symbolics, Equation, Num, @register_array_symbolic, substitute, unwrap
 
@@ -51,6 +51,12 @@ export FEMDiscretization, Galerkin, SUPG, add_boundary_pieces!, ferrite_grid
 export MeshDomain, Region, boundarypiece, boundarypieces, NormalDerivative
 # The integration-by-parts policy `ibp = Dict(eq => Weighted(w))` of `FEMDiscretization`.
 export Weighted
+
+# Frequency-domain Maxwell: a separate entry point assembled directly on Ferrite, not through the PDESystem front end.
+include("maxwell/model.jl")
+include("maxwell/driven.jl")
+export MaxwellMaterial, MaxwellModel, MaxwellTerm, maxwell_operator, maxwell_operator!
+export MaxwellSolution, driven_problem, solve_driven, field_values
 
 include("precompile.jl")
 
