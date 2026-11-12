@@ -53,7 +53,7 @@ The time-harmonic electric-field model on a Ferrite `grid` of `Tetrahedron` cell
 
 with `n × E = 0` on the facet sets named in `pec` and the natural condition `n × (μr⁻¹ ∇ × E) = 0` on the
 rest of the boundary, except for the facet sets named in `absorbing`, which carry the first-order
-Silver-Müller absorbing condition `n × (μr⁻¹ ∇ × E) = -i k0 sqrt(εc/μr) n × (n × E)` with `εc = εr - iσ/(ωε0)` (the outgoing root: for a negative real `εc/μr`, `-i sqrt(|εc/μr|)`), and the
+Silver-Müller absorbing condition `n × (μr⁻¹ ∇ × E) = -i k0 sqrt(εc/μr) n × (n × E)` with `εc = εr - iσ/(ωε0)` (the outgoing root: for a negative real `εc/μr`, `-i sign(ω) sqrt(|εc/μr|)`), and the
 [`WavePort`](@ref)s in `ports`. `pml` is `nothing` or a [`CartesianPML`](@ref), whose cells become an anisotropic
 absorbing layer.
 
