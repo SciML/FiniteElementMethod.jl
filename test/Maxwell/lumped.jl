@@ -121,6 +121,14 @@ end
     @test length(plane) == 2 * 8  # 2 × 2 squares of 2 triangles, each from both sides
     @test gap.length ≈ PLATE_H && gap.width ≈ PLATE_W && abs(gap.normal[3]) ≈ 1
     @test length(FiniteElementMethod._unique_facets(grid, plane)) == 8
+    # The same sheet listed from either side is one sheet: two ports on it overlap.
+    below = [f for f in plane if sum(getcoordinates(grid, f[1]))[3] / 4 < len]
+    addfacetset!(grid, "gap_below", below)
+    addfacetset!(grid, "gap_above", setdiff(plane, below))
+    @test_throws "share facets" MaxwellModel(
+        grid; pec = ["front", "back"], length_scale = 1.0e-3,
+        ports = [LumpedPort("gap_below"; direction = (0, 1, 0)), LumpedPort("gap_above"; direction = (0, 1, 0))]
+    )
     S = lumped_S(model, F3)
     Zc = ETA0 * PLATE_H / PLATE_W
     Ystub = im * tan(F3 / FiniteElementMethod.C0 * d * 1.0e-3) / Zc

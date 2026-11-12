@@ -95,6 +95,13 @@ struct MaxwellModel{G, DH, CH, CV}
     ports::Vector{Union{WavePortData, LumpedPortData}}
 end
 
+function _facet_node_sets(grid, name)
+    return Set(
+        sort!([Ferrite.getcells(grid, cell).nodes[i] for i in _TET_FACET_NODES[local_facet]])
+            for (cell, local_facet) in Ferrite.getfacetset(grid, name)
+    )
+end
+
 function MaxwellModel(
         grid::Ferrite.Grid; materials = Dict{String, MaxwellMaterial}(), pec = String[], absorbing = String[],
         ports = [], length_scale::Real = 1.0, eps0::Real = EPS0, mu0::Real = MU0, quadrature::Int = 2
@@ -105,10 +112,12 @@ function MaxwellModel(
     absorbing = String.(collect(absorbing))
     foreach(name -> _check_facetset(grid, name), pec)
     foreach(name -> _check_facetset(grid, name), absorbing)
-    # Each boundary condition assembles its own term, so a facet in two of them would get both.
-    conditions = [[("absorbing", name) for name in absorbing]; [("wave port", port.facetset) for port in ports]]
+    # Each boundary condition assembles its own term, so a facet in two of them would get both. An interior facet is
+    # the same facet from both of its cells, so facets are compared by their nodes.
+    conditions = [[("absorbing", name) for name in absorbing]; [("port", port.facetset) for port in ports]]
+    node_sets = Dict(name => _facet_node_sets(grid, name) for (_, name) in conditions)
     for (i, (kind_i, name_i)) in pairs(conditions), (kind_j, name_j) in conditions[(i + 1):end]
-        isdisjoint(Ferrite.getfacetset(grid, name_i), Ferrite.getfacetset(grid, name_j)) ||
+        isdisjoint(node_sets[name_i], node_sets[name_j]) ||
             throw(ArgumentError("facet sets $(repr(name_i)) ($kind_i) and $(repr(name_j)) ($kind_j) share facets: a facet can carry only one absorbing or wave port condition"))
     end
     cell_materials = _cell_materials(grid, materials)
