@@ -60,7 +60,7 @@ end
     # A cell is outside the sphere when it lies on the far side of the facet plane from the origin.
     function outside(facet)
         x = getcoordinates(grid, facet[1])
-        a, b, c = (x[i] for i in Ferrite.reference_facets(RefTetrahedron)[facet[2]])
+        a, b, c = (x[i] for i in FiniteElementMethod._TET_FACET_NODES[facet[2]])
         n = cross(b - a, c - a)
         return sign(dot(sum(x) / 4 - a, n)) == sign(dot(a, n))
     end
