@@ -136,7 +136,8 @@ function MaxwellModel(
     cv = Ferrite.CellValues(Ferrite.QuadratureRule{RefTetrahedron}(quadrature), ip)
 
     lumped = Dict(i => _lumped_port_geometry(port, dh) for (i, port) in pairs(ports) if port isa LumpedPort)
-    pattern = _sparsity_pattern(dh, [geometry.dofs for geometry in values(lumped)])
+    wave_dofs = [_wave_port_dofs(port, dh) for port in ports if port isa WavePort]
+    pattern = _sparsity_pattern(dh, [[geometry.dofs for geometry in values(lumped)]; wave_dofs])
     blocks = _assemble_blocks(pattern, dh, cv, cell_materials)
     L2 = float(length_scale)^2
     k2 = mu0 * eps0 * L2

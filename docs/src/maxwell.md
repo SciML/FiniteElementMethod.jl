@@ -55,7 +55,13 @@ sweep.S[2, 1, 5]  # S21 at 10 GHz: |S21| ≈ 1, angle ≈ -93.3°
 are normalised through the TE10 wave impedance `ωμ0μr/β`. For a propagating port these are power waves. Below cutoff
 the propagation constant is `β = -iα`, the evanescent branch, which carries no real axial power: the coefficients
 are then generalized traveling-wave coefficients with the same normalisation, still supported, but without an
-individual incident or outgoing power, and `S` is not power conserving. Wave ports need positive frequencies; a
+individual incident or outgoing power, and `S` is not power conserving.
+
+A wave port is a single-mode TE10 termination: its admittance acts on the TE10 amplitude of the trace only (a rank-one
+term that couples all the dofs of the port face), and the evanescent higher modes see the natural (magnetic-wall)
+boundary at the port plane, so they are reflected, not absorbed, and a lossless single-mode structure conserves
+power. Keep about one decay length `1 / sqrt(kc² - k²)` of the first evanescent mode (`kc = 2π/a` for TE20, `π/b` for
+TE01) of uniform lead between a discontinuity and the port, otherwise `S` depends on the lead length. Wave ports need positive frequencies; a
 zero or negative `ω` is rejected, since a real system has `S(-ω) = conj(S(ω))`.
 
 A port must lie in an ordinary passive material: a complex `eps_r`, a nonzero conductivity, a non-positive `eps_r`
