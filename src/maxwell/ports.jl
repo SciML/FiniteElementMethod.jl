@@ -99,12 +99,15 @@ function tangential_mass(model, facetsets; weight = Returns(1.0))
     return _tangential_mass(model.dh, model.blocks.curlcurl, names, weight)
 end
 
-# sqrt(εc / μr) on the outgoing branch: the principal root, except for a negative real εc / μr (no loss), where it is
-# the limit from the lossy side at the sign of ω, -i sign(ω) sqrt(|εc / μr|), so that the exterior field decays, the
-# term is continuous in the loss and A(-ω) = conj(A(ω)).
+# y = sqrt(εc / μr), the admittance of the outgoing wave of the exterior medium, which is passive: Re y ≥ 0. That is
+# the principal root, except when εc / μr is a negative real (no loss), where the root is the limit of the lossy
+# side. A loss -iε'' in εc, -iμ'' in μr (their signs flip with ω) moves εc / μr off the axis by
+# -i sign(ω) (ε'' μr - εc μ'') / μr², whose sign is -sign(ω) sign(μr) when εc and μr have opposite signs. So
+# y = -i sign(ω) sign(μr) sqrt(|εc / μr|) there, which makes the exterior field decay, the term continuous in the loss
+# and A(-ω) = conj(A(ω)).
 function _admittance(εc, μr, ω)
     z = εc / μr
-    return imag(z) == 0 && real(z) < 0 ? -im * sign(ω) * sqrt(-real(z)) : sqrt(z)
+    return imag(z) == 0 && real(z) < 0 ? -im * sign(ω) * sign(real(μr)) * sqrt(-real(z)) : sqrt(z)
 end
 
 # First-order absorbing boundary n × (μr⁻¹ ∇ × E) = -i k0 ηr⁻¹ n × (n × E), with ηr⁻¹ = sqrt(εc / μr) and
@@ -245,8 +248,10 @@ end
 # n × μr⁻¹∇ × E = -(iβ/μr) n × (n × E) - 2(iβ/μr) E0 e on the port gives +(iβ/μr) L B on the operator and
 # +2(iβ/μr) L E0 p on the load, with E0 = 1.
 function _port_term(data::WavePortData, mu0, eps0, L)
-    return MaxwellTerm(data.block, ω -> im * _propagation_constant(data, mu0 * eps0, ω) * L / data.mu_r)
+    return MaxwellTerm(data.block, ω -> im * _propagation_constant(data, mu0 * eps0, _positive_frequency(ω)) * L / data.mu_r)
 end
+# β depends on ω², so it is the outgoing condition for ω > 0 only; the operator path enforces it like the sweeps do.
+_positive_frequency(ω) = ω > 0 ? ω : throw(ArgumentError("wave ports need positive frequencies, got ω = $ω"))
 
 _excitation(model, data::WavePortData, ω) =
     (2im * _propagation_constant(data, model.mu0 * model.eps0, ω) * model.length_scale / data.mu_r) .* data.profile
