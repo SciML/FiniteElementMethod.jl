@@ -138,7 +138,7 @@ function _wave_port(port::WavePort, dh, pattern, cell_materials, length_scale, c
     end
     for (cell, local_facet) in facets
         x = Ferrite.getcoordinates(grid, cell)
-        append!(nodes, x[i] for i in Ferrite.reference_facets(RefTetrahedron)[local_facet])
+        append!(nodes, x[i] for i in _TET_FACET_NODES[local_facet])
     end
     â, ê = _port_frame(port, normal)
     ξ, η, ζ = [dot(x, â) for x in nodes], [dot(x, ê) for x in nodes], [dot(x, normal) for x in nodes]
@@ -174,7 +174,7 @@ function _wave_port(port::WavePort, dh, pattern, cell_materials, length_scale, c
     count = Dict{Int, Int}()
     for (cell, local_facet) in facets
         cell_dofs = Ferrite.celldofs(dh, cell)
-        for i in Ferrite.dirichlet_facetdof_indices(_NEDELEC)[local_facet]
+        for i in _TET_FACET_EDGE_DOFS[local_facet]
             count[cell_dofs[i]] = get(count, cell_dofs[i], 0) + 1
         end
     end
