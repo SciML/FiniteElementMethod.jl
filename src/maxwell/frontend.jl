@@ -292,9 +292,28 @@ function _absorbing_target(n, ν, c)
     )
 end
 
+# The expression with every term replaced by its absolute value, so that sums add where they would cancel: the size
+# that a coefficient has before cancellation, against which roundoff is judged.
+function _magnitude(ex)
+    if SymbolicUtils.iscall(ex)
+        op, args = SymbolicUtils.operation(ex), SymbolicUtils.arguments(ex)
+        if op === (+) || op === (-)
+            return sum(_magnitude, args)
+        elseif op === (*)
+            return prod(_magnitude, args)
+        elseif op === (/)
+            return _magnitude(args[1]) / _magnitude(args[2])
+        end
+        return abs(Num(ex))
+    end
+    value = SymbolicUtils.unwrap_const(ex)
+    return value isa Number ? abs(value) : abs(Num(ex))
+end
+
 # An orthonormal basis of the row space of M, as rows. Each row is scaled to unit length first, so that the result
-# does not depend on how the equations are scaled; a row is zero only when all its entries are exactly zero at the
-# actual (snapped) normal of the facet, so a tiny factor that is really there (1e-13, 1e-20) still makes a row.
+# does not depend on how the equations are scaled; a row is zero only when all its entries are exactly zero, which
+# the caller makes of the entries that are roundoff of their own cancelling terms (see `_magnitude`), so a tiny
+# factor that is really there (1e-13, 1e-20) still makes a row.
 function _rowspace(M)
     keep = findall(i -> norm(M[i, :]) > 0, axes(M, 1))
     M = M[keep, :] ./ norm.(eachrow(M[keep, :]))
@@ -351,11 +370,15 @@ function _recognise_boundaries(bcs, fields, pvals, ctx, domain, cells, ω)
             ArgumentError(isabc ? "the absorbing condition on $name has a source (a term without E), which is not supported; drive the field with a WavePort or a volume source; $form" : "the conditions on $name prescribe a nonzero tangential field, which is not supported; $form")
         )
         C_at = Symbolics.build_function(vec(C), slots.N...; expression = Val(false))[1]
+        B_at = Symbolics.build_function(vec(Num.(_magnitude.(unwrap.(C)))), slots.N...; expression = Val(false))[1]
         for (n, facet) in _facet_normals(domain.mesh, String(name))
             # The roundoff of a normal that lies in a coordinate plane is not a coefficient: snap it to exactly 0, so
             # that n[1] * E vanishes there while n[1] + 1e-16 does not.
             n = [abs(x) < 1.0e-14 ? 0.0 : x for x in n]
             Cn = reshape(_real_values(C_at(n...), "a coefficient of the condition"), length(Bs), 15)
+            # An entry is zero when it is roundoff of the terms that cancel in it: at most 64 eps of their absolute sum.
+            Bn = reshape(_real_values(B_at(n...), "a coefficient of the condition"), length(Bs), 15)
+            Cn = ifelse.(abs.(Cn) .<= 64eps() .* Bn, 0.0, Cn)
             where = "on $name at facet $((facet[1], facet[2])) with normal $(Tuple(round.(n; digits = 6)))"
             if !isabc
                 Cn = Cn[:, 13:15]
@@ -375,11 +398,14 @@ function _recognise_boundaries(bcs, fields, pvals, ctx, domain, cells, ω)
             # The columns act on G ~ k E, V = ∂ₜE ~ ω E and U = E; in these units the curl and impedance parts are of
             # the same size (ν k = c ω) whatever the unit system, where the raw coefficients can differ by many orders.
             scale = [fill(ω * sqrt(a2 / nu), 9); fill(ω, 3); ones(3)]'
-            # Rows are judged at the actual normal alone; a term in E counts in a surviving row only.
-            survives = [norm(Cn[i, :] .* vec(scale)) > 0 for i in eachindex(Bs)]
-            has_e_term = any(i -> survives[i] && any(!iszero, Cn[i, 13:15]), eachindex(Bs))
+            # A row that vanishes (all its entries zero above) is no equation; a term in E counts in a surviving row.
+            has_e_term = any(i -> any(!iszero, Cn[i, 13:15]), eachindex(Bs))
             Q = _rowspace(Cn .* scale)
-            P = _rowspace(_absorbing_target(n, nu, c) .* scale)
+            # The absorbing condition has two equations, its tangential components.
+            axis = argmin(abs.(n))
+            t1 = normalize(cross(n, [k == axis for k in 1:3]))
+            tangents = [t1'; cross(n, t1)']
+            P = _rowspace((tangents * _absorbing_target(n, nu, c)) .* scale)
             size(Q, 1) == 2 || throw(
                 ArgumentError("the conditions $where have $(size(Q, 1)) independent equations; the absorbing condition n × (ν curl E) = -sqrt(ε/μ) n × (n × ∂ₜE) has 2; $form")
             )

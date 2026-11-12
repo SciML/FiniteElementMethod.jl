@@ -166,6 +166,22 @@ end
     end
 end
 
+@testset "a linear combination of the absorbing equations is redundant on an oblique face" begin
+    grid = generate_grid(Tetrahedron, (2, 2, 2), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0))
+    for i in eachindex(grid.nodes)
+        x = grid.nodes[i].x
+        grid.nodes[i] = Node(Vec(x[1], x[2], x[3] + 0.2x[1] + 0.3x[2]))
+    end
+    Ω = MeshDomain(grid)
+    Γ = boundarypiece(Ω, :top)
+    bc = abc(Γ)
+    r = [e.lhs - e.rhs for e in bc]
+    solve_with(bcs) = discretize(system(Ω, bcs), edge_disc(Ω; omega = 2.0))
+    base = solve_with(bc)
+    combination = solve_with([bc; -0.2 * r[1] - 0.3 * r[2] + r[3] ~ 0])
+    @test combination.A == base.A && combination.b == base.b
+end
+
 @testset "rejections of absorbing conditions and ports" begin
     grid = guide(10.0, 5.0)
     addfacetset!(grid, "lid", x -> x[3] ≈ 10.0)  # the facets of top again
