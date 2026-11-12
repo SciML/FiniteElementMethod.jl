@@ -212,3 +212,10 @@ end
         @test norm(A * sweep.fields[k] - B) / norm(B) < 1.0e-8
     end
 end
+
+@testset "zero frequency is rejected for lumped ports" begin
+    model = plates(4.0)
+    @test_throws "no static" solve_sweep(model, [F3, 0.0])
+    @test_throws "ω = 0 is not supported for lumped port" FiniteElementMethod.port_excitations(model, 0.0)
+    @test_throws "ω = 0 is not supported for lumped port" FiniteElementMethod.s_parameters(model, 0.0, zeros(ComplexF64, ndofs(model.dh), 2))
+end
