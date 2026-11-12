@@ -106,6 +106,23 @@ end
     @test_logs min_level = Base.CoreLogging.Warn maxwell_eigenmodes(box_model(2); nev = 1, target_frequency = 1.0)
 end
 
+@testset "physical modes below the material-warning cutoff are kept" begin
+    # mu_r = 5e-6 on half the cube puts ‖K‖₁/‖M‖₁ near 3.5e7, so a cutoff of 1e-6 of it (35.4) is above the first
+    # three physical eigenvalues, which are still resolved: the generalised eigenvalues are checked against a dense solve.
+    grid = unit_cube(3)
+    addcellset!(grid, "left", x -> x[1] <= 0.5)
+    model = MaxwellModel(grid; materials = Dict("left" => MaxwellMaterial(; mu_r = 5.0e-6)), pec = CUBE_FACES, eps0 = 1.0, mu0 = 1.0)
+    free = setdiff(1:ndofs(model.dh), FiniteElementMethod._pec_dofs(model.dh, model.grid, model.pec))
+    λ = eigvals(Symmetric(Matrix(model.blocks.curlcurl[free, free])), Symmetric(Matrix(model.blocks.eps_real[free, free])))
+    λ_physical = filter(>(1.0e4 * eps() * maximum(λ)), λ)
+    @test λ_physical[1:3] ≈ [22.48440197, 29.81579099, 32.07272248] rtol = 1.0e-7
+    truth = sqrt(λ_physical[1]) / 2π
+    for kwargs in ((;), (; krylovdim = 10_000))
+        found = maxwell_eigenmodes(model; nev = 1, target_frequency = 0.5, kwargs...)
+        @test found.frequency[1] ≈ truth rtol = 1.0e-8
+    end
+end
+
 @testset "lossy: nearest in complex ω, and the candidate bound holds" begin
     # eps_r = 1 - 100i scales ω by 1/√(1 - 100i): the lowest modes sit at Re f = 0.0592, 0.0794, 0.0854 with
     # Im f about as large. From 0.0854 the nearest in complex ω is the first, and shift-invert ranks the first

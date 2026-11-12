@@ -99,7 +99,7 @@ end
 
 """
     maxwell_eigenmodes(model::MaxwellModel; nev, target_frequency, krylovdim = max(30, 2nev + 10),
-                       tol = 1e-10, maxiter = 300, nullspace_tol = 1e-6)
+                       tol = 1e-10, maxiter = 300, nullspace_tol = nothing)
 
 The `nev` resonant modes of `model` whose complex angular frequencies `ω` are nearest `ωt = 2π target_frequency`
 (`target_frequency` in Hz, real and positive), that is with the least `|ω - ωt|`, sorted by `Re(ω)`. For a
@@ -117,11 +117,14 @@ Edge elements carry the gradients of the nodal hat functions as an exact `λ = 0
 off the PEC facets, less one per connected part of the mesh without PEC), which would swamp the shift-invert for any target below the lowest physical mode. Every
 Krylov vector is therefore projected, along those gradients, onto the discretely divergence-free fields, so the
 null space never enters; eigenvalues with `|λ| < nullspace_tol ‖Kc‖₁/‖Mε‖₁` (such as the one constant mode of
-each further disconnected PEC body) are dropped as well, and the search widens until `nev` modes survive.
+each further disconnected PEC body) are dropped as well, and the search widens until `nev` modes survive. By default
+`nullspace_tol = √eps(Float64)`, the relative precision to which an eigenvalue of the spectrum scale `‖Kc‖₁/‖Mε‖₁`
+can be told from zero, so every resolved physical mode is kept; a larger value discards modes below it.
 
-The cutoff is a property of the whole model, and the shifted solve is ill-conditioned with it: where `εr` or `μr`
-differ by more than a factor 1e6 between cells (a warning says so), `‖Kc‖₁/‖Mε‖₁` can exceed the lowest physical
-`λ` by many orders and the modes returned may be missing or inaccurate. This limitation is not removed.
+The shift `σ` is raised to at least `1e-6 ‖Kc‖₁/‖Mε‖₁`, which keeps `Kc - σ Mε` from being numerically singular; the
+modes are still ranked by distance from the target itself. Where `εr` or `μr` differ by more than a factor 1e6 between cells, the shifted
+solve is ill-conditioned and the modes returned may be inaccurate; a warning says so, and also when an explicit
+`nullspace_tol` puts the cutoff above the target.
 
 Returns `(; frequency, Q, omega, modes)`: `omega` the complex angular frequencies `ω = √λ / (L √(μ0 ε0))`,
 `frequency = Re(ω) / 2π` in Hz, `Q = Re(ω) / (2 Im(ω))` (`Inf` for a lossless model; with `exp(+iωt)` a passive
@@ -134,7 +137,7 @@ modes outside the gradient null space.
 """
 function maxwell_eigenmodes(
         model::MaxwellModel; nev::Integer, target_frequency::Real, krylovdim::Integer = max(30, 2nev + 10),
-        tol::Real = 1.0e-10, maxiter::Integer = 300, nullspace_tol::Real = 1.0e-6
+        tol::Real = 1.0e-10, maxiter::Integer = 300, nullspace_tol::Union{Nothing, Real} = nothing
     )
     nev >= 1 || throw(ArgumentError("nev must be positive, got $nev"))
     0 < target_frequency < Inf ||
@@ -152,16 +155,21 @@ function maxwell_eigenmodes(
     isempty(free) && throw(ArgumentError("every edge dof of the model is on a PEC facet, so it has no modes"))
     K = blocks.curlcurl[free, free]
     M = lossy ? blocks.eps_real[free, free] + im * blocks.eps_imag[free, free] : blocks.eps_real[free, free]
-    # The cutoff for the null space is relative to the spectrum of the model, ‖K‖/‖M‖ of the order of its largest λ,
-    # not to the target: relative to a high target it would discard the lowest physical modes, and relative to a
-    # low one it would admit the static modes, whose roundoff λ is far above it. A target below the cutoff is
-    # raised to it, which also keeps `K - σ M` from being numerically singular; it then has the same nearest modes.
-    λ_null = nullspace_tol * opnorm(K, 1) / opnorm(M, 1)
-    # Both the cutoff and the conditioning of the shifted solve follow the spread of the material coefficients.
+    # Classifying a mode as static is a question of precision: its λ is zero up to roundoff in the spectrum scale
+    # ‖K‖/‖M‖, so the cutoff is relative to that scale, not to the target (a high target would discard the lowest
+    # physical modes) and not to a conditioning bound (the shift floor below, which is far above the lowest modes
+    # of a model with strongly contrasting materials).
+    spectrum_scale = opnorm(K, 1) / opnorm(M, 1)
+    λ_null = something(nullspace_tol, sqrt(eps())) * spectrum_scale
+    # A shift near zero makes K - σ M numerically singular, because K itself is: raise a low target to a floor. It
+    # has the same nearest modes.
+    λ_shift = 1.0e-6 * spectrum_scale
     contrast = _material_contrast(model.materials)
-    contrast > 1.0e6 && @warn "maxwell_eigenmodes: the materials of the model differ by a factor $contrast in εr or μr; the null-space cutoff $λ_null then exceeds low physical modes and the shift-invert is ill-conditioned, so modes may be missing or inaccurate (see the nullspace_tol keyword)"
-    ωt = max(2π * target_frequency, sqrt(λ_null / scale))
-    σ = scale * ωt^2
+    contrast > 1.0e6 && @warn "maxwell_eigenmodes: the materials of the model differ by a factor $contrast in εr or μr, so the shift-invert is ill-conditioned and modes may be inaccurate"
+    nullspace_tol !== nothing && λ_null > scale * (2π * target_frequency)^2 && @warn "maxwell_eigenmodes: nullspace_tol puts the null-space cutoff $λ_null above the target, so the modes there are discarded"
+    ωt = 2π * target_frequency
+    σ = max(scale * ωt^2, λ_shift)
+    shift_offset = σ - scale * ωt^2
     # A shift exactly on a discrete eigenvalue makes the factorisation singular; nudge it off.
     F = try
         lu(K - σ * M)
@@ -183,8 +191,9 @@ function maxwell_eigenmodes(
 
     x0 = project(T.(sin.(1.3 .* (1:length(free)) .^ 1.1)))
     # Shift-invert finds the modes nearest σ in λ ∝ ω², which favours those below the target. Every mode with
-    # |ω - ωt| ≤ d has |λ - σ| = scale |ω - ωt| |ω + ωt| ≤ scale d (2ωt + d), complex ω included, so the
-    # candidates (all modes within the largest λ distance found) hold the nev nearest in ω once it reaches that.
+    # |ω - ωt| ≤ d has |λ - σ| ≤ scale |ω - ωt| |ω + ωt| + |σ - scale ωt²| ≤ scale d (2ωt + d) + shift_offset,
+    # complex ω included, so the candidates (all modes within the largest λ distance found) hold the nev nearest
+    # in ω once it reaches that.
     howmany = 2nev
     local λ, vecs, keep
     while true
@@ -206,7 +215,7 @@ function maxwell_eigenmodes(
             continue
         end
         d = sort(dist)[nev]
-        (dense || maximum(l -> abs(l - σ), λ[keep]) >= (2ωt + d) * d * scale) && break
+        (dense || maximum(l -> abs(l - σ), λ[keep]) >= (2ωt + d) * d * scale + shift_offset) && break
         howmany = 2howmany
     end
     length(keep) < nev && @warn "maxwell_eigenmodes found $(length(keep)) of $nev modes"
