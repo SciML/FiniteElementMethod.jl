@@ -106,16 +106,30 @@ function PDEBase.interface_errors(pdesys::ModelingToolkit.PDESystem, v::PDEBase.
     return nothing
 end
 
-# A condition on two pieces is a periodic pair `u(t, Γa) ~ u(t, Γb)` of one field; the pairs leave the conditions that
-# PDEBase parses, as `(field, Γa, Γb)`.
-function _split_periodic(bcs, ctx)
+# A condition on two pieces is a periodic pair `u(t, Γa) ~ u(t, Γb)` of one field (`u(Γa) ~ u(Γb)` without time); the
+# pairs leave the conditions that PDEBase parses, as `(field, Γa, Γb)`. Both traces must take exactly the time variable
+# (or nothing, for a steady system) besides the piece: any other time argument would be a different problem.
+function _split_periodic(bcs, ctx, time)
     pairs, rest = Tuple{Int, Any, Any}[], []
     for eq in bcs
         length(_trace_pieces(eq.lhs - eq.rhs)) > 1 || (push!(rest, eq); continue)
         lhs, rhs = _unwrap_arg(eq.lhs), _unwrap_arg(eq.rhs)
         f = _field_index(ctx, lhs)
-        (f !== nothing && f == _field_index(ctx, rhs) && length(_trace_pieces(lhs)) == 1 && length(_trace_pieces(rhs)) == 1) ||
+        (f !== nothing && length(_trace_pieces(lhs)) == 1 && length(_trace_pieces(rhs)) == 1 && SymbolicUtils.iscall(rhs)) ||
             throw(ArgumentError("$_PERIODIC_FORM: $eq"))
+        f == _field_index(ctx, rhs) ||
+            throw(ArgumentError("a periodic condition relates the traces of one field on two pieces, but $eq names two fields"))
+        for trace in (lhs, rhs)
+            others = [a for a in SymbolicUtils.arguments(trace) if !(_unwrap_arg(a) isa PDEBase.BoundaryPiece)]
+            ok = time === nothing ? isempty(others) : length(others) == 1 && isequal(_unwrap_arg(only(others)), _unwrap_arg(time))
+            ok || throw(
+                ArgumentError(
+                    "the trace $trace of the periodic condition $eq must take " *
+                        (time === nothing ? "no time argument, as in u(Γa) ~ u(Γb), since the system is steady" : "the time variable $time as its only argument besides the piece, as in u($time, Γa) ~ u($time, Γb)") *
+                        "; a fixed, shifted or scaled time is not supported"
+                )
+            )
+        end
         push!(pairs, (f, only(_trace_pieces(lhs)), only(_trace_pieces(rhs))))
     end
     return pairs, rest
@@ -411,7 +425,7 @@ function _lower(pdesys, disc::FEMDiscretization)
     v = PDEBase.VariableMap(sys, disc; replaced_vars = replaced)
     PDEBase.interface_errors(sys, v, disc)
     ctx = StrongForm.SlotContext(sys, v)
-    periodic, bcs = _split_periodic(sys.bcs, ctx)
+    periodic, bcs = _split_periodic(sys.bcs, ctx, disc.time)
     boundarymap = _boundary_map(bcs, v, disc)
     ics, _ = PDEBase.split_ics_bcs(boundarymap, v, disc)
     an = _paired(StrongForm.analyse(sys, v, boundarymap; ibp = disc.ibp), pdesys.eqs, ctx, disc)

@@ -315,3 +315,32 @@ end
     )
     @test_throws "both match the node" problem(close_grid)
 end
+
+# BCs:    periodic pairs whose traces do not both take exactly the time variable (transient) or no time (steady)
+# Shows:  a fixed, shifted or scaled time, mismatched times, a time on a steady system and two different fields are errors
+#         naming the condition; they are neither a periodic pair nor read as an initial or Dirichlet condition.
+@testset "periodic pairs need the system's time variable on both traces" begin
+    Ω = unit_square(Triangle, 4)
+    left, right, bottom, top = sides(Ω)
+    walls = [u(t, bottom) ~ 0, u(t, top) ~ 0, u(0, x, y) ~ 0]
+    function build(bc)
+        @named pdesys = PDESystem([heat], [bc; walls], [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.1)], [t, x, y], [u(t, x, y)], [])
+        return discretize(pdesys, FEMDiscretization(Ω, t))
+    end
+    @test build(u(t, left) ~ u(t, right)) isa SciMLBase.DAEProblem
+    @test build(u(left, t) ~ u(right, t)) isa SciMLBase.DAEProblem
+    @test_throws "must be a periodic pair" build(u(t, left) - u(t, right) ~ 0)
+    for bc in (u(0, left) ~ u(t, right), u(t, left) ~ u(0, right), u(0, left) ~ u(0, right), u(t + 1, left) ~ u(t, right), u(2t, left) ~ u(2t, right))
+        @test_throws "of the periodic condition" build(bc)
+        @test_throws "a fixed, shifted or scaled time is not supported" build(bc)
+    end
+    @test_throws "names two fields" build(u(t, left) ~ v(t, right))
+    # Steady: no time argument; a time on a steady system is rejected with the same message.
+    Δ(f) = Dx(Dx(f)) + Dy(Dy(f))
+    function steady(bc)
+        @named pdesys = PDESystem([Δ(u(x, y)) - u(x, y) ~ 0], [bc, u(bottom) ~ 0, u(top) ~ 0], [(x, y) ∈ Ω], [x, y], [u(x, y)], [])
+        return discretize(pdesys, FEMDiscretization(Ω))
+    end
+    @test steady(u(left) ~ u(right)) isa SciMLBase.NonlinearProblem
+    @test_throws "must take no time argument" steady(u(t, left) ~ u(t, right))
+end
