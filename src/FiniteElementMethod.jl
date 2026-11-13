@@ -55,12 +55,14 @@ export Weighted
 # Frequency-domain Maxwell: a separate entry point assembled directly on Ferrite, not through the PDESystem front end.
 include("maxwell/ports.jl")
 include("maxwell/model.jl")
+include("maxwell/pml.jl")
 include("maxwell/driven.jl")
 include("maxwell/sweep.jl")
 include("maxwell/adjoint.jl")
 export MaxwellMaterial, MaxwellModel, MaxwellTerm, maxwell_operator, maxwell_operator!
 export MaxwellSolution, driven_problem, solve_driven, field_values
 export WavePort, MaxwellSweep, solve_sweep
+export CartesianPML
 export MaxwellSensitivities, s_parameter_sensitivities, adjoint_gradient
 
 include("precompile.jl")

@@ -209,3 +209,25 @@ end
         @test isfinite(term.coefficient(0.0))
     end
 end
+
+@testset "sensitivities reject a parameter region that overlaps the PML" begin
+    len = 2SLAB_LEAD + SLAB_D
+    n = ceil.(Int, (SLAB_A, SLAB_B, len) ./ 3.0)
+    grid = generate_grid(Tetrahedron, Tuple(n), Vec(0.0, 0.0, 0.0), Vec(SLAB_A, SLAB_B, len))
+    addcellset!(grid, "slab", x -> SLAB_LEAD - 1.0e-9 <= x[3] <= SLAB_LEAD + SLAB_D + 1.0e-9; all = true)
+    addcellset!(grid, "pml", x -> x[3] >= 25.0 - 1.0e-9; all = true)
+    addcellset!(grid, "lossy", x -> x[3] >= 20.0 - 1.0e-9; all = true)  # reaches into the PML
+    model = MaxwellModel(
+        grid; materials = Dict("lossy" => MaxwellMaterial(; sigma = 0.5)), pec = [SLAB_WALLS; "top"],
+        ports = [WavePort("bottom"; a_direction = (1, 0, 0))], pml = CartesianPML("pml"; omega = SLAB_F), length_scale = 1.0e-3,
+    )
+    sweep = solve_sweep(model, [SLAB_F]; fields = true)
+    n_dofs = ndofs(model.dh)
+    for kind in (:sigma, :eps_r, :eps_r_imag, :mu_r)
+        @test_throws "overlaps the PML cell set" s_parameter_sensitivities(model, [SLAB_F], [(kind, "lossy")])
+        @test_throws "overlaps the PML cell set" s_parameter_sensitivities(model, sweep, [(kind, "lossy")])
+        @test_throws "overlaps the PML cell set" adjoint_gradient(model, SLAB_F, zeros(ComplexF64, n_dofs), zeros(n_dofs), [(kind, "lossy")])
+    end
+    # A region that does not touch the layer still works.
+    @test size(s_parameter_sensitivities(model, [SLAB_F], [(:eps_r, "slab")]).dS) == (1, 1, 1, 1)
+end
