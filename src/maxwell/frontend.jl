@@ -392,8 +392,12 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
         (iszero(nu) || iszero(1 / nu) || !isfinite(1 / nu)) &&
             throw(ArgumentError("ν = $nu in cell $cell; ν = 1/μ must be nonzero" * (iszero(nu) ? "" : " and 1/ν must be representable")))
         # The net reaction a₀ - ω² a₂ is formed exactly (it cancels when the two are large), then divided once.
-        net = big(a0) - big(ω)^2 * big(a2)
-        eps_r = Float64(-net / big(ω)^2)
+        all(isfinite, (a0, a2, ω)) || throw(
+            ArgumentError("the reaction a₀ - ω² a₂ ($a0 - $ω^2 $a2) in cell $cell is not representable as ε = a₂ - a₀/ω²; the coefficients must be finite")
+        )
+        # Exact rational arithmetic of the Float64 inputs, so that the cancellation does not depend on any BigFloat precision.
+        net = Rational{BigInt}(a0) - Rational{BigInt}(ω)^2 * Rational{BigInt}(a2)
+        eps_r = Float64(-net / Rational{BigInt}(ω)^2)
         # The coefficient and the reaction -ω² eps_r that assembly forms from it must neither overflow nor lose a nonzero
         # net reaction to underflow.
         reaction = -ω^2 * eps_r
