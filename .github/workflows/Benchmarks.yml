@@ -36,7 +36,7 @@ jobs:
       - name: "Check that the results render"
         run: julia benchmarks/render.jl benchmarks/results "${{ runner.temp }}/benchmarks.md"
       - name: "Propose the new results"
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: benchmarks/results
           add-paths: benchmarks/results/*.toml
