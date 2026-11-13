@@ -196,19 +196,26 @@ end
         "the zeroth-order term of equation 1 couples the components of E; the coefficients of E and its time derivatives must be scalars"
 end
 
-@testset "a frequency too small for the reaction coefficient is rejected, not turned into NaN" begin
+@testset "coefficients outside the supported window are rejected, not turned into NaN or silent underflow" begin
     Ω = MeshDomain(unit_cube(1))
-    for (ω, a0) in ((1.0e-160, 1.0),)
-        @test occursin("not representable", message(() -> discretize(maxwell_system(Ω; a0), maxwell_disc(Ω, ω))))
-    end
-    # The net reaction a₀ - ω² a₂ = 8.4e-17 is exactly representable, but ε = -net/ω² underflows to zero.
-    @test occursin("not representable", message(() -> discretize(maxwell_system(Ω; a0 = 5.0, a2 = 5.0e-308), maxwell_disc(Ω, 1.0e154))))
-    # ω² rounds to the subnormal 5e-324, so assembly would form -4.94e-16 for the exact net reaction -4e-16.
-    @test occursin("not representable", message(() -> discretize(maxwell_system(Ω; nu = 1.0e-30, a2 = 1.0e308, a0 = 0.0, f = [-4.0e-16, 0.0, 0.0]), maxwell_disc(Ω, 2.0e-162))))
-    # ω² is the smallest normal number and every scalar round trip is exact, but the assembled reaction and load underflow.
-    @test occursin("not representable", message(() -> discretize(maxwell_system(Ω; nu = 1.0e-307, a0 = 2.0^-1074, f = [2.0^-1074, 0.0, 0.0]), maxwell_disc(Ω, 2.0^-511))))
-    # a0/ω² underflows to zero next to a dominant curl-curl term, so the reaction would be silently dropped.
-    @test occursin("not representable", message(() -> discretize(maxwell_system(Ω; nu = 1.0e-30, a2 = 0, a0 = 1.0e-20), maxwell_disc(Ω, 1.0e154))))
+    outside(ω; kw...) = occursin("supported window", message(() -> discretize(maxwell_system(Ω; kw...), maxwell_disc(Ω, ω))))
+    @test outside(1.0e-160; a0 = 1.0)
+    @test outside(1.0e154; a0 = 5.0, a2 = 5.0e-308)  # the net reaction 8.4e-17 against ε = -net/ω² underflowing
+    @test outside(2.0e-162; nu = 1.0e-30, a2 = 1.0e308, a0 = 0.0, f = [-4.0e-16, 0.0, 0.0])  # ω² subnormal
+    @test outside(2.0^-511; nu = 1.0e-307, a0 = 2.0^-1074, f = [2.0^-1074, 0.0, 0.0])  # assembled reaction and load underflow
+    @test outside(1.0e154; nu = 1.0e-30, a2 = 0, a0 = 1.0e-20)
+    @test outside(1.0e154; nu = 1.0e-180, a0 = 0, a2 = 0, a1 = 2.0^-1074)  # the conductivity block underflows in assembly
+    @test outside(1.0; nu = 1.0e101)
+    @test outside(1.0; f = [1.0e-101, 0.0, 0.0])
+    # SI-scale physics is well inside the window: ε₀, 1/μ₀, ω = 2π 10 GHz and the conductivity of copper.
+    ε0, ν, σ, ω = 8.854187817e-12, 1 / (4π * 1.0e-7), 5.8e7, 2π * 1.0e10
+    sys = maxwell_system(Ω; nu = ν, a2 = ε0, a1 = σ, f = [1.0, 0.0, 0.0])
+    disc = maxwell_disc(Ω, ω)
+    (; model) = maxwell_model(sys, disc)
+    prob = discretize(sys, disc)
+    E = field_values(MaxwellSolution(model, ω, prob.A \ prob.b), [Vec(0.3, 0.4, 0.5)]).E[1]
+    reaction = -ω^2 * ε0 + im * ω * σ
+    @test collect(E) ≈ [1 / reaction, 0, 0] rtol = 1.0e-6
 end
 
 @testset "a large reaction coefficient hides no other coefficient" begin

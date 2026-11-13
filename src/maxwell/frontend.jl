@@ -200,6 +200,30 @@ function _recognise_volume(an, s, fixed, xs)
     return (; nu, a..., sources = sources[invperm(comps)])
 end
 
+# The working range of the PDESystem front end: every nonzero coefficient, the source amplitude and ω lie in
+# [1e-100, 1e100] in magnitude and the products ω² a₂ and ω a₁ in [1e-250, 1e250], so that products with mesh
+# quantities (element volumes, mass and stiffness entries) cannot underflow to subnormal values or overflow.
+const _WINDOW = (1.0e-100, 1.0e100)
+const _PRODUCT_WINDOW = (1.0e-250, 1.0e250)
+
+function _window_error(name, value, where, lo, hi)
+    place = where === nothing ? "" : " in cell $where"
+    return ArgumentError(
+        "$name = $value$place is outside the supported window $lo ≤ |$name| ≤ $hi of the Maxwell front end (SI-scale physics is " *
+            "well inside it); nondimensionalise the equation, or build a MaxwellModel directly"
+    )
+end
+function _check_window(name, value, where)
+    (iszero(value) || _WINDOW[1] <= abs(value) <= _WINDOW[2]) || throw(_window_error(name, value, where, _WINDOW...))
+    return nothing
+end
+function _check_product_window(name, value, where)
+    (iszero(value) || _PRODUCT_WINDOW[1] <= abs(value) <= _PRODUCT_WINDOW[2]) ||
+        throw(_window_error(name, value, where, _PRODUCT_WINDOW...))
+    return nothing
+end
+_check_window_sources(values) = foreach(v -> _check_window("a source amplitude", v, nothing), values)
+
 # The terms of lower order than the curl-curl, each judged on its own, with exact symbolic zero tests rather than
 # tolerances relative to the other coefficients, which a large one would hide behind: there is no first-order term,
 # the coefficients of E, ∂ₜE and ∂ₜ²E of an equation do not couple the components, and each is the same scalar
@@ -523,6 +547,11 @@ With `n = facet_normal(Γ)` and `Eb = [E(t, Γ)[c] for c in 1:3]`, the boundary 
 Pieces without a condition get the natural `n × (ν curl E) = 0`, except those carrying the
 [`WavePort`](@ref)s of `disc.ports`, which must have no condition. With ports, `a₀` must be zero, so that the
 model holds at every frequency and `solve_sweep(model, omegas)` is the sweep of the `PDESystem`.
+
+The front end works in a window: every nonzero ν, a₀, a₁, a₂ and source amplitude and ω lie in `1e-100 ≤ |c| ≤ 1e100`,
+and the products `ω² a₂` and `ω a₁` in `1e-250 ≤ |c| ≤ 1e250`. This is far wider than SI-unit physics
+(ε₀ ≈ 8.85e-12, μ₀⁻¹ ≈ 8e5, ω up to 1e12) and keeps products with mesh quantities from underflowing; outside it
+an `ArgumentError` names the coefficient and asks for a nondimensionalised equation.
 """
 function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
     disc.omega === nothing &&
@@ -569,7 +598,17 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
         nu, a0, a1, a2 = _real_values(coefficient_at(x...), "a coefficient")
         (iszero(nu) || iszero(1 / nu) || !isfinite(1 / nu)) &&
             throw(ArgumentError("ν = $nu in cell $cell; ν = 1/μ must be nonzero" * (iszero(nu) ? "" : " and 1/ν must be representable")))
+        for (name, value) in (("ν", nu), ("a₀", a0), ("a₁", a1), ("a₂", a2))
+            _check_window(name, value, cell)
+        end
+        for (name, value) in (("ω² a₂", disc.omega^2 * a2), ("ω a₁", disc.omega * a1))
+            _check_product_window(name, value, cell)
+        end
         (; nu, a0, a1, a2)
+    end
+    _check_window("ω", disc.omega, nothing)
+    for x in centroids
+        _check_window_sources(_real_values(source_at(x...), "a source"))
     end
     (; pec, absorbing) = _recognise_boundaries(
         sys.bcs, comps, pvals[keep], (; ops, params = ctx.params[keep], sivs = ctx.sivs, t = ctx.t), disc.domain, cells, disc.omega
