@@ -103,6 +103,32 @@ function _deflator(vecs, M)
     return x -> x - B * (Gp * (transpose(MB) * x))
 end
 
+# The factorisation of K - σ M at a shift σ ≥ σ0 that is not so close to an eigenvalue that the solves are inaccurate: a
+# shift on (or within roundoff of) an eigenvalue can still factorise, with a condition number of 1/eps that corrupts
+# every Ritz pair, not only the one at the shift. The solve of a fixed vector estimates the condition number
+# (‖K - σM‖ ‖x‖ / ‖b‖ ≤ κ), and the shift moves up by a growing relative step until eps times it is below 1e-8.
+function _accurate_shifted_lu(K, M, σ0)
+    b = cos.(1.7 .* (1:size(K, 1)))
+    σ, F = σ0, nothing
+    for attempt in 0:8
+        σ = σ0 * (1 + (attempt == 0 ? 0.0 : 10.0^(attempt - 9)))
+        F = try
+            lu(K - σ * M)
+        catch err
+            err isa SingularException || rethrow()
+            nothing
+        end
+        F === nothing && continue
+        x = F \ b
+        (opnorm(K, 1) + abs(σ) * opnorm(M, 1)) * norm(x) / norm(b) * eps() < 1.0e-8 && return F, σ
+    end
+    F === nothing && throw(SingularException(0))
+    return F, σ
+end
+
+# The relative residual of the pair (λ, v) of the original pencil K v = λ M v.
+_pencil_residual(K, M, λ, v) = norm(K * v - λ * (M * v)) / (norm(K * v) + abs(λ) * norm(M * v))
+
 # The largest ratio between the εr (real part) or μr values of the cells.
 function _material_contrast(materials)
     spread(values) = maximum(values) / minimum(values)
@@ -198,15 +224,8 @@ function maxwell_eigenmodes(
     nullspace_tol !== nothing && λ_null > scale * (2π * target_frequency)^2 && @warn "maxwell_eigenmodes: nullspace_tol puts the null-space cutoff $λ_null above the target, so the modes there are discarded"
     ωt = 2π * target_frequency
     σ0 = max(scale * ωt^2, λ_shift)
-    shift_offset = σ0 - scale * ωt^2
-    # A shift exactly on a discrete eigenvalue makes the factorisation singular; nudge it off.
-    F, σ = try
-        lu(K - σ0 * M), σ0
-    catch err
-        err isa SingularException || rethrow()
-        σ1 = σ0 * (1 + 1.0e-8)
-        lu(K - σ1 * M), σ1
-    end
+    F, σ = _accurate_shifted_lu(K, M, σ0)
+    shift_offset = abs(σ - scale * ωt^2)
 
     # The gradients of the hat functions of nodes off the PEC facets vanish on the PEC edges; project along them.
     Gfull, dhn = _discrete_gradient(model)
@@ -280,6 +299,20 @@ function maxwell_eigenmodes(
     end
     length(keep) < nev && @warn "maxwell_eigenmodes found $(length(keep)) of $nev modes"
     keep = keep[1:min(nev, end)]
+    # Every pair returned is checked against the original pencil, and refined by inverse iteration with the shifted
+    # factorisation when its residual is above what tol allows for.
+    residual_tol = max(1.0e3 * tol, 1.0e-8)
+    for j in keep
+        vecs[j] = ComplexF64.(vecs[j]) |> v -> lossy ? v : real.(v)
+        for _ in 1:5
+            _pencil_residual(K, M, λ[j], vecs[j]) <= residual_tol && break
+            w = op(vecs[j])
+            vecs[j] = w ./ norm(w)
+            λ[j] = (transpose(vecs[j]) * (K * vecs[j])) / (transpose(vecs[j]) * (M * vecs[j]))
+        end
+        r = _pencil_residual(K, M, λ[j], vecs[j])
+        r <= residual_tol || @warn "maxwell_eigenmodes: a returned pair has the relative residual $r of the original pencil, above $residual_tol; the shifted solve is ill-conditioned"
+    end
     keep = keep[sortperm(real.(sqrt.(complex.(λ[keep]))))]
 
     omega = sqrt.(complex.(λ[keep])) ./ sqrt(scale)

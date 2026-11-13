@@ -206,6 +206,20 @@ end
     @test length(maxwell_eigenmodes(ordinary; nev = 1, target_frequency = 0.8).frequency) == 1
 end
 
+@testset "a target on a resonance keeps every requested mode accurate" begin
+    model = MaxwellModel(unit_cube(3); pec = CUBE_FACES, eps0 = 1.0, mu0 = 1.0)
+    free = setdiff(1:ndofs(model.dh), FiniteElementMethod._pec_dofs(model.dh, model.grid, model.pec))
+    K, M = Matrix(model.blocks.curlcurl[free, free]), Matrix(model.blocks.eps_real[free, free])
+    λ = filter(>(1.0e-6), real.(eigvals(Symmetric(K), Symmetric(M))))
+    reference = sqrt.(sort(λ)[1:4]) ./ 2π
+    residual(m, f) = (v = m.u[free]; norm(K * v - (2π * f)^2 * (M * v)) / (norm(K * v) + (2π * f)^2 * norm(M * v)))
+    for rel in (0.0, 1.0e-12, 1.0e-9, 1.0e-6), kwargs in ((;), (; krylovdim = 10_000))
+        found = maxwell_eigenmodes(model; nev = 4, target_frequency = reference[1] * (1 + rel), kwargs...)
+        @test found.frequency ≈ reference rtol = 1.0e-8
+        @test maximum(residual.(found.modes, found.frequency)) < 1.0e-6
+    end
+end
+
 @testset "lossy: nearest in complex ω, and the candidate bound holds" begin
     # eps_r = 1 - 100i scales ω by 1/√(1 - 100i): the lowest modes sit at Re f = 0.0592, 0.0794, 0.0854 with
     # Im f about as large. From 0.0854 the nearest in complex ω is the first, and shift-invert ranks the first
