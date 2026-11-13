@@ -472,6 +472,11 @@ function _real_values(values, what)
     all(v -> v isa Real, values) ||
         throw(ArgumentError("$what of the Maxwell equation evaluates to $values; it must be real and finite"))
     converted = Float64.(values)  # finiteness is checked after the conversion: a finite BigFloat 1e400 becomes Inf
+    # A nonzero value that the conversion turns into zero or a subnormal number is outside the window as well.
+    for (v, c) in zip(values, converted)
+        iszero(v) || !(iszero(c) || issubnormal(c)) ||
+            throw(_window_error(what, v, nothing, _WINDOW...))
+    end
     all(isfinite, converted) ||
         throw(ArgumentError("$what of the Maxwell equation evaluates to $values; it must be real and finite as a Float64"))
     return converted

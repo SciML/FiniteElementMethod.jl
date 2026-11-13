@@ -157,7 +157,7 @@ end
     err("a source of the Maxwell equation depends on time; with omega the coefficients and sources are time-independent, and a source is the phasor amplitude"; f = [sin(t), 0, 0])
     err("a coefficient of the Maxwell equation depends on time; with omega the coefficients and sources are time-independent, and a source is the phasor amplitude"; a2 = 1 + t)
     err("ν = 0.0 in cell 1; ν = 1/μ must be nonzero"; nu = 0)
-    err("ν = 1.0e-309 in cell 1; ν = 1/μ must be nonzero and 1/ν must be representable"; nu = 1.0e-309, a2 = 1.0e-309)
+    @test occursin("supported window", message(() -> discretize(maxwell_system(Ω; nu = 1.0e-309, a2 = 1.0e-309), maxwell_disc(Ω, 1.0))))  # subnormal
     @test_throws ArgumentError discretize(maxwell_system(Ω; extra = c -> Dt(Dt(Dt(Ev[c])))), maxwell_disc(Ω, 1.0))
 
     # A second derivative of a field-free expression lands in the flux; it must not vanish from the load.
@@ -372,6 +372,21 @@ end
     @test occursin("must be real and finite as a Float64", message(() -> solve(big"1e400")))
     @test occursin("supported window", message(() -> solve(2.0^-1074)))
     @test occursin("supported window", message(() -> solve(1.0e-101)))
+end
+
+@testset "a nonzero value that underflows in the conversion to Float64 is rejected" begin
+    Ω = MeshDomain(unit_cube(1))
+    tiny = big"1e-400"
+    run(; kw...) = message(() -> discretize(maxwell_system(Ω; kw...), maxwell_disc(Ω, 1.0)))
+    for kw in ((; f = [tiny, 0.0, 0.0]), (; a0 = tiny), (; a2 = tiny), (; a1 = tiny), (; nu = tiny))
+        @test occursin("supported window", run(; kw...))
+    end
+    # ω = 1e-400 is not a positive Float64 either.
+    @test message(() -> discretize(maxwell_system(Ω), maxwell_disc(Ω, tiny))) != "no error"
+    # Exact zeros of any type are fine.
+    for zero_value in (0, 0.0, big"0")
+        @test discretize(maxwell_system(Ω; a1 = zero_value, f = [zero_value, 0.0, 0.0]), maxwell_disc(Ω, 1.0)) isa LinearProblem
+    end
 end
 
 @testset "structural terms are rejected however small they are next to ν" begin
