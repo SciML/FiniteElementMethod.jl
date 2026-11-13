@@ -301,7 +301,10 @@ function FEMOperators(
     elseif load isa AbstractVector
         apply_ties!(copy(load), ties, prescribed)
     else
-        (out, t) -> apply_ties!(load(out, t), ties, prescribed)
+        function (out, t)
+            load(out, t)
+            return apply_ties!(out, ties, prescribed)
+        end
     end
     F = FEMLoad(tied_load, prescribed, dirichlet_values, n)
     if nonlinear !== nothing
