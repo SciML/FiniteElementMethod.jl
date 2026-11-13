@@ -461,15 +461,20 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
     any(lost_entries, reaction_entries[findall(!iszero, nonzeros(reaction_term.block))]) && throw(
         ArgumentError("the reaction of the equation is not representable after assembly at ω = $ω: its matrix entries underflow to zero or subnormal values; scale the equation or use a MaxwellModel directly")
     )
-    # A source cannot underflow in integration inside the window, and a load that is exactly zero is legitimate (a
-    # source supported between the quadrature points), so the load is not checked.
-    return (; model, omega = ω, load = _source_load(model, x -> _real_values(source_at(x...), "a source")))
+    # Every value the load assembly evaluates, at the quadrature points, is validated against the window (the centroid
+    # check above is only an early, cheap error); a load that is exactly zero is legitimate (a source supported between
+    # the quadrature points), so the load vector itself is not checked.
+    checked_source(x) = (v = _real_values(source_at(x...), "a source"); _check_window_sources(v); v)
+    return (; model, omega = ω, load = _source_load(model, checked_source))
 end
 
 function _real_values(values, what)
-    all(v -> v isa Real && isfinite(v), values) ||
+    all(v -> v isa Real, values) ||
         throw(ArgumentError("$what of the Maxwell equation evaluates to $values; it must be real and finite"))
-    return Float64.(values)
+    converted = Float64.(values)  # finiteness is checked after the conversion: a finite BigFloat 1e400 becomes Inf
+    all(isfinite, converted) ||
+        throw(ArgumentError("$what of the Maxwell equation evaluates to $values; it must be real and finite as a Float64"))
+    return converted
 end
 
 # ∫ f ⋅ Nᵢ for the source f(x) of the equation.

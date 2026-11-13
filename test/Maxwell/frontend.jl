@@ -360,6 +360,20 @@ end
     @test prob isa LinearProblem && iszero(prob.b)
 end
 
+@testset "source amplitudes are validated at the quadrature points" begin
+    Ω = MeshDomain(unit_cube(1))
+    cell = Ferrite.getcoordinates(Ω.mesh, 1)
+    # The first point of the degree-2 rule of the reference tetrahedron, mapped to cell 1: not a centroid.
+    ξ = Ferrite.QuadratureRule{RefTetrahedron}(2).points[1]
+    xq = cell[1] + ξ[1] * (cell[2] - cell[1]) + ξ[2] * (cell[3] - cell[1]) + ξ[3] * (cell[4] - cell[1])
+    ball(amplitude, r = 1.0e-3) = ifelse(sum((X[i] - xq[i])^2 for i in 1:3) < r^2, amplitude, 0.0)
+    solve(amplitude) = discretize(maxwell_system(Ω; f = [ball(amplitude), 0.0, 0.0]), maxwell_disc(Ω, 1.0))
+    @test solve(1.0) isa LinearProblem  # inside the window, evaluated at a quadrature point
+    @test occursin("must be real and finite as a Float64", message(() -> solve(big"1e400")))
+    @test occursin("supported window", message(() -> solve(2.0^-1074)))
+    @test occursin("supported window", message(() -> solve(1.0e-101)))
+end
+
 @testset "structural terms are rejected however small they are next to ν" begin
     Ω = MeshDomain(unit_cube(2))
     D = Differential.(collect(X))
