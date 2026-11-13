@@ -603,7 +603,7 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
         ω2 = ω^2
         reaction = -ω2 * eps_r
         roundtrip = isfinite(eps_r) && isfinite(reaction) && !iszero(ω2) && !issubnormal(ω2) && !issubnormal(eps_r) &&
-            abs(Rational{BigInt}(reaction) - net) <= 1.0e-10 * abs(net)
+            !iszero(reaction) && !issubnormal(reaction) && abs(Rational{BigInt}(reaction) - net) <= 1.0e-10 * abs(net)
         isfinite(eps_r) && isfinite(reaction) && (iszero(net) || roundtrip) || throw(
             ArgumentError("the reaction a₀ - ω² a₂ = $(Float64(net)) ($(c.a0) - $ω^2 $(c.a2)) in cell $cell is not representable as ε = a₂ - a₀/ω² at this ω; use a frequency nearer 1 or a MaxwellModel directly")
         )
@@ -613,7 +613,20 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
         grid; materials, pec, absorbing, ports, eps0 = 1.0, mu0 = 1.0, length_scale = 1.0,
         quadrature = something(disc.quadrature, 2),
     )
-    return (; model, omega = ω, load = _source_load(model, x -> _real_values(source_at(x...), "a source")))
+    # The scalar round trips cannot see underflow during integration and scaling: the reaction contribution and the load
+    # that are actually assembled must keep a nonzero reaction or source, neither lost to zero nor subnormal.
+    reaction_term = model.terms[2]  # the eps_real block with its coefficient -ω² (mu0 = eps0 = L = 1)
+    reaction_entries = real(reaction_term.coefficient(ω)) .* nonzeros(reaction_term.block)
+    lost_entries(x) = iszero(x) || issubnormal(x)
+    any(lost_entries, reaction_entries[findall(!iszero, nonzeros(reaction_term.block))]) && throw(
+        ArgumentError("the reaction of the equation is not representable after assembly at ω = $ω: its matrix entries underflow to zero or subnormal values; scale the equation or use a MaxwellModel directly")
+    )
+    load = _source_load(model, x -> _real_values(source_at(x...), "a source"))
+    sourced = any(x -> any(!iszero, _real_values(source_at(x...), "a source")), centroids)
+    sourced && (lost_entries(maximum(abs, load; init = 0.0)) || all(lost_entries, load)) && throw(
+        ArgumentError("the source of the equation is not representable after assembly: its load vector underflows to zero or subnormal values; scale the equation or use a MaxwellModel directly")
+    )
+    return (; model, omega = ω, load)
 end
 
 """
