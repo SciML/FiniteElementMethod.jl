@@ -69,6 +69,30 @@ or a non-positive `mu_r` at a port is rejected, because the power-wave normalisa
 impedance and the outward power of the TE10 mode is `Re(β/μr) > 0` only for positive `μr` and `εr`. Put loss behind the port, not in its face, and a
 facet cannot belong to two ports or to both a port and an `absorbing` set.
 
+### Solving on an NVIDIA GPU
+
+`solver = CuDSSSolver()` moves the factorisation and solves of [`solve_sweep`](@ref) to an NVIDIA GPU through
+[cuDSS](https://developer.nvidia.com/cudss); it needs `using CUDA, CUDSS` and a functional CUDA device.
+Assembly stays on the CPU. The first frequency uploads the operator and runs the cuDSS analysis and
+factorisation; later frequencies copy only the new nonzero values and refactorise, reusing the analysis, and
+every port excitation is solved in one call.
+
+```julia
+using CUDA, CUDSS
+sweep = solve_sweep(model, 2π .* (8.0e9:0.5e9:12.0e9); solver = CuDSSSolver())
+```
+
+The default is cuDSS's general LU (`structure = "G"`). `CuDSSSolver(; structure = "S")` uses its complex
+symmetric LDLᵀ instead (the Maxwell operator is complex symmetric, not Hermitian), with about half the factor
+storage; CUDSS.jl documents complex symmetric matrices only from its version 1.0. CUDSS.jl 1.0 currently cannot be
+installed next to this package (its ArrayInterface bound conflicts with the one of DiffEqBase), so use CUDSS.jl 0.8
+with the default general LU until it resolves; the extension accepts both.
+
+The CPU side of this solver (the CSR layout and the per-frequency value update) is tested in the Maxwell test
+group, and the `MaxwellGPU` group checks that the extension loads and infers. The comparison of the GPU sweep with
+UMFPACK on a WR-90 guide runs only where `CUDA.functional()` holds; CI has no NVIDIA GPU, so run it by hand on a
+CUDA machine with `GROUP=MaxwellGPU julia --project=. -e 'using Pkg; Pkg.test()'`.
+
 ```@docs
 MaxwellModel
 MaxwellMaterial
@@ -86,6 +110,7 @@ FiniteElementMethod.WavePortData
 solve_sweep
 MaxwellSweep
 FiniteElementMethod.umfpack_solver
+CuDSSSolver
 FiniteElementMethod.tangential_mass
 FiniteElementMethod.port_excitations
 FiniteElementMethod.s_parameters

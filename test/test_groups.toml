@@ -51,3 +51,9 @@ versions = ["lts", "1", "pre"]
 
 [Maxwell]
 versions = ["lts", "1", "pre"]
+
+# The cuDSS sweep solver: a CUDA sub-env, run by hand on a CUDA machine (see test/MaxwellGPU/README.md). Without a
+# functional CUDA device it only checks that the extension loads and infers; the GPU solve is skipped.
+[MaxwellGPU]
+in_all = false
+versions = ["1"]
