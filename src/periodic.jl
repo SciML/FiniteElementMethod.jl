@@ -61,15 +61,13 @@ function _tuple_str(x)
     return "(" * join(round.(x; sigdigits = 6), ", ") * ")"
 end
 
-"""
-    periodic_ties(grid, dh, coords, periodic, prescribed) -> Vector{Pair{Int, Int}}
-
-`(ties, classes)`: `mirror => master` dof pairs (and the prescribed dofs of each class, for `check_agreement`) that make the dofs matched by `periodic`, a collection of
-`(field, set_a, set_b)`, equal. The pieces of a pair must be translates of each other: the translation is the
-difference of their centroids and each node of one must have a node of the other at the translated place, or
-an `ArgumentError` names both pieces. A master is a `prescribed` (Dirichlet) dof of its class if it has one, else
-its lowest dof; prescribed dofs are never mirrors.
-"""
+#     periodic_ties(grid, dh, coords, periodic, prescribed) -> Vector{Pair{Int, Int}}
+#
+# `(ties, classes)`: `mirror => master` dof pairs (and the prescribed dofs of each class, for `check_agreement`) that make the dofs matched by `periodic`, a collection of
+# `(field, set_a, set_b)`, equal. The pieces of a pair must be translates of each other: the translation is the
+# difference of their centroids and each node of one must have a node of the other at the translated place, or
+# an `ArgumentError` names both pieces. A master is a `prescribed` (Dirichlet) dof of its class if it has one, else
+# its lowest dof; prescribed dofs are never mirrors.
 function periodic_ties(grid, dh, nodes, periodic, prescribed; dirichlet = Dict{Int, Any}(), times = (0.0,))
     coords = [collect(Float64, Tuple(x)) for x in nodes]
     lo = reduce((a, b) -> min.(a, b), coords)
@@ -131,12 +129,10 @@ struct DirichletClasses
     periodic::Vector{Any}
 end
 
-"""
-    check_agreement(classes::DirichletClasses, value, t)
-
-Throw an `ArgumentError` when `value(d)`, the prescribed value of dof `d` at time `t`, differs between two prescribed dofs
-of one periodic class by more than `1e-8` relative to the data. Called at every evaluation of the Dirichlet data.
-"""
+#     check_agreement(classes::DirichletClasses, value, t)
+#
+# Throw an `ArgumentError` when `value(d)`, the prescribed value of dof `d` at time `t`, differs between two prescribed dofs
+# of one periodic class by more than `1e-8` relative to the data. Called at every evaluation of the Dirichlet data.
 function check_agreement(classes::DirichletClasses, value, t)
     for group in classes.groups
         a = ForwardDiff.value(value(first(group)))
@@ -159,12 +155,10 @@ end
 # The tied rows whose residual is summed into the master's row: those whose master is not prescribed.
 _summed(ties, isprescribed) = [m => s for (m, s) in ties if !isprescribed[s]]
 
-"""
-    extend_pattern(pattern, ties, prescribed) -> SparseMatrixCSC
-
-`pattern` with the entries `apply_ties!` writes: the master row of every summed tie gains the columns of the tied
-row, and each tied row gains its diagonal and its master's column.
-"""
+#     extend_pattern(pattern, ties, prescribed) -> SparseMatrixCSC
+#
+# `pattern` with the entries `apply_ties!` writes: the master row of every summed tie gains the columns of the tied
+# row, and each tied row gains its diagonal and its master's column.
 function extend_pattern(pattern::SparseMatrixCSC, ties, prescribed)
     isempty(ties) && return pattern
     isprescribed = isprescribed_mask(size(pattern, 1), prescribed)
@@ -191,13 +185,11 @@ function _position(A, i, j)
     return r[k]
 end
 
-"""
-    apply_ties!(M, K, ties, prescribed)
-
-For each `mirror => master` of `ties`, add the mirror's row of `M` and `K` to the master's row (unless the master
-is prescribed) and replace the mirror's rows: `M` row zero, `K` row `e_mirror - e_master`. `M` and `K` must have the
-pattern of `extend_pattern`.
-"""
+#     apply_ties!(M, K, ties, prescribed)
+#
+# For each `mirror => master` of `ties`, add the mirror's row of `M` and `K` to the master's row (unless the master
+# is prescribed) and replace the mirror's rows: `M` row zero, `K` row `e_mirror - e_master`. `M` and `K` must have the
+# pattern of `extend_pattern`.
 function apply_ties!(M, K, ties, prescribed)
     isempty(ties) && return M, K
     n = size(K, 1)
@@ -218,7 +210,7 @@ function apply_ties!(M, K, ties, prescribed)
     return M, K
 end
 
-"Rows of the load vector summed and cleared like the rows of `apply_ties!`."
+# Rows of the load vector summed and cleared like the rows of `apply_ties!`.
 function apply_ties!(F::AbstractVector, ties, prescribed)
     isprescribed = isprescribed_mask(length(F), prescribed)
     for (m, s) in ties
