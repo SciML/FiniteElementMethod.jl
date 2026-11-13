@@ -59,9 +59,11 @@ include("maxwell/model.jl")
 include("maxwell/driven.jl")
 include("maxwell/sweep.jl")
 include("maxwell/adjoint.jl")
+include("maxwell/farfield.jl")
 export MaxwellMaterial, MaxwellModel, MaxwellTerm, maxwell_operator, maxwell_operator!
 export MaxwellSolution, driven_problem, solve_driven, field_values
 export WavePort, LumpedPort, MaxwellSweep, solve_sweep
+export far_field, radiated_power, directivity
 export MaxwellSensitivities, s_parameter_sensitivities, adjoint_gradient
 
 include("precompile.jl")
