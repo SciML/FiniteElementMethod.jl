@@ -13,7 +13,7 @@ using DiffEqBase: BrownFullBasicInit
 using DomainSets: DomainSets
 using Ferrite: Ferrite, Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexahedron
 using ForwardDiff: ForwardDiff
-using LinearAlgebra: dot, mul!, norm
+using LinearAlgebra: I, dot, mul!, norm
 using ModelingToolkit: ModelingToolkit, @parameters, @variables, Differential, MTKParameters,
     ProblemTypeCtx, System, complete, getmetadata
 using NonlinearSolveFirstOrder: NewtonRaphson
@@ -22,7 +22,7 @@ using PrecompileTools: PrecompileTools
 using RuntimeGeneratedFunctions: RuntimeGeneratedFunctions
 using SciMLBase: SciMLBase, DAEFunction, DAEProblem
 using SciMLBase.SymbolicIndexingInterface: SymbolicIndexingInterface, getp, parameter_index, variable_index
-using SparseArrays: SparseMatrixCSC, nonzeros, nzrange, rowvals
+using SparseArrays: SparseMatrixCSC, findnz, nonzeros, nzrange, rowvals, sparse
 using SymbolicUtils: SymbolicUtils
 using Symbolics: Symbolics, Equation, Num, @register_array_symbolic, substitute, unwrap
 
@@ -32,6 +32,7 @@ RuntimeGeneratedFunctions.init(@__MODULE__)
 include("numeric_dae.jl")
 
 include("mesh.jl")
+include("periodic.jl")
 include("space.jl")
 include("solution.jl")
 include("weakform.jl")

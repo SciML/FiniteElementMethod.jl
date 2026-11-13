@@ -80,6 +80,11 @@ gives a `PDENoTimeSolution`.
     by the discretization and rejected, as are `tspan`, `u0`, `p` and `differential_vars`, which
     come from the `PDESystem` and the weak form.
 
+A periodic condition `u(t, Γa) ~ u(t, Γb)` (`u(Γa) ~ u(Γb)` without time) makes the field `u` take equal values at
+the nodes of two boundary pieces that are translates of each other; pieces that are not are an error naming
+them. Fully periodic domains list one pair per direction, and a node shared by several pairs is tied to one master.
+See the documentation page on boundary conditions for the algebraic form.
+
 Pieces come from `boundarypiece.(Ω, names)`; on an analytic DomainSets box write
 `boundarypiece.(Ref(rect), names)`, since DomainSets types do not broadcast as scalars.
 
@@ -195,7 +200,7 @@ end
 # it on the Discretization page and docs/src/boundary_conditions.md keeps a static copy;
 # test/Frontend/documentation.jl keeps the two equal.
 PDEBase.supported_conditions(::FEMDiscretization) = PDEBase.SupportedConditions(;
-    geometries = (:mesh,), dirichlet = true, neumann = true, robin = true, periodic = false,
+    geometries = (:mesh,), dirichlet = true, neumann = true, robin = true, periodic = true,
     interface = false, time_dependent = true,
     notes = """
     Restrictions of this release:
@@ -203,7 +208,7 @@ PDEBase.supported_conditions(::FEMDiscretization) = PDEBase.SupportedConditions(
       - Geometries are `Ferrite.Grid` meshes (1D, 2D and 3D cell shapes) wrapped as `MeshDomain(grid)`, with boundary pieces named by the grid's facet sets. 1D, 2D and 3D meshes are tested; meshes with mixed cell types are rejected.
       - Coordinates are Cartesian and named by the `(x, y) ∈ Ω` pairing. Time is the first or last argument of every dependent variable, never between spatial arguments.
       - Dirichlet data may depend on space, time and parameters but not on another field. Neumann and Robin conditions are written with `NormalDerivative(Γ)`, with any conormal coefficient written explicitly. Neumann and Robin data may depend on time; the Robin coefficient multiplying `u(t, Γ)` may depend only on space and parameters.
-      - Periodic conditions `u(t, Γa) ~ u(t, Γb)` are rejected. Interface conditions between regions have no syntax; every field lives on the whole mesh.
+      - Periodic conditions `u(t, Γa) ~ u(t, Γb)` pair two pieces that are translates of each other; they need `dirichlet = :algebraic` and are not returned by `operators`. Interface conditions between regions have no syntax; every field lives on the whole mesh.
       - Boundary pieces must be disjoint and lie on the boundary. Boundary facets with no condition for a field get the natural zero-flux condition, with a warning when that field's equation has a flux; `natural` declares them and `boundary_check` makes the warning an error or turns it off.
       - Where two Dirichlet pieces of one field meet, the condition listed last in the `PDESystem` wins.
       - Every field with a time derivative needs an initial condition, linear in that one field and finite at every node.

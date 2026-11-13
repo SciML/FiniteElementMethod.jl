@@ -105,10 +105,12 @@ boundary pieces are `boundarypiece.(Ω, (:left, :right, :bottom, :top))` in 2D a
 | `navier_stokes.jl` | Kovasznay flow, Taylor-Hood, rates 3 and 2 | steady incompressible Navier-Stokes | 2 | P2/P1 | Dirichlet velocity, Dirichlet pressure on one side |
 | `metadata_and_operators.jl` | `facet_dofs`, `dof_coordinates`, `cell_dofs` | heat | 2 | P1, P2 | zero Dirichlet |
 | `metadata_and_operators.jl` | `operators` gives the matrices for a hand-made steady solve | heat at its steady state | 2 | P2 | Dirichlet |
+| `periodic.jl` | periodic pairs: heat on a fully periodic box (rates 2, 3), periodic in x only, steady advection-diffusion with Galerkin and SUPG, coupled fields, rejected pairs | heat, advection-diffusion | 2 | P1, P2 | periodic, Dirichlet |
+| `periodic_navier_stokes.jl` | Kovasznay flow with periodic bottom and top (rates 3, 2); flow past a block in a channel periodic in y, mass conserved | steady and transient incompressible Navier-Stokes | 2 | P2/P1, Q2/Q1 | periodic, Dirichlet velocity, outlet pressure |
 | `rejections.jl` | rejected boundary conditions, equations, options, domains, shared facets, SUPG with a nonlinear term, observed expressions, `operators`, `ferrite_grid` | heat and others | 1 to 3 | | |
 
 ## Not covered
 
-The DFG cylinder (Navier-Stokes, about 149 000 unknowns) is the `NavierStokes` group. Periodic conditions, `codegen = :mtk`,
+The DFG cylinder (Navier-Stokes, about 149 000 unknowns) is the `NavierStokes` group. `codegen = :mtk`,
 time-dependent coefficients in the mass or stiffness operator, third-order and second-order-in-time equations are
 rejected, and `rejections.jl` asserts the messages.

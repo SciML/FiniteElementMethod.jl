@@ -68,7 +68,7 @@ The checks include:
   - equations: an equation count that differs from the number of dependent variables, unknown
     `pairing`, `spaces` or `regions` keys, time-dependent mass or stiffness coefficients,
     parameters without a numeric value, SUPG with parameters in `τ` or `b`;
-  - boundary conditions: periodic conditions, conditions on facet sets the mesh lacks, a
+  - boundary conditions: periodic pieces that are not translates of each other or that carry another condition, conditions on facet sets the mesh lacks, a
     region's field with conditions outside the region, time-dependent Dirichlet data with
     `dirichlet = :eliminate`.
 
