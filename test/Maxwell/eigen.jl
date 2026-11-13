@@ -205,7 +205,6 @@ end
     ordinary = MaxwellModel(unit_cube(2); materials = Dict{String, MaxwellMaterial}(), pec = CUBE_FACES, eps0 = 1.0, mu0 = 1.0)
     @test length(maxwell_eigenmodes(ordinary; nev = 1, target_frequency = 0.8).frequency) == 1
 end
-end
 
 @testset "lossy: nearest in complex ω, and the candidate bound holds" begin
     # eps_r = 1 - 100i scales ω by 1/√(1 - 100i): the lowest modes sit at Re f = 0.0592, 0.0794, 0.0854 with
