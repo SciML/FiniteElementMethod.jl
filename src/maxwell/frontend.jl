@@ -153,39 +153,43 @@ function _recognise_volume(an, s, fixed, xs)
         end
     end
     comps = zeros(Int, 3)
+    # Which component an equation tests: its Laplacian-like trace, or else its reaction, is nonzero (exactly: the choice
+    # is not a tolerance on the size of the other coefficients).
     for (x, sv) in points, (e, q) in enumerate(unpack(x, sv))
         all(!iszero, comps) && break
         comps[e] == 0 || continue
         tr = [sum(q.B[a, c, a] for a in 1:3) for c in 1:3]
-        tol = 1.0e-10 * max(maximum(abs, q.B), maximum(abs, q.λU), 1.0e-300)
-        comps[e] = maximum(abs, tr) > tol ? argmax(abs.(tr)) : maximum(abs, q.λU) > tol ? argmax(abs.(q.λU)) : 0
+        comps[e] = maximum(abs, tr) > 0 ? argmax(abs.(tr)) : maximum(abs, q.λU) > 0 ? argmax(abs.(q.λU)) : 0
     end
     e0 = findfirst(iszero, comps)
     e0 === nothing || throw(ArgumentError("equation $e0 has neither a curl-curl nor a reaction term in E"))
     sort(comps) == 1:3 || throw(ArgumentError("the equations test the components $comps of E; write one equation per component"))
+    # The structure of the second-order part, decided symbolically from its own coefficients: a term is there or not,
+    # however small it is next to ν.
+    νs = Any[]
+    for e in 1:3
+        ce = comps[e]
+        other = mod1(ce + 1, 3)
+        Be = [substitute(B[e][a, c, b], fixed) for a in 1:3, c in 1:3, b in 1:3]
+        α, β, γ = Be[other, ce, other], Be[other, other, ce], Be[ce, other, other]
+        _iszero_expr(γ) ||
+            throw(ArgumentError("equation $e has a grad div E term, which has no meaning on Nédélec elements; $_MAXWELL_FORM"))
+        expect = [α * (c == ce) * (a == b) + β * (b == ce) * (a == c) + γ * (a == ce) * (c == b) for a in 1:3, c in 1:3, b in 1:3]
+        all(_iszero_expr(Be[a, c, b] - expect[a, c, b]) for a in 1:3, c in 1:3, b in 1:3) || throw(
+            ArgumentError("the second-order part of equation $e is anisotropic or couples the components of E differently from curl(ν*curl(E)); $_MAXWELL_FORM")
+        )
+        _iszero_expr(β) && !_iszero_expr(α) && throw(
+            ArgumentError("equation $e has the vector Laplacian of E, which is component-wise H¹ and not H(curl)-conforming; $_MAXWELL_FORM")
+        )
+        _iszero_expr(α + β) || throw(
+            ArgumentError("the second-order part of equation $e adds a component-wise Laplacian of E to curl(ν*curl(E)), which is not H(curl)-conforming; $_MAXWELL_FORM")
+        )
+        push!(νs, β)
+    end
+    νsame = [_iszero_expr(νs[e] - νs[1]) for e in 1:3]
     for (x, sv) in points
-        nus = zeros(3)
-        for (e, q) in enumerate(unpack(x, sv))
-            ce = comps[e]
-            other = mod1(ce + 1, 3)
-            tol = 1.0e-10 * max(maximum(abs, q.B), 1.0e-300)  # the second-order part is judged against itself
-            α, β, γ = q.B[other, ce, other], q.B[other, other, ce], q.B[ce, other, other]
-            expect = [α * (c == ce) * (a == b) + β * (b == ce) * (a == c) + γ * (a == ce) * (c == b) for a in 1:3, c in 1:3, b in 1:3]
-            abs(γ) > tol && throw(
-                ArgumentError("equation $e has a grad div E term, which has no meaning on Nédélec elements; $_MAXWELL_FORM")
-            )
-            maximum(abs, q.B - expect) > tol && throw(
-                ArgumentError("the second-order part of equation $e is anisotropic or couples the components of E differently from curl(ν*curl(E)); $_MAXWELL_FORM")
-            )
-            abs(β) <= tol && abs(α) > tol && throw(
-                ArgumentError("equation $e has the vector Laplacian of E, which is component-wise H¹ and not H(curl)-conforming; $_MAXWELL_FORM")
-            )
-            abs(α + β) > tol && throw(
-                ArgumentError("the second-order part of equation $e adds a component-wise Laplacian of E to curl(ν*curl(E)), which is not H(curl)-conforming; $_MAXWELL_FORM")
-            )
-            nus[e] = β
-        end
-        maximum(abs, nus .- nus[1]) <= 1.0e-10 * maximum(abs, nus) || throw(
+        nus = [unpack(x, sv)[e].B[mod1(comps[e] + 1, 3), mod1(comps[e] + 1, 3), comps[e]] for e in 1:3]
+        all(e -> νsame[e] || nus[e] == nus[1], 2:3) || throw(
             ArgumentError("ν differs between the component equations at x = $(Tuple(x)), so the medium is anisotropic; the coefficients must be scalars")
         )
     end
@@ -245,6 +249,15 @@ function _check_lower_order(an, s, fixed, xs, dU, dG, dF, comps)
     return nothing
 end
 
+# The trace of the field in a boundary condition is E(t, Γ): the time variable and the boundary piece of the condition,
+# nothing at a fixed or shifted time (an initial condition) and no other argument.
+function _check_trace_arguments(ex, t, Γ, eq)
+    args = [_unwrap_arg(a) for a in SymbolicUtils.arguments(ex)]
+    length(args) == 2 && isequal(args[1], unwrap(t)) && args[2] isa PDEBase.BoundaryPiece && args[2] == Γ ||
+        throw(ArgumentError("$eq has the trace $(Num(ex)); a boundary condition with omega must use E(t, Γ) at the time variable t and its boundary piece Γ, not a condition at one time"))
+    return nothing
+end
+
 # n × E = 0 conditions: each residual is linear in the traces and the normal, tangential (C n = 0) and of rank 2
 # together on its piece.
 function _recognise_pec(bcs, fields, pvals, ctx, domain)
@@ -274,7 +287,10 @@ function _recognise_pec(bcs, fields, pvals, ctx, domain)
                 rules[ex] = unwrap(N[Int(SymbolicUtils.unwrap_const(only(SymbolicUtils.arguments(ex))))])
             else
                 f = findfirst(isequal(op), ctx.ops)
-                f === nothing || (rules[ex] = unwrap(U[fields[f]]))
+                if f !== nothing
+                    _check_trace_arguments(ex, ctx.t, Γ, eq)
+                    rules[ex] = unwrap(U[fields[f]])
+                end
             end
         end
         for (p, value) in zip(ctx.params, pvals)
@@ -295,7 +311,10 @@ function _recognise_pec(bcs, fields, pvals, ctx, domain)
         for (n, facet) in _facet_normals(domain.mesh, String(name))
             Cn = reshape(_real_values(C_at(n...), "a coefficient of the condition"), length(Bs), 3)
             where = "on $name at facet $((facet[1], facet[2])) with normal $(Tuple(round.(n; digits = 6)))"
-            maximum(abs, Cn * n; init = 0.0) > 1.0e-10 * maximum(abs, Cn; init = 0.0) && throw(
+            # Each equation is judged by its own size, so that one written with a large coefficient hides no other.
+            Cn = Cn[[norm(Cn[i, :]) > 0 for i in axes(Cn, 1)], :]
+            Cn = Cn ./ norm.(eachrow(Cn))
+            maximum(abs, Cn * n; init = 0.0) > 1.0e-10 && throw(
                 ArgumentError("the conditions $where constrain the normal component of E, unlike n × E = 0; $pform")
             )
             rank(Cn) == 2 || throw(
@@ -360,7 +379,7 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
     fixed = Dict{Any, Any}(unwrap(an.slots.P[j]) => pvals[j] for j in keep)
     centroids = [sum(Ferrite.getcoordinates(grid, cell)) / 4 for cell in 1:Ferrite.getncells(grid)]
     coeffs = _recognise_volume(an, slot_s, fixed, centroids)
-    pec = _recognise_pec(sys.bcs, comps, pvals[keep], (; ops, params = ctx.params[keep]), disc.domain)
+    pec = _recognise_pec(sys.bcs, comps, pvals[keep], (; ops, params = ctx.params[keep], t = ctx.t), disc.domain)
 
     # Compile the coefficients and sources as functions of the mesh coordinate.
     X = an.slots.X
@@ -372,7 +391,8 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
         nu, a0, a1, a2 = _real_values(coefficient_at(x...), "a coefficient")
         (iszero(nu) || iszero(1 / nu) || !isfinite(1 / nu)) &&
             throw(ArgumentError("ν = $nu in cell $cell; ν = 1/μ must be nonzero" * (iszero(nu) ? "" : " and 1/ν must be representable")))
-        eps_r = a2 - a0 / ω^2
+        # The net reaction a₀ - ω² a₂ is formed exactly (it cancels when the two are large), then divided once.
+        eps_r = Float64(-(big(a0) - big(ω)^2 * big(a2)) / big(ω)^2)
         isfinite(eps_r) && (iszero(a0) || abs(a0 / ω^2) >= floatmin()) || throw(
             ArgumentError("ε = a₂ - a₀/ω² = $a2 - $a0/$ω^2 in cell $cell is not representable at this tiny ω; use a larger frequency or a MaxwellModel directly")
         )
