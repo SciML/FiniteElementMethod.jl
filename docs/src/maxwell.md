@@ -126,3 +126,33 @@ FiniteElementMethod.EPS0
 FiniteElementMethod.MU0
 FiniteElementMethod.C0
 ```
+
+## Material sensitivities
+
+[`s_parameter_sensitivities`](@ref) returns the derivatives of the wave-port S-parameters with respect to
+material parameters of named cell sets: `:eps_r` (the real part of `εr`), `:eps_r_imag` (its imaginary
+part), `:mu_r` and `:sigma`, each shifting that parameter on every cell of the set. They are the exact
+derivatives of the discrete S-parameters, by the discrete adjoint: the system matrix is complex symmetric,
+so the adjoint field of port `i` is the forward field with port `i` driven, and the sensitivities cost no
+linear solve beyond the sweep, only one sparse product per parameter and frequency. A parameter set may
+touch an absorbing boundary (its `sqrt(εc/μr)` is differentiated) but not a wave port, whose mode is taken
+in fixed material.
+
+```julia
+grid = generate_grid(Tetrahedron, (12, 6, 15), Vec(0.0, 0.0, 0.0), Vec(22.86, 10.16, 30.0))
+addcellset!(grid, "slab", x -> 10.0 - 1.0e-9 <= x[3] <= 20.0 + 1.0e-9; all = true)
+ports = [WavePort(face; a_direction = (1, 0, 0), deembed = 10.0) for face in ("bottom", "top")]
+model = MaxwellModel(grid; materials = Dict("slab" => MaxwellMaterial(; eps_r = 2.2)),
+    pec = ["left", "right", "front", "back"], ports, length_scale = 1.0e-3)
+sens = s_parameter_sensitivities(model, [2π * 10.0e9], [(:eps_r, "slab"), (:sigma, "slab")])
+sens.dS[1, 1, 1, 1]  # dS11/dεr at 10 GHz
+```
+
+For a real objective such as `|S11|²`, the gradient is `2 Re(conj(S11) dS11/dp)`. Other real functionals
+`J(u)` of the field take one adjoint solve with [`adjoint_gradient`](@ref).
+
+```@docs
+s_parameter_sensitivities
+MaxwellSensitivities
+adjoint_gradient
+```
