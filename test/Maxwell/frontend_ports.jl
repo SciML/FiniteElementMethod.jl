@@ -1,0 +1,317 @@
+# The PDESystem front end with the first-order absorbing boundary, wave ports and frequency sweeps, against the
+# operator-level MaxwellModel as oracle. A WR-90 guide in millimetres with ε0 = μ0 = 1, so ω is k0 in rad/mm.
+using FiniteElementMethod, Ferrite, ModelingToolkit, DomainSets, LinearAlgebra, Test
+using SciMLBase: LinearProblem, discretize
+using FiniteElementMethod: PDEBase
+
+@parameters x y z t
+@variables E(..)[1:3]
+const X = (x, y, z)
+const Dt = Differential(t)
+Ev = [E(t, x, y, z)[c] for c in 1:3]
+
+const WR90_A, WR90_B = 22.86, 10.16
+const K0 = 2π * 10.0e9 / FiniteElementMethod.C0 * 1.0e-3  # rad/mm at 10 GHz
+const WALLS = ["left", "right", "front", "back"]
+
+guide(len, h) = generate_grid(Tetrahedron, ceil.(Int, (WR90_A, WR90_B, len) ./ h), Vec(0.0, 0.0, 0.0), Vec(WR90_A, WR90_B, float(len)))
+trace(Γ) = [E(t, Γ)[c] for c in 1:3]
+pec(Ω, names) = reduce(vcat, [cross(facet_normal(Γ), trace(Γ)) .~ 0 for Γ in boundarypiece.(Ref(Ω), Symbol.(names))])
+# n × (ν curl E) = -sqrt(ε/μ) n × (n × ∂ₜE), the matched first-order absorbing condition.
+function abc(Γ; nu = 1, eps = 1)
+    n, Eb = facet_normal(Γ), trace(Γ)
+    return cross(n, nu .* curl(Eb, X)) .~ -sqrt(eps * nu) .* cross(n, cross(n, Dt.(Eb)))
+end
+function system(Ω, bcs; nu = 1, a2 = 1, a1 = 0, a0 = 0, f = zeros(3))
+    cc = curl(nu .* curl(Ev, X), X)
+    eqs = [cc[c] + a2 * Dt(Dt(Ev[c])) + a1 * Dt(Ev[c]) + a0 * Ev[c] ~ f[c] for c in 1:3]
+    return PDESystem(eqs, bcs, [t ∈ Interval(0.0, 1.0), (x, y, z) ∈ Ω], [t, x, y, z], [E(t, x, y, z)]; name = :guide)
+end
+port(name) = WavePort(name; a_direction = (1, 0, 0))
+edge_disc(Ω, ports = WavePort[]; omega = K0) = FEMDiscretization(Ω, t; omega, spaces = Dict(E => Nedelec{RefTetrahedron, 1}()), ports)
+
+function message(f)
+    try
+        f()
+    catch err
+        err isa ArgumentError && return err.msg
+        rethrow()
+    end
+    return "no error"
+end
+
+@testset "ports keyword" begin
+    Ω = MeshDomain(guide(10.0, 5.0))
+    @test edge_disc(Ω, [port("bottom")]).ports == [port("bottom")]
+    @test WavePort(boundarypiece(Ω, :bottom); a_direction = (1, 0, 0)) == port("bottom")
+    @test edge_disc(Ω, Iterators.Stateful([port("bottom")])).ports == [port("bottom")]
+    @test_throws ArgumentError("ports belong to the frequency-domain Maxwell path; give the angular frequency omega") FEMDiscretization(Ω, t; ports = [port("bottom")])
+    @test_throws ArgumentError("ports must be WavePorts, as ports = [WavePort(Γ; a_direction = (1, 0, 0))]; got [\"bottom\"]") edge_disc(Ω, ["bottom"])
+    @test_throws ArgumentError("solve_sweep needs wave ports; give them as FEMDiscretization(Ω, t; omega, spaces, ports = [WavePort(...)])") solve_sweep(system(Ω, Equation[]), edge_disc(Ω), [K0])
+end
+
+@testset "absorbing end and a wave port: S11 equals the operator-level model" begin
+    grid = guide(30.0, 2.0)
+    Ω = MeshDomain(grid)
+    sys = system(Ω, [pec(Ω, WALLS); abc(boundarypiece(Ω, :top))])
+    disc = edge_disc(Ω, [WavePort(boundarypiece(Ω, :bottom); a_direction = (1, 0, 0))])
+    (; model) = maxwell_model(sys, disc)
+    @test model.pec == sort(WALLS) && model.absorbing == ["top"]
+    oracle = MaxwellModel(grid; pec = WALLS, absorbing = ["top"], ports = [port("bottom")], eps0 = 1.0, mu0 = 1.0)
+    S = solve_sweep(sys, disc, [K0]).S
+    @test S == solve_sweep(oracle, [K0]).S
+    β = sqrt(K0^2 - (π / WR90_A)^2)
+    Γ = (β - K0) / (β + K0)
+    @info "Maxwell front end: WR-90 with an absorbing end" S11 = S[1] abs(S[1]) Γ
+    @test Γ ≈ -0.1396 atol = 1.0e-4
+    @test abs(S[1]) ≈ abs(Γ) rtol = 0.03
+    # discretize keeps the port as a matched termination, with the load of the (zero) source.
+    prob = discretize(sys, disc)
+    expected = driven_problem(oracle, K0; load = zeros(ndofs(oracle.dh)))
+    @test prob.A == expected.A && prob.b == expected.b
+end
+
+@testset "two-port dielectric guide: the sweep equals the operator-level sweep" begin
+    grid = guide(20.0, 2.5)
+    Ω = MeshDomain(grid)
+    sys = system(Ω, pec(Ω, WALLS); nu = 0.5, a2 = 2.0)
+    ωs = K0 .* [0.8, 1.0, 1.2]
+    sweep = solve_sweep(sys, edge_disc(Ω, port.(["bottom", "top"])), ωs)
+    material = MaxwellMaterial(; eps_r = 2.0, mu_r = 2.0)
+    oracle = MaxwellModel(grid; materials = fill(material, getncells(grid)), pec = WALLS, ports = port.(["bottom", "top"]), eps0 = 1.0, mu0 = 1.0)
+    expected = solve_sweep(oracle, ωs)
+    @test size(sweep.S) == (2, 2, 3)
+    @test sweep.S == expected.S && sweep.omegas == expected.omegas
+    # The model does not depend on the omega of the discretization.
+    @test solve_sweep(sys, edge_disc(Ω, port.(["bottom", "top"]); omega = 0.3), ωs).S == expected.S
+end
+
+@testset "equivalent forms of the absorbing condition" begin
+    grid = guide(10.0, 5.0)
+    Ω = MeshDomain(grid)
+    Γ = boundarypiece(Ω, :top)
+    n, Eb = facet_normal(Γ), trace(Γ)
+    oracle = MaxwellModel(
+        grid; materials = fill(MaxwellMaterial(; eps_r = 3.0, mu_r = 2.0), getncells(grid)), pec = WALLS, absorbing = ["top"], eps0 = 1.0, mu0 = 1.0
+    )
+    expected = driven_problem(oracle, K0; load = zeros(ndofs(oracle.dh))).A
+    forms = [
+        abc(Γ; nu = 0.5, eps = 3.0),
+        # multiplied by μ = 2
+        cross(n, curl(Eb, X)) .~ -sqrt(6.0) .* cross(n, cross(n, Dt.(Eb))),
+        # the other cross order on both sides
+        cross(curl(Eb, X) ./ 2, n) .~ -sqrt(1.5) .* cross(cross(n, Dt.(Eb)), n),
+    ]
+    for bc in forms
+        prob = discretize(system(Ω, [pec(Ω, WALLS); bc]; nu = 0.5, a2 = 3.0), edge_disc(Ω))
+        @test prob.A == expected
+    end
+end
+
+@testset "the absorbing condition is checked at SI scale too" begin
+    # ν = 1/μ0 and ε = ε0 make the coefficient of ∂ₜE about 1e-9 of that of curl E; the sign must still be checked.
+    mu0 = FiniteElementMethod.MU0
+    eps0 = 1 / (mu0 * FiniteElementMethod.C0^2)
+    ω = 1.0e9
+    grid = generate_grid(Tetrahedron, (2, 2, 2), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0))
+    Ω = MeshDomain(grid)
+    Γ = boundarypiece(Ω, :top)
+    n, Eb = facet_normal(Γ), trace(Γ)
+    function si(sign)
+        bcs = cross(n, (1 / mu0) .* curl(Eb, X)) .~ sign * sqrt(eps0 / mu0) .* cross(n, cross(n, Dt.(Eb)))
+        return discretize(system(Ω, bcs; nu = 1 / mu0, a2 = eps0), edge_disc(Ω; omega = ω))
+    end
+    @test si(-1) isa LinearProblem
+    @test occursin("are not n × (ν curl E) = -sqrt(ε/μ) n × (n × ∂ₜE) of the adjacent cell", message(() -> si(1)))
+end
+
+@testset "a constraint added to the absorbing condition is seen at a large frequency" begin
+    Ω = MeshDomain(guide(10.0, 5.0))
+    Γ = boundarypiece(Ω, :top)
+    Eb = trace(Γ)
+    bcs = [pec(Ω, WALLS); abc(Γ); Eb[3] ~ 0]
+    @test occursin("independent equations", message(() -> discretize(system(Ω, bcs), edge_disc(Ω; omega = 1.0e12))))
+    @test occursin("independent equations", message(() -> discretize(system(Ω, bcs), edge_disc(Ω; omega = 1.0))))
+    # A term in E next to the time derivative at a frequency where it is tiny in field units is still a term.
+    withE = cross(facet_normal(Γ), curl(Eb, X)) .~ -cross(facet_normal(Γ), cross(facet_normal(Γ), Dt.(Eb) .+ Eb))
+    @test occursin("are not n × (ν curl E)", message(() -> discretize(system(Ω, [pec(Ω, WALLS); withE]), edge_disc(Ω; omega = 1.0e12))))
+    # Scaling an equation changes nothing: a tiny extra constraint is still one, and a tiny valid row is still valid.
+    tiny = [pec(Ω, WALLS); abc(Γ); 1.0e-13 .* [Eb[3]] .~ 0]
+    @test occursin("independent equations", message(() -> discretize(system(Ω, tiny), edge_disc(Ω; omega = 1.0))))
+    scaled = abc(Γ)
+    scaled[1] = scaled[1].lhs * 1.0e-13 ~ scaled[1].rhs * 1.0e-13
+    @test discretize(system(Ω, [pec(Ω, WALLS); scaled]), edge_disc(Ω; omega = 1.0)) isa LinearProblem
+end
+
+@testset "normal-dependent factors are judged at the actual normal" begin
+    Ω = MeshDomain(guide(10.0, 5.0))
+    Γ = boundarypiece(Ω, :top)  # n = (0, 0, 1), so n[1] = 0 on it
+    n, Eb = facet_normal(Γ), trace(Γ)
+    walls = pec(Ω, WALLS)
+    solve_with(extra) = discretize(system(Ω, [walls; abc(Γ); extra]), edge_disc(Ω))
+    base = solve_with(Equation[])
+    independent(eq) = occursin("independent equations", message(() -> solve_with([eq])))
+    # A factor that is 1e-13, 1e-16, 1e-20 or exactly 1 at the actual normal, however it is written, is a factor.
+    for factor in (n[1] + 1.0e-8, n[1] + 1.0e-13, n[1] + 1.0e-16, n[1] + 1.0e-20, 1.0e16 * n[1] + 1)
+        @test independent(factor * Dt(Eb[3]) ~ 0)
+        # The same factor on the whole absorbing condition is still the absorbing condition.
+        @test discretize(system(Ω, [walls; [factor * e.lhs ~ factor * e.rhs for e in abc(Γ)]]), edge_disc(Ω)) isa LinearProblem
+    end
+    # A nonzero E_z equation is a third equation, whichever way its factor is written.
+    @test message(() -> solve_with([(1.0e16 * n[1] + 1) * Eb[3] ~ 0])) != "no error"
+    # n[1] E_z = 0 and n[1] ∂ₜE_z = 0 vanish identically on top and change nothing.
+    for vanishing in (n[1] * Eb[3], n[1] * Dt(Eb[3]), 1.0e16 * n[1] * Dt(Eb[3]))
+        prob = solve_with([vanishing ~ 0])
+        @test prob.A == base.A && prob.b == base.b
+    end
+end
+
+@testset "redundant combinations are recognised where they cancel exactly" begin
+    ambiguous(msg) = occursin("cannot be distinguished from rounding error", msg)
+    # An axis-aligned face: the coefficients are exact, so a linear combination of the equations is redundant.
+    Ω = MeshDomain(guide(10.0, 5.0))
+    Γ = boundarypiece(Ω, :top)
+    walls = pec(Ω, WALLS)
+    bc = abc(Γ)
+    r = [e.lhs - e.rhs for e in bc]
+    solve_with(bcs) = discretize(system(Ω, [walls; bcs]), edge_disc(Ω))
+    base = solve_with(bc)
+    combination = solve_with([bc; r[1] + 2r[2] ~ 0])
+    @test combination.A == base.A && combination.b == base.b
+    # An oblique face: the cancellation leaves a rounding-level residue, which cannot be told from a small constraint
+    # and is rejected as ambiguous rather than dropped.
+    grid = generate_grid(Tetrahedron, (2, 2, 2), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0))
+    for i in eachindex(grid.nodes)
+        x = grid.nodes[i].x
+        grid.nodes[i] = Node(Vec(x[1], x[2], x[3] + 0.2x[1] + 0.3x[2]))
+    end
+    Ωs = MeshDomain(grid)
+    Γs = boundarypiece(Ωs, :top)
+    bcs_ = abc(Γs)
+    rs = [e.lhs - e.rhs for e in bcs_]
+    @test ambiguous(message(() -> discretize(system(Ωs, [bcs_; -0.2 * rs[1] - 0.3 * rs[2] + rs[3] ~ 0]), edge_disc(Ωs; omega = 2.0))))
+end
+
+@testset "a coefficient dominated by rounding error is rejected, not dropped, whatever the other equations" begin
+    grid = generate_grid(Tetrahedron, (2, 2, 2), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0))
+    for i in eachindex(grid.nodes)
+        x = grid.nodes[i].x
+        grid.nodes[i] = Node(Vec(x[1], x[2], x[3] + 0.25x[1] + 0.5x[2]))
+    end
+    Ω = MeshDomain(grid)
+    Γ = boundarypiece(Ω, :top)  # n = (-1, -2, 4) / sqrt(21), so n[1] + 0.25n[3] = 0
+    n, Eb = facet_normal(Γ), trace(Γ)
+    bc = abc(Γ)
+    ambiguous(msg) = occursin("cannot be distinguished from rounding error", msg)
+    independent(msg) = occursin("independent equations", msg)
+    # The standard condition, unscaled and scaled: the outcome must not depend on the other equations.
+    for scale in (1.0, 1.0e13)
+        equations = [scale * e.lhs ~ scale * e.rhs for e in bc]
+        solve_with(extra) = discretize(system(Ω, [equations; extra]; f = [1.0, 0.0, 0.0]), edge_disc(Ω; omega = 2.0))
+        base = solve_with(Equation[])
+        # q is exactly 1 but evaluates with a rounding error of the size of 1: neither kept nor dropped silently.
+        for multiplier in (1.0e15, 2.0e15, 1.0e16, 1.0e17)
+            q = multiplier * (n[1] + 0.25n[3]) + 1
+            for equation in (q * dot(n, Dt.(Eb)) ~ 0, q * dot(n, Eb) ~ 0)
+                msg = message(() -> solve_with([equation]))
+                @test ambiguous(msg) || independent(msg)
+            end
+        end
+        # Without the cancelling term it is an independent constraint.
+        @test independent(message(() -> solve_with([dot(n, Dt.(Eb)) ~ 0])))
+        # An offset of the size of its own rounding error is ambiguous, never dropped. (An offset of 1e-20 is absorbed
+        # by the first addition, which then evaluates to exactly 0.0: that coefficient is indistinguishable from the
+        # truly vanishing n[1] * E, a limitation of floating-point evaluation.)
+        msg = message(() -> solve_with([(n[1] + 0.25n[3] + 1.0e-16) * dot(n, Dt.(Eb)) ~ 0]))
+        @test ambiguous(msg) || independent(msg)
+    end
+end
+
+@testset "every trace in a boundary condition must be E(t, Γ)" begin
+    Ω = MeshDomain(guide(10.0, 5.0))
+    Γ = boundarypiece(Ω, :top)
+    n = facet_normal(Γ)
+    Eb = trace(Γ)
+    solve_with(bcs) = discretize(system(Ω, [pec(Ω, WALLS); bcs]), edge_disc(Ω))
+    @test solve_with(abc(Γ)) isa LinearProblem
+    τ = π / (2K0)
+    delayed = [E(t - τ, Γ)[c] for c in 1:3]
+    # The delayed derivative carries a phasor factor exp(-iωτ): it is not the matched absorber.
+    shifted = cross(n, curl(Eb, X)) .~ -cross(n, cross(n, Dt.(delayed)))
+    @test occursin("not a condition at one time", message(() -> solve_with(shifted)))
+    # A shifted trace nested in a cross product or a component, and a fixed or scaled time, are rejected too.
+    @test occursin("not a condition at one time", message(() -> solve_with(cross(n, cross(n, delayed)) .~ cross(n, curl(Eb, X)))))
+    @test occursin("not a condition at one time", message(() -> solve_with([cross(n, delayed)[1] ~ 0; abc(Γ)[2:3]])))
+    @test occursin("not a condition at one time", message(() -> solve_with(cross(n, curl(Eb, X)) .~ -cross(n, cross(n, Dt.([E(0.0, Γ)[c] for c in 1:3]))))))
+    @test occursin("not a condition at one time", message(() -> solve_with(cross(n, curl(Eb, X)) .~ -cross(n, cross(n, Dt.([E(2t, Γ)[c] for c in 1:3]))))))
+end
+
+@testset "a vanishing derivative equation does not make a perfect conductor absorbing" begin
+    Ω = MeshDomain(guide(10.0, 5.0))
+    Γ = boundarypiece(Ω, :top)  # n[1] = 0 on it
+    n, Eb = facet_normal(Γ), trace(Γ)
+    plain = [pec(Ω, WALLS); cross(n, Eb) .~ 0]
+    extended = [pec(Ω, WALLS); cross(n, Eb) .~ 0; n[1] * Dt(Eb[3]) ~ 0]
+    @test (; model = maxwell_model(system(Ω, extended), edge_disc(Ω)).model).model.pec == maxwell_model(system(Ω, plain), edge_disc(Ω)).model.pec
+    a, b = discretize(system(Ω, extended), edge_disc(Ω)), discretize(system(Ω, plain), edge_disc(Ω))
+    @test a.A == b.A && a.b == b.b
+    @test isempty(maxwell_model(system(Ω, extended), edge_disc(Ω)).model.absorbing)
+end
+
+@testset "rejections of absorbing conditions and ports" begin
+    grid = guide(10.0, 5.0)
+    addfacetset!(grid, "lid", x -> x[3] ≈ 10.0)  # the facets of top again
+    Ω = MeshDomain(grid)
+    Γ = boundarypiece(Ω, :top)
+    n, Eb = facet_normal(Γ), trace(Γ)
+    walls = pec(Ω, WALLS)
+    bad(bcs; ports = WavePort[], kw...) = discretize(system(Ω, [walls; bcs]; kw...), edge_disc(Ω, ports))
+    @test bad(abc(Γ)) isa LinearProblem
+    mismatch = r"^the conditions on top at facet \(\d+, \d+\) with normal \(-?0\.0, -?0\.0, 1\.0\) are not n × \(ν curl E\) = -sqrt\(ε/μ\) n × \(n × ∂ₜE\) of the adjacent cell \(ν = 1\.0, sqrt\(ε/μ\) = 1\.0\)"
+    @test occursin(mismatch, message(() -> bad(abc(Γ; eps = 2.0))))                                # impedance
+    @test occursin(mismatch, message(() -> bad(cross(n, curl(Eb, X)) .~ cross(n, cross(n, Dt.(Eb))))))  # sign
+    @test occursin(mismatch, message(() -> bad(cross(n, curl(Eb, X) ./ 2) .~ -cross(n, cross(n, Dt.(Eb))))))  # ν
+    # An impedance condition in E instead of ∂ₜE, and the absorbing condition plus a term in E.
+    @test occursin(mismatch, message(() -> bad(cross(n, curl(Eb, X)) .~ -cross(n, cross(n, Eb)))))
+    @test occursin(mismatch, message(() -> bad(cross(n, curl(Eb, X)) .~ -cross(n, cross(n, Dt.(Eb) .+ Eb)))))
+    @test occursin(r"^the conditions on top at facet .* have 1 independent equations; the absorbing condition", message(() -> bad([abc(Γ)[1]])))
+    @test occursin(r"^the conditions on top at facet .* have 4 independent equations", message(() -> bad([abc(Γ); cross(n, Eb) .~ 0])))
+    # The third row vanishes at the actual normal e₃ of top, so two rows are the whole condition there, and a
+    # term added to that row is a third equation.
+    @test bad(abc(Γ)[1:2]) isa LinearProblem
+    @test occursin(r"^the conditions on top at facet .* have 3 independent equations", message(() -> bad([abc(Γ)[1:2]; abc(Γ)[3].lhs + Eb[3] ~ abc(Γ)[3].rhs])))
+    @test occursin("has the derivative", message(() -> bad([abc(Γ)[1:2]; Dt(Dt(Eb[1])) ~ 0])))
+    @test occursin("has the derivative", message(() -> bad([abc(Γ)[1:2]; Differential(x)(Differential(y)(Eb[1])) ~ 0])))
+    @test occursin("has the derivative", message(() -> bad([abc(Γ)[1:2]; Differential(x)(2 * Eb[1]) ~ 0])))
+    @test occursin("has a normal derivative", message(() -> bad([abc(Γ)[1:2]; NormalDerivative(Γ)(Eb[1]) ~ 0])))
+    @test occursin(r"depends on t;", message(() -> bad(cross(n, curl(Eb, X)) .~ -(1 + t) .* cross(n, cross(n, Dt.(Eb))))))
+    @test occursin(r"^the absorbing condition on top has a source", message(() -> bad(cross(n, curl(Eb, X)) .~ -cross(n, cross(n, Dt.(Eb))) .+ [1.0, 0, 0])))
+    @test occursin(r"^the absorbing condition on top at facet .* borders cell \d+ with ν = 1\.0, a₂ = 1\.0, a₁ = 0\.1 and a₀ = 0\.0", message(() -> bad(abc(Γ); a1 = 0.1)))
+    @test occursin(r"borders cell \d+ with ν = 1\.0, a₂ = 1\.0, a₁ = 0\.0 and a₀ = 0\.2", message(() -> bad(abc(Γ); a0 = 0.2)))
+    @test occursin(r"borders cell \d+ with ν = 1\.0, a₂ = -1\.0", message(() -> bad(abc(Γ); a2 = -1.0)))
+    # Coefficients of the condition are constants on the piece, checked whole at every facet.
+    @test occursin(r"depends on x;", message(() -> bad(cross(n, curl(Eb, X)) .~ -(1 + 0.1x) .* cross(n, cross(n, Dt.(Eb))))))
+    # A second piece on the same facets with the other condition.
+    overlap = "the pieces lid and top share facets and one of them is absorbing; give each facet one condition"
+    @test_throws ArgumentError(overlap) bad([abc(Γ); pec(Ω, ["lid"])])
+    # The matched condition on two pieces with the same facets would double the admittance.
+    @test_throws ArgumentError(overlap) bad([abc(Γ); abc(boundarypiece(Ω, :lid))])
+    # Two perfect-conductor pieces on the same facets constrain the same dofs and are fine.
+    @test bad(pec(Ω, ["top", "lid"])) isa LinearProblem
+    # The operator-level model refuses the same overlaps among absorbing sets and ports.
+    twice = "the facet sets \"top\" and \"lid\" of `absorbing` and `ports` share facets, whose boundary terms would be added twice; give each facet one absorbing condition or port"
+    @test_throws ArgumentError(twice) MaxwellModel(grid; pec = WALLS, absorbing = ["top", "lid"])
+    @test_throws ArgumentError(replace(twice, "\"lid\"" => "\"top\"")) MaxwellModel(grid; pec = WALLS, absorbing = ["top", "top"])
+    @test_throws ArgumentError(twice) MaxwellModel(grid; pec = WALLS, absorbing = ["top"], ports = [port("lid")])
+    @test_throws ArgumentError(replace(twice, "\"top\"" => "\"bottom\"", "\"lid\"" => "\"bottom\"")) MaxwellModel(grid; pec = WALLS, ports = [port("bottom"), port("bottom")])
+
+    # Ports carry their own condition and need a frequency-independent model.
+    portmsg(name) = "the wave port on bottom is the boundary condition of its facets, but the PDESystem also has a condition on $name, which shares facets with it; remove that condition"
+    @test_throws ArgumentError(portmsg("bottom")) bad(pec(Ω, ["bottom"]); ports = [port("bottom")])
+    @test_throws ArgumentError(portmsg("bottom")) bad(abc(boundarypiece(Ω, :bottom)); ports = [port("bottom")])
+    @test bad(Equation[]; ports = [port("bottom")]) isa LinearProblem
+    @test occursin(r"^a₀ = 0\.2 in cell 1, but with wave ports the coefficient of E must be zero", message(() -> bad(Equation[]; ports = [port("bottom")], a0 = 0.2)))
+    @test_throws ArgumentError("solve_sweep drives the wave ports only, but the PDESystem has a source; solve a source with discretize(pdesys, disc) at each omega") solve_sweep(
+        system(Ω, walls; f = [0, 1.0, 0]), edge_disc(Ω, [port("bottom")]), [K0]
+    )
+end

@@ -13,7 +13,7 @@ using DiffEqBase: BrownFullBasicInit
 using DomainSets: DomainSets
 using Ferrite: Ferrite, Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexahedron, curl
 using ForwardDiff: ForwardDiff
-using LinearAlgebra: dot, mul!, norm, rank
+using LinearAlgebra: cross, dot, lu, lu!, mul!, norm, normalize, rank, svd
 using ModelingToolkit: ModelingToolkit, @parameters, @variables, Differential, MTKParameters,
     ProblemTypeCtx, System, complete, getmetadata
 using NonlinearSolveFirstOrder: NewtonRaphson
@@ -22,7 +22,7 @@ using PrecompileTools: PrecompileTools
 using RuntimeGeneratedFunctions: RuntimeGeneratedFunctions
 using SciMLBase: SciMLBase, DAEFunction, DAEProblem
 using SciMLBase.SymbolicIndexingInterface: SymbolicIndexingInterface, getp, parameter_index, variable_index
-using SparseArrays: SparseMatrixCSC, nnz, nonzeros, nzrange, rowvals
+using SparseArrays: SparseMatrixCSC, findnz, nnz, nonzeros, nzrange, rowvals, sparse
 using SymbolicUtils: SymbolicUtils
 using Symbolics: Symbolics, Equation, Num, @register_array_symbolic, substitute, unwrap
 
@@ -43,6 +43,7 @@ export FieldInfo, FEMMetadata, piece_nodes, normal_flux, write_vtk, facet_dofs, 
 export Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexahedron
 
 using PDEBase: StrongForm, MeshDomain, Region, boundarypiece, boundarypieces, NormalDerivative
+include("maxwell/ports.jl")  # before the discretization, which holds WavePorts
 using PDEBase.StrongForm: Weighted
 include("discretization.jl")
 include("frontend.jl")
@@ -56,9 +57,11 @@ export Weighted
 # from a PDESystem without the scalar weak form.
 include("maxwell/model.jl")
 include("maxwell/driven.jl")
+include("maxwell/sweep.jl")
 include("maxwell/frontend.jl")
 export MaxwellMaterial, MaxwellModel, MaxwellTerm, maxwell_operator, maxwell_operator!
 export MaxwellSolution, driven_problem, solve_driven, field_values
+export WavePort, MaxwellSweep, solve_sweep
 export curl, facet_normal, maxwell_model
 
 include("precompile.jl")
