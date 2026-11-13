@@ -200,6 +200,30 @@ function _recognise_volume(an, s, fixed, xs)
     return (; nu, a..., sources = sources[invperm(comps)])
 end
 
+# The working range of the PDESystem front end: every nonzero coefficient, the source amplitude and ω lie in
+# [1e-100, 1e100] in magnitude and the products ω² a₂ and ω a₁ in [1e-250, 1e250], so that products with mesh
+# quantities (element volumes, mass and stiffness entries) cannot underflow to subnormal values or overflow.
+const _WINDOW = (1.0e-100, 1.0e100)
+const _PRODUCT_WINDOW = (1.0e-250, 1.0e250)
+
+function _window_error(name, value, where, lo, hi)
+    place = where === nothing ? "" : " in cell $where"
+    return ArgumentError(
+        "$name = $value$place is outside the supported window $lo ≤ |$name| ≤ $hi of the Maxwell front end (SI-scale physics is " *
+            "well inside it); nondimensionalise the equation, or build a MaxwellModel directly"
+    )
+end
+function _check_window(name, value, where)
+    (iszero(value) || _WINDOW[1] <= abs(value) <= _WINDOW[2]) || throw(_window_error(name, value, where, _WINDOW...))
+    return nothing
+end
+function _check_product_window(name, value, where)
+    (iszero(value) || _PRODUCT_WINDOW[1] <= abs(value) <= _PRODUCT_WINDOW[2]) ||
+        throw(_window_error(name, value, where, _PRODUCT_WINDOW...))
+    return nothing
+end
+_check_window_sources(values) = foreach(v -> _check_window("a source amplitude", v, nothing), values)
+
 # The terms of lower order than the curl-curl, each judged on its own, with exact symbolic zero tests rather than
 # tolerances relative to the other coefficients, which a large one would hide behind: there is no first-order term,
 # the coefficients of E, ∂ₜE and ∂ₜ²E of an equation do not couple the components, and each is the same scalar
@@ -343,6 +367,11 @@ cell gets `MaxwellMaterial(eps_r = a₂ - a₀/ω², mu_r = 1/ν, sigma = a₁)`
 `∫ f ⋅ Nᵢ`. Boundary conditions are the perfect conductor `cross(facet_normal(Γ), [E(t, Γ)[c] for c in 1:3]) .~ 0`;
 pieces without a condition get the natural `n × (ν curl E) = 0`. A complex permittivity has no real
 time-domain form here; build a `MaxwellModel` directly for it.
+
+The front end works in a window: every nonzero ν, a₀, a₁, a₂ and source amplitude and ω lie in `1e-100 ≤ |c| ≤ 1e100`,
+and the products `ω² a₂` and `ω a₁` in `1e-250 ≤ |c| ≤ 1e250`. This is far wider than SI-unit physics
+(ε₀ ≈ 8.85e-12, μ₀⁻¹ ≈ 8e5, ω up to 1e12) and keeps products with mesh quantities from underflowing; outside it
+an `ArgumentError` names the coefficient and asks for a nondimensionalised equation.
 """
 function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
     disc.omega === nothing &&
@@ -387,10 +416,20 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
     coefficient_at = compile([coeffs.nu, coeffs.a0, coeffs.a1, coeffs.a2])
     source_at = compile(coeffs.sources)
     ω = disc.omega
+    _check_window("ω", ω, nothing)
+    for x in centroids
+        _check_window_sources(_real_values(source_at(x...), "a source"))
+    end
     materials = map(enumerate(centroids)) do (cell, x)
         nu, a0, a1, a2 = _real_values(coefficient_at(x...), "a coefficient")
         (iszero(nu) || iszero(1 / nu) || !isfinite(1 / nu)) &&
             throw(ArgumentError("ν = $nu in cell $cell; ν = 1/μ must be nonzero" * (iszero(nu) ? "" : " and 1/ν must be representable")))
+        for (name, value) in (("ν", nu), ("a₀", a0), ("a₁", a1), ("a₂", a2))
+            _check_window(name, value, cell)
+        end
+        for (name, value) in (("ω² a₂", ω^2 * a2), ("ω a₁", ω * a1))
+            _check_product_window(name, value, cell)
+        end
         # The net reaction a₀ - ω² a₂ is formed exactly (it cancels when the two are large), then divided once.
         all(isfinite, (a0, a2, ω)) || throw(
             ArgumentError("the reaction a₀ - ω² a₂ ($a0 - $ω^2 $a2) in cell $cell is not representable as ε = a₂ - a₀/ω²; the coefficients must be finite")

@@ -64,6 +64,11 @@ facet_normal
 maxwell_model
 ```
 
+The front end works in a window: every nonzero `ν`, `a₀`, `a₁`, `a₂`, source amplitude and `ω` lies in
+`1e-100 ≤ |c| ≤ 1e100`, and the products `ω² a₂` and `ω a₁` in `1e-250 ≤ |c| ≤ 1e250`; anything outside is an
+`ArgumentError` that asks for a nondimensionalised equation. SI-unit physics (`ε₀ ≈ 8.85e-12`, `μ₀⁻¹ ≈ 8e5`, `ω` up to
+`1e12`) is far inside it.
+
 ## Operator level
 
 ```@docs
