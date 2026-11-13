@@ -1,0 +1,530 @@
+# PDESystem front end of the Maxwell model: `discretize` with `FEMDiscretization(…; omega)` reads the
+# time-domain curl-curl equation off PDEBase's strong-form analysis, samples its coefficients per cell and
+# hands them to `MaxwellModel` and `driven_problem`. It bypasses the scalar weak form, assembly and DAE path.
+
+"""
+    curl(F, (x, y, z))
+
+The curl `∇ × F` of the 3-vector of symbolic expressions `F` in the coordinates `(x, y, z)`, as a vector of
+`Differential` expressions, for writing the Maxwell operator in a `PDESystem`:
+`curl(curl(E(t, x, y, z), (x, y, z)) / μ, (x, y, z))`. This is a method of Ferrite's (Tensors') `curl`, which
+`FiniteElementMethod` re-exports, so that loading both packages leaves one `curl`.
+"""
+function Ferrite.curl(F::AbstractVector, x::NTuple{3, Any})
+    length(F) == 3 || throw(ArgumentError("curl needs a 3-vector, got $(length(F)) components"))
+    D = Differential.(collect(x))
+    return [D[2](F[3]) - D[3](F[2]), D[3](F[1]) - D[1](F[3]), D[1](F[2]) - D[2](F[1])]
+end
+
+# The symbolic outward unit normal of a boundary piece, `n(d)` for its component `d`, until PDEBase provides one
+# (SciML/PDEBase.jl#164). It only builds a term: `_recognise_pec` reads it off the condition.
+struct PieceNormal{D <: DomainSets.Domain} <: SymbolicUtils.Operator
+    piece::D
+end
+Base.isequal(a::PieceNormal, b::PieceNormal) = isequal(a.piece, b.piece)
+Base.:(==)(a::PieceNormal, b::PieceNormal) = isequal(a, b)
+Base.hash(a::PieceNormal, h::UInt) = hash(a.piece, hash(PieceNormal, h))
+SymbolicUtils.isbinop(::PieceNormal) = false
+Base.show(io::IO, n::PieceNormal) = print(io, "n_", n.piece.name)
+
+"""
+    facet_normal(Γ::BoundaryPiece)
+
+The symbolic outward unit normal of the boundary piece `Γ`, as a vector of its three components, for boundary
+conditions such as the perfect conductor `cross(facet_normal(Γ), [E(t, Γ)[c] for c in 1:3]) .~ 0`. It is
+`PDEBase.normal(Γ)` where PDEBase defines it (SciML/PDEBase.jl#164) and a term of this package otherwise; the
+name avoids DomainSets' own exported `normal`. The normal itself is read off the facets of the mesh.
+"""
+function facet_normal(Γ::PDEBase.BoundaryPiece)
+    hasmethod(PDEBase.normal, Tuple{typeof(Γ)}) && return PDEBase.normal(Γ)
+    return [Num(SymbolicUtils.term(PieceNormal(Γ), d; type = Real)) for d in 1:3]
+end
+
+# PDEBase's facet normal operator, once it exists (SciML/PDEBase.jl#164).
+const _FacetNormal = isdefined(PDEBase, :FacetNormal) ? Union{PieceNormal, getfield(PDEBase, :FacetNormal)} : PieceNormal
+
+# The outward unit normal of every facet of the facet set `name`, with the facet.
+function _facet_normals(grid, name)
+    fv = Ferrite.FacetValues(Ferrite.FacetQuadratureRule{RefTetrahedron}(1), Lagrange{RefTetrahedron, 1}())
+    return map(collect(Ferrite.getfacetset(grid, name))) do facet
+        Ferrite.reinit!(fv, Ferrite.getcells(grid, facet[1]), Ferrite.getcoordinates(grid, facet[1]), facet[2])
+        (collect(Ferrite.getnormal(fv, 1)), facet)
+    end
+end
+
+const _MAXWELL_FORM = "write the operator as curl(ν*curl(E)) with curl(F, (x, y, z)), as in curl(curl(E, X) / μ, X)"
+
+# `Dt(E_c)` becomes `s₁ E_c` and `Dt(Dt(E_c))` `s₂ E_c` (the phasor of exp(+iωt) has s₁ = iω, s₂ = -ω²).
+_phasor(ex, t, isfield, s) = substitute(ex, _phasor_rules!(Dict{Any, Any}(), unwrap(ex), t, isfield, s))
+
+function _phasor_rules!(rules, ex, t, isfield, s, inside = false)
+    SymbolicUtils.iscall(ex) || return rules
+    op = SymbolicUtils.operation(ex)
+    if op isa Differential && isequal(op.x, t)
+        inside && throw(
+            ArgumentError("the time derivative $(Num(ex)) is inside a spatial derivative; time derivatives may only multiply E, as in ε ∂ₜ²E + σ ∂ₜE")
+        )
+        order, inner = 0, ex
+        while SymbolicUtils.iscall(inner) && SymbolicUtils.operation(inner) isa Differential &&
+                isequal(SymbolicUtils.operation(inner).x, t)
+            order += SymbolicUtils.operation(inner).order
+            inner = unwrap(only(SymbolicUtils.arguments(inner)))
+        end
+        isfield(inner) && order <= 2 || throw(
+            ArgumentError("the time derivative $(Num(ex)) must be a first or second time derivative of a component of the unknown")
+        )
+        rules[ex] = unwrap(s[order] * inner)
+        return rules
+    end
+    foreach(a -> _phasor_rules!(rules, unwrap(a), t, isfield, s, inside || op isa Differential), SymbolicUtils.arguments(ex))
+    return rules
+end
+
+# The unknown with the Nédélec space and the component of each flattened field.
+function _maxwell_components(fields, replaced, disc)
+    nedelec = [k for (k, ip) in disc.spaces if ip isa Ferrite.Nedelec]
+    length(nedelec) == 1 && length(disc.spaces) == 1 || throw(
+        ArgumentError("omega needs one vector unknown with a Nédélec space and no other spaces, as spaces = Dict(E => Nedelec{RefTetrahedron, 1}())")
+    )
+    E = only(nedelec)
+    disc.spaces[E] == _NEDELEC ||
+        throw(ArgumentError("omega supports the space Nedelec{RefTetrahedron, 1}() only, got $(disc.spaces[E])"))
+    return map(fields) do u
+        r = get(replaced, unwrap(u), nothing)
+        indexed = r === nothing ? nothing : unwrap(r)
+        ok = indexed !== nothing && SymbolicUtils.iscall(indexed) && SymbolicUtils.operation(indexed) === getindex &&
+            isequal(_field_op(SymbolicUtils.arguments(indexed)[1]), E)
+        ok || throw(
+            ArgumentError(
+                "omega discretizes one 3-component vector unknown with a Nédélec space, as @variables E(..)[1:3]; " *
+                    "$(Num(u)) is not a component of it"
+            )
+        )
+        Int(SymbolicUtils.unwrap_const(SymbolicUtils.arguments(indexed)[2]))
+    end
+end
+
+_iszero_expr(ex) = isequal(Symbolics.simplify(Symbolics.expand(Num(ex))), Num(0))
+
+# Field `c` of the analysis is component `c` of E. Equation `e` in slot form tests component `comps[e]`;
+# returns ν, a₀, a₁, a₂ and the sources in slots, after checking at every cell centroid `xs`, and for the
+# frequency slots `s` at (0, 0), (1, 0) and (0, 1), that the second-order part is curl(ν curl E) and the
+# rest is λ E - f with the same scalar ν and λ in every equation. `fixed` substitutes the parameter values.
+function _recognise_volume(an, s, fixed, xs)
+    (; slots) = an
+    Gs(c, b) = slots.G[(c - 1) * 3 + b]
+    state = [slots.U; slots.G]
+    nonlinear(e) = ArgumentError("the Maxwell front end discretizes linear equations only, but equation $e is nonlinear in E")
+    timedep(what) = ArgumentError("$what of the Maxwell equation depends on time; with omega the coefficients and sources are time-independent, and a source is the phasor amplitude")
+    B = [[Symbolics.derivative(an.flux[e][a], Gs(c, b)) for a in 1:3, c in 1:3, b in 1:3] for e in 1:3]
+    dU = [[Symbolics.derivative(an.remainder[e], slots.U[c]) for c in 1:3] for e in 1:3]
+    dG = [[Symbolics.derivative(an.remainder[e], g) for g in slots.G] for e in 1:3]
+    dF = [[Symbolics.derivative(an.flux[e][a], slots.U[c]) for a in 1:3, c in 1:3] for e in 1:3]
+    parts(e) = [vec(B[e]); dU[e]; dG[e]; vec(dF[e])]
+    # Flux and remainder are then of degree one in U and G, so nothing else of them is left to discard.
+    allslots = Dict(unwrap(g) => 0 for g in [slots.U; slots.G; slots.H; slots.Ud])
+    for e in 1:3
+        any(ex -> _depends(unwrap(ex), [slots.H; slots.Ud]), [an.flux[e]; an.remainder[e]; an.mass[e]]) && throw(
+            ArgumentError("equation $e has a term the frequency-domain Maxwell path cannot place (a second derivative outside a divergence or a leftover time derivative); $_MAXWELL_FORM")
+        )
+        any(F -> !_iszero_expr(substitute(substitute(F, allslots), fixed)), an.flux[e]) && throw(
+            ArgumentError("equation $e has a derivative of an expression without E, a source inside a divergence, which is not integrated by parts; write that source term out explicitly as a function of the coordinates")
+        )
+        any(ex -> _depends(unwrap(ex), state), parts(e)) && throw(nonlinear(e))
+        any(ex -> _depends(unwrap(ex), [slots.T]), parts(e)) && throw(timedep("a coefficient"))
+        any(ex -> _depends(unwrap(ex), s), [vec(B[e]); dG[e]; vec(dF[e])]) && throw(
+            ArgumentError("equation $e has a time derivative inside a spatial derivative; time derivatives may only multiply E, as in ε ∂ₜ²E + σ ∂ₜE")
+        )
+        any(_depends(unwrap(Symbolics.derivative(ex, si)), s) for ex in dU[e], si in s) &&
+            throw(ArgumentError("the coefficient of E is nonlinear in its time derivatives"))
+    end
+    sources = [-substitute(an.remainder[e], Dict(unwrap(g) => 0 for g in state)) for e in 1:3]
+    any(f -> _depends(unwrap(f), [slots.T]), sources) && throw(timedep("a source"))
+
+    values_at = Symbolics.build_function(
+        [substitute(ex, fixed) for e in 1:3 for ex in parts(e)], slots.X..., s...; expression = Val(false)
+    )[1]
+    points = [(x, sv) for x in xs for sv in ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))]
+    function unpack(x, sv)
+        v = _real_values(values_at(x..., sv...), "a coefficient")
+        return map(0:2) do k
+            w = v[(48k + 1):(48k + 48)]
+            (B = reshape(w[1:27], 3, 3, 3), λU = w[28:30], dG = w[31:39], dF = reshape(w[40:48], 3, 3))
+        end
+    end
+    comps = zeros(Int, 3)
+    # Which component an equation tests: its Laplacian-like trace, or else its reaction, is nonzero (exactly: the choice
+    # is not a tolerance on the size of the other coefficients).
+    for (x, sv) in points, (e, q) in enumerate(unpack(x, sv))
+        all(!iszero, comps) && break
+        comps[e] == 0 || continue
+        tr = [sum(q.B[a, c, a] for a in 1:3) for c in 1:3]
+        comps[e] = maximum(abs, tr) > 0 ? argmax(abs.(tr)) : maximum(abs, q.λU) > 0 ? argmax(abs.(q.λU)) : 0
+    end
+    e0 = findfirst(iszero, comps)
+    e0 === nothing || throw(ArgumentError("equation $e0 has neither a curl-curl nor a reaction term in E"))
+    sort(comps) == 1:3 || throw(ArgumentError("the equations test the components $comps of E; write one equation per component"))
+    # The structure of the second-order part, decided symbolically from its own coefficients: a term is there or not,
+    # however small it is next to ν.
+    νs = Any[]
+    for e in 1:3
+        ce = comps[e]
+        other = mod1(ce + 1, 3)
+        Be = [substitute(B[e][a, c, b], fixed) for a in 1:3, c in 1:3, b in 1:3]
+        α, β, γ = Be[other, ce, other], Be[other, other, ce], Be[ce, other, other]
+        _iszero_expr(γ) ||
+            throw(ArgumentError("equation $e has a grad div E term, which has no meaning on Nédélec elements; $_MAXWELL_FORM"))
+        expect = [α * (c == ce) * (a == b) + β * (b == ce) * (a == c) + γ * (a == ce) * (c == b) for a in 1:3, c in 1:3, b in 1:3]
+        all(_iszero_expr(Be[a, c, b] - expect[a, c, b]) for a in 1:3, c in 1:3, b in 1:3) || throw(
+            ArgumentError("the second-order part of equation $e is anisotropic or couples the components of E differently from curl(ν*curl(E)); $_MAXWELL_FORM")
+        )
+        _iszero_expr(β) && !_iszero_expr(α) && throw(
+            ArgumentError("equation $e has the vector Laplacian of E, which is component-wise H¹ and not H(curl)-conforming; $_MAXWELL_FORM")
+        )
+        _iszero_expr(α + β) || throw(
+            ArgumentError("the second-order part of equation $e adds a component-wise Laplacian of E to curl(ν*curl(E)), which is not H(curl)-conforming; $_MAXWELL_FORM")
+        )
+        push!(νs, β)
+    end
+    νsame = [_iszero_expr(νs[e] - νs[1]) for e in 1:3]
+    for (x, sv) in points
+        nus = [unpack(x, sv)[e].B[mod1(comps[e] + 1, 3), mod1(comps[e] + 1, 3), comps[e]] for e in 1:3]
+        all(e -> νsame[e] || nus[e] == nus[1], 2:3) || throw(
+            ArgumentError("ν differs between the component equations at x = $(Tuple(x)), so the medium is anisotropic; the coefficients must be scalars")
+        )
+    end
+    _check_lower_order(an, s, fixed, xs, dU, dG, dF, comps)
+    ce = comps[1]
+    nu, λ = B[1][mod1(ce + 1, 3), mod1(ce + 1, 3), ce], dU[1][ce]
+    a = (a0 = substitute(λ, Dict(unwrap(x) => 0 for x in s)), a1 = Symbolics.derivative(λ, s[1]), a2 = Symbolics.derivative(λ, s[2]))
+    return (; nu, a..., sources = sources[invperm(comps)])
+end
+
+# The working range of the PDESystem front end: every nonzero coefficient, the source amplitude and ω lie in
+# [1e-100, 1e100] in magnitude and the products ω² a₂ and ω a₁ in [1e-250, 1e250], so that products with mesh
+# quantities (element volumes, mass and stiffness entries) cannot underflow to subnormal values or overflow.
+const _WINDOW = (1.0e-100, 1.0e100)
+const _PRODUCT_WINDOW = (1.0e-250, 1.0e250)
+
+function _window_error(name, value, where, lo, hi)
+    place = where === nothing ? "" : " in cell $where"
+    return ArgumentError(
+        "$name = $value$place is outside the supported window $lo ≤ |$name| ≤ $hi of the Maxwell front end (SI-scale physics is " *
+            "well inside it); nondimensionalise the equation, or build a MaxwellModel directly"
+    )
+end
+function _check_window(name, value, where)
+    (iszero(value) || _WINDOW[1] <= abs(value) <= _WINDOW[2]) || throw(_window_error(name, value, where, _WINDOW...))
+    return nothing
+end
+function _check_product_window(name, value, where)
+    (iszero(value) || _PRODUCT_WINDOW[1] <= abs(value) <= _PRODUCT_WINDOW[2]) ||
+        throw(_window_error(name, value, where, _PRODUCT_WINDOW...))
+    return nothing
+end
+_check_window_sources(values) = foreach(v -> _check_window("a source amplitude", v, nothing), values)
+
+# The terms of lower order than the curl-curl, each judged on its own, with exact symbolic zero tests rather than
+# tolerances relative to the other coefficients, which a large one would hide behind: there is no first-order term,
+# the coefficients of E, ∂ₜE and ∂ₜ²E of an equation do not couple the components, and each is the same scalar
+# function in every equation.
+function _check_lower_order(an, s, fixed, xs, dU, dG, dF, comps)
+    X = an.slots.X
+    szero = Dict(unwrap(si) => 0 for si in s)
+    orders = (ex -> substitute(ex, szero), ex -> Symbolics.derivative(ex, s[1]), ex -> Symbolics.derivative(ex, s[2]))
+    # The indices of `exs` that are not zero: not symbolically zero and, at some point, not exactly zero. There is no
+    # tolerance, since any tolerance relative to other coefficients (or to a unit) would depend on how the equation is
+    # scaled and could hide a significant term; a coefficient that is zero only up to roundoff is rejected.
+    function nonvanishing(exs)
+        exs = [substitute(ex, fixed) for ex in exs]
+        open = findall(ex -> !_iszero_expr(ex), exs)
+        isempty(open) && return open
+        g = Symbolics.build_function(exs[open], X...; expression = Val(false))[1]
+        big = falses(length(open))
+        for x in xs
+            big .|= .!iszero.(_real_values(g(x...), "a coefficient"))
+        end
+        return open[big]
+    end
+    for e in 1:3
+        isempty(nonvanishing(dF[e])) ||
+            throw(ArgumentError("equation $e has a first-order term inside a derivative; $_MAXWELL_FORM"))
+        isempty(nonvanishing(dG[e])) || throw(
+            ArgumentError("equation $e has a first-order term in the derivatives of E, which curl(ν*curl(E)) does not have; $_MAXWELL_FORM")
+        )
+        off = [order(dU[e][c]) for c in setdiff(1:3, comps[e]) for order in orders]
+        isempty(nonvanishing(off)) || throw(
+            ArgumentError("the zeroth-order term of equation $e couples the components of E; the coefficients of E and its time derivatives must be scalars")
+        )
+    end
+    diag = [orders[k](dU[e][comps[e]]) for e in 1:3, k in 1:3]
+    f = Symbolics.build_function(substitute.(diag, Ref(fixed)), X...; expression = Val(false))[1]
+    # Equal as expressions, or else equal as numbers: no tolerance, which would scale with coefficients (a large
+    # reaction against a large inertia) that cancel at the requested frequency.
+    same = [_iszero_expr(substitute(diag[e, k] - diag[1, k], fixed)) for e in 1:3, k in 1:3]
+    for x in xs
+        v = reshape(_real_values(f(x...), "a coefficient"), 3, 3)
+        for k in 1:3, e in 2:3
+            same[e, k] || v[e, k] == v[1, k] || throw(
+                ArgumentError("the coefficient of E differs between the component equations at x = $(Tuple(x)), so the medium is anisotropic; the coefficients must be scalars")
+            )
+        end
+    end
+    return nothing
+end
+
+# The trace of the field in a boundary condition is E(t, Γ): the time variable and the boundary piece of the condition,
+# nothing at a fixed or shifted time (an initial condition) and no other argument.
+function _check_trace_arguments(ex, t, Γ, eq)
+    args = [_unwrap_arg(a) for a in SymbolicUtils.arguments(ex)]
+    length(args) == 2 && isequal(args[1], unwrap(t)) && args[2] isa PDEBase.BoundaryPiece && args[2] == Γ ||
+        throw(ArgumentError("$eq has the trace $(Num(ex)); a boundary condition with omega must use E(t, Γ) at the time variable t and its boundary piece Γ, not a condition at one time"))
+    return nothing
+end
+
+# n × E = 0 conditions: each residual is linear in the traces and the normal, tangential (C n = 0) and of rank 2
+# together on its piece.
+function _recognise_pec(bcs, fields, pvals, ctx, domain)
+    U = [Symbolics.variable(:U, c) for c in 1:3]
+    N = [Symbolics.variable(:N, d) for d in 1:3]
+    byp = Dict{Symbol, Vector{Num}}()
+    pform = "write the perfect conductor as cross(facet_normal(Γ), [E(t, Γ)[c] for c in 1:3]) .~ 0"
+    for eq in bcs
+        res = eq.lhs - eq.rhs
+        pieces = _trace_pieces(res)
+        _walk(res) do ex
+            SymbolicUtils.iscall(ex) && SymbolicUtils.operation(ex) isa _FacetNormal && push!(pieces, SymbolicUtils.operation(ex).piece)
+        end
+        unique!(pieces)
+        length(pieces) == 1 || throw(
+            ArgumentError("with omega every condition must be a boundary condition on one piece, and initial conditions are not used; got $eq")
+        )
+        Γ = only(pieces)
+        Γ.parent === domain || throw(ArgumentError("the boundary piece $(Γ.name) of $eq is not a piece of the FEMDiscretization's MeshDomain"))
+        rules = Dict{Any, Any}()
+        _walk(res) do ex
+            SymbolicUtils.iscall(ex) || return
+            op = SymbolicUtils.operation(ex)
+            if op isa Union{Differential, PDEBase.NormalDerivative}
+                throw(ArgumentError("$eq has a derivative; with omega only the perfect conductor n × E = 0 is supported: $pform"))
+            elseif op isa _FacetNormal
+                rules[ex] = unwrap(N[Int(SymbolicUtils.unwrap_const(only(SymbolicUtils.arguments(ex))))])
+            else
+                f = findfirst(isequal(op), ctx.ops)
+                if f !== nothing
+                    _check_trace_arguments(ex, ctx.t, Γ, eq)
+                    rules[ex] = unwrap(U[fields[f]])
+                end
+            end
+        end
+        for (p, value) in zip(ctx.params, pvals)
+            rules[p] = value
+        end
+        B = substitute(res, rules)
+        extra = [x for x in Symbolics.get_variables(B) if !any(isequal(x), unwrap.([U; N]))]
+        isempty(extra) || throw(ArgumentError("$eq depends on $(join(Num.(extra), ", ")); $pform"))
+        push!(get!(byp, Γ.name, Num[]), B)
+    end
+    check_facetsets(domain.mesh, collect(keys(byp)); disjoint = false)
+    for (name, Bs) in byp
+        C = [Symbolics.derivative(B, u) for B in Bs, u in U]
+        any(ex -> _depends(unwrap(ex), U), C) && throw(ArgumentError("the conditions on $name are nonlinear in E; $pform"))
+        any(B -> !_iszero_expr(substitute(B, Dict(unwrap(u) => 0 for u in U))), Bs) &&
+            throw(ArgumentError("the conditions on $name prescribe a nonzero tangential field, which is not supported; $pform"))
+        C_at = Symbolics.build_function(vec(C), N...; expression = Val(false))[1]
+        for (n, facet) in _facet_normals(domain.mesh, String(name))
+            Cn = reshape(_real_values(C_at(n...), "a coefficient of the condition"), length(Bs), 3)
+            where = "on $name at facet $((facet[1], facet[2])) with normal $(Tuple(round.(n; digits = 6)))"
+            # Each equation is judged by its own size, so that one written with a large coefficient hides no other.
+            Cn = Cn[[norm(Cn[i, :]) > 0 for i in axes(Cn, 1)], :]
+            Cn = Cn ./ norm.(eachrow(Cn))
+            maximum(abs, Cn * n; init = 0.0) > 1.0e-10 && throw(
+                ArgumentError("the conditions $where constrain the normal component of E, unlike n × E = 0; $pform")
+            )
+            rank(Cn) == 2 || throw(
+                ArgumentError("the conditions $where constrain $(rank(Cn)) of the two tangential components of E; $pform")
+            )
+        end
+    end
+    return sort!(String.(collect(keys(byp))))
+end
+
+"""
+    maxwell_model(pdesys::PDESystem, disc::FEMDiscretization) -> (; model, omega, load)
+
+The [`MaxwellModel`](@ref), angular frequency and load vector that `discretize(pdesys, disc)` builds for a
+`disc` with `omega`, so that the solution `u` of its `LinearProblem` can be wrapped as
+`MaxwellSolution(model, omega, u)` and evaluated with [`field_values`](@ref).
+
+The `PDESystem` is the time-domain equation for a vector unknown `E` with `spaces = Dict(E => Nedelec{RefTetrahedron, 1}())`,
+
+    curl(ν curl E) + a₂ ∂ₜ²E + a₁ ∂ₜE + a₀ E = f,
+
+one equation per component, written with [`curl`](@ref). ν, a₀, a₁ and a₂ are real scalar functions of
+the coordinates and parameters, and the source `f(x)` is read as the phasor amplitude of `exp(+iωt)`. Each
+cell gets `MaxwellMaterial(eps_r = a₂ - a₀/ω², mu_r = 1/ν, sigma = a₁)` sampled at its centroid, with
+`eps0 = mu0 = length_scale = 1`, so the system is `Kc - ω² Mε + iω Mσ` of the model and the load is
+`∫ f ⋅ Nᵢ`. Boundary conditions are the perfect conductor `cross(facet_normal(Γ), [E(t, Γ)[c] for c in 1:3]) .~ 0`;
+pieces without a condition get the natural `n × (ν curl E) = 0`. A complex permittivity has no real
+time-domain form here; build a `MaxwellModel` directly for it.
+
+The front end works in a window: every nonzero ν, a₀, a₁, a₂ and source amplitude and ω lie in `1e-100 ≤ |c| ≤ 1e100`,
+and the products `ω² a₂` and `ω a₁` in `1e-250 ≤ |c| ≤ 1e250`. This is far wider than SI-unit physics
+(ε₀ ≈ 8.85e-12, μ₀⁻¹ ≈ 8e5, ω up to 1e12) and keeps products with mesh quantities from underflowing; outside it
+an `ArgumentError` names the coefficient and asks for a nondimensionalised equation.
+"""
+function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
+    disc.omega === nothing &&
+        throw(ArgumentError("maxwell_model needs a FEMDiscretization with omega, as FEMDiscretization(Ω, t; omega = 2π, spaces)"))
+    _check_domains(pdesys, disc)
+    grid = disc.domain.mesh
+    celltype = Ferrite.getcelltype(grid)
+    celltype === Ferrite.Tetrahedron ||
+        throw(ArgumentError("omega needs a mesh of Tetrahedron cells, got $(celltype isa DataType ? nameof(celltype) : celltype)"))
+    any(dv -> dv isa Complex || eltype(SymbolicUtils.symtype(unwrap(dv))) <: Complex, pdesys.dvs) &&
+        throw(ArgumentError("the unknown must be real: with omega the PDESystem is the real time-domain equation and the phasor is complex"))
+    sys, replaced = PDEBase.make_pdesys_compatible(pdesys)
+    v = PDEBase.VariableMap(sys, disc; replaced_vars = replaced)
+    fields = StrongForm.declared_fields(sys, v)
+    comps = _maxwell_components(fields, replaced, disc)
+    length(fields) == 3 && comps == 1:3 ||
+        throw(ArgumentError("omega needs all three components of the vector unknown and no other unknowns; got $(join(Num.(fields), ", "))"))
+    s = collect(@parameters maxwell_dt maxwell_dt2)
+    ops = [SymbolicUtils.operation(unwrap(u)) for u in fields]
+    isfield(ex) = SymbolicUtils.iscall(ex) && any(isequal(SymbolicUtils.operation(ex)), ops)
+    eqs = [Num(_phasor(eq.lhs, v.time, isfield, s)) ~ Num(_phasor(eq.rhs, v.time, isfield, s)) for eq in sys.eqs]
+    length(eqs) == 3 || throw(ArgumentError("the system has $(length(eqs)) equations for the 3 components of the vector unknown"))
+    ps = sys.ps isa SciMLBase.NullParameters ? [] : collect(sys.ps)
+    phasor_sys = ModelingToolkit.PDESystem(
+        eqs, Equation[], sys.domain, sys.ivs, sys.dvs, [ps; [p => 0.0 for p in s]]; name = nameof(pdesys)
+    )
+    pv = PDEBase.VariableMap(phasor_sys, disc; replaced_vars = replaced)
+    an = StrongForm.analyse(phasor_sys, pv, Dict())
+    ctx = StrongForm.SlotContext(phasor_sys, pv)
+    _check_parameter_values(phasor_sys)
+    pvals = _parameter_values(phasor_sys, ctx)
+    js = [findfirst(isequal(unwrap(p)), ctx.params) for p in s]
+    slot_s = an.slots.P[js]
+    keep = setdiff(eachindex(ctx.params), js)
+    fixed = Dict{Any, Any}(unwrap(an.slots.P[j]) => pvals[j] for j in keep)
+    centroids = [sum(Ferrite.getcoordinates(grid, cell)) / 4 for cell in 1:Ferrite.getncells(grid)]
+    coeffs = _recognise_volume(an, slot_s, fixed, centroids)
+    pec = _recognise_pec(sys.bcs, comps, pvals[keep], (; ops, params = ctx.params[keep], t = ctx.t), disc.domain)
+
+    # Compile the coefficients and sources as functions of the mesh coordinate.
+    X = an.slots.X
+    compile(exs) = Symbolics.build_function([substitute(ex, fixed) for ex in exs], X...; expression = Val(false))[1]
+    coefficient_at = compile([coeffs.nu, coeffs.a0, coeffs.a1, coeffs.a2])
+    source_at = compile(coeffs.sources)
+    ω = disc.omega
+    _check_window("ω", ω, nothing)
+    for x in centroids
+        _check_window_sources(_real_values(source_at(x...), "a source"))
+    end
+    materials = map(enumerate(centroids)) do (cell, x)
+        nu, a0, a1, a2 = _real_values(coefficient_at(x...), "a coefficient")
+        (iszero(nu) || iszero(1 / nu) || !isfinite(1 / nu)) &&
+            throw(ArgumentError("ν = $nu in cell $cell; ν = 1/μ must be nonzero" * (iszero(nu) ? "" : " and 1/ν must be representable")))
+        for (name, value) in (("ν", nu), ("a₀", a0), ("a₁", a1), ("a₂", a2))
+            _check_window(name, value, cell)
+        end
+        for (name, value) in (("ω² a₂", ω^2 * a2), ("ω a₁", ω * a1))
+            _check_product_window(name, value, cell)
+        end
+        # The net reaction a₀ - ω² a₂ is formed exactly (it cancels when the two are large), then divided once.
+        all(isfinite, (a0, a2, ω)) || throw(
+            ArgumentError("the reaction a₀ - ω² a₂ ($a0 - $ω^2 $a2) in cell $cell is not representable as ε = a₂ - a₀/ω²; the coefficients must be finite")
+        )
+        # Exact rational arithmetic of the Float64 inputs, so that the cancellation does not depend on any BigFloat precision.
+        net = Rational{BigInt}(a0) - Rational{BigInt}(ω)^2 * Rational{BigInt}(a2)
+        eps_r = Float64(-net / Rational{BigInt}(ω)^2)
+        # Round trip: the reaction -ω² eps_r that assembly forms (with ω² rounded as it rounds it) must be the exact net
+        # reaction to 1e-10, far above the few ulps that two roundings cost and far below the loss when ω² or eps_r is
+        # subnormal; a nonzero net may not become zero, subnormal or non-finite.
+        ω2 = ω^2
+        reaction = -ω2 * eps_r
+        roundtrip = isfinite(eps_r) && isfinite(reaction) && !iszero(ω2) && !issubnormal(ω2) && !issubnormal(eps_r) &&
+            !iszero(reaction) && !issubnormal(reaction) && abs(Rational{BigInt}(reaction) - net) <= 1.0e-10 * abs(net)
+        isfinite(eps_r) && isfinite(reaction) && (iszero(net) || roundtrip) || throw(
+            ArgumentError("the reaction a₀ - ω² a₂ = $(Float64(net)) ($a0 - $ω^2 $a2) in cell $cell is not representable as ε = a₂ - a₀/ω² at this ω; use a frequency nearer 1 or a MaxwellModel directly")
+        )
+        MaxwellMaterial(; eps_r, mu_r = 1 / nu, sigma = a1)
+    end
+    model = MaxwellModel(
+        grid; materials, pec, eps0 = 1.0, mu0 = 1.0, length_scale = 1.0, quadrature = something(disc.quadrature, 2)
+    )
+    # The scalar round trips cannot see underflow during integration and scaling: every entry of the assembled reaction
+    # block that is nonzero must stay nonzero and normal after its coefficient is applied (entries that are exactly zero,
+    # as on cells without reaction, are not a loss).
+    reaction_term = model.terms[2]  # the eps_real block with its coefficient -ω² (mu0 = eps0 = L = 1)
+    reaction_entries = real(reaction_term.coefficient(ω)) .* nonzeros(reaction_term.block)
+    lost_entries(x) = iszero(x) || issubnormal(x)
+    any(lost_entries, reaction_entries[findall(!iszero, nonzeros(reaction_term.block))]) && throw(
+        ArgumentError("the reaction of the equation is not representable after assembly at ω = $ω: its matrix entries underflow to zero or subnormal values; scale the equation or use a MaxwellModel directly")
+    )
+    # Every value the load assembly evaluates, at the quadrature points, is validated against the window (the centroid
+    # check above is only an early, cheap error); a load that is exactly zero is legitimate (a source supported between
+    # the quadrature points), so the load vector itself is not checked.
+    checked_source(x) = (v = _real_values(source_at(x...), "a source"); _check_window_sources(v); v)
+    return (; model, omega = ω, load = _source_load(model, checked_source))
+end
+
+# The numeric values given for the parameters of the PDESystem, before `_parameter_values` converts them to Float64: a
+# nonzero value that converts to zero or a subnormal number is outside the window, and one that converts to Inf or NaN
+# is not finite, so neither can reach the coefficients and sources as a silent zero.
+function _check_parameter_values(pdesys)
+    ps = pdesys.ps isa SciMLBase.NullParameters ? () : pdesys.ps
+    for p in ps
+        p isa Pair && p.second isa Real || continue
+        value, converted = p.second, Float64(p.second)
+        isfinite(converted) ||
+            throw(ArgumentError("the parameter $(p.first) = $value must be real and finite as a Float64"))
+        iszero(value) || !(iszero(converted) || issubnormal(converted)) ||
+            throw(_window_error("the parameter $(p.first)", value, nothing, _WINDOW...))
+    end
+    return nothing
+end
+
+function _real_values(values, what)
+    all(v -> v isa Real, values) ||
+        throw(ArgumentError("$what of the Maxwell equation evaluates to $values; it must be real and finite"))
+    converted = Float64.(values)  # finiteness is checked after the conversion: a finite BigFloat 1e400 becomes Inf
+    # A nonzero value that the conversion turns into zero or a subnormal number is outside the window as well.
+    for (v, c) in zip(values, converted)
+        iszero(v) || !(iszero(c) || issubnormal(c)) ||
+            throw(_window_error(what, v, nothing, _WINDOW...))
+    end
+    all(isfinite, converted) ||
+        throw(ArgumentError("$what of the Maxwell equation evaluates to $values; it must be real and finite as a Float64"))
+    return converted
+end
+
+# ∫ f ⋅ Nᵢ for the source f(x) of the equation.
+function _source_load(model, f)
+    cv = model.cellvalues
+    n = Ferrite.getnbasefunctions(cv)
+    b = zeros(Ferrite.ndofs(model.dh))
+    be = zeros(n)
+    for cc in Ferrite.CellIterator(model.dh)
+        Ferrite.reinit!(cv, cc)
+        fill!(be, 0.0)
+        x = Ferrite.getcoordinates(cc)
+        for q in 1:Ferrite.getnquadpoints(cv)
+            fq = Ferrite.Vec{3}(Tuple(f(Ferrite.spatial_coordinate(cv, q, x))))
+            dΩ = Ferrite.getdetJdV(cv, q)
+            for i in 1:n
+                be[i] += dot(Ferrite.shape_value(cv, q, i), fq) * dΩ
+            end
+        end
+        Ferrite.assemble!(b, Ferrite.celldofs(cc), be)
+    end
+    return b
+end
+
+# `discretize` with omega: the LinearProblem `A(ω) u = b` of the driven model.
+function _maxwell_problem(pdesys, disc; kwargs...)
+    (; model, omega, load) = maxwell_model(pdesys, disc)
+    prob = driven_problem(model, omega; load)
+    kwargs = merge(disc.kwargs, values(kwargs))
+    return isempty(kwargs) ? prob : SciMLBase.LinearProblem(prob.A, prob.b; kwargs...)
+end
