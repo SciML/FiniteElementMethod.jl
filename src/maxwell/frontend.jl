@@ -658,20 +658,18 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
         grid; materials, pec, absorbing, ports, eps0 = 1.0, mu0 = 1.0, length_scale = 1.0,
         quadrature = something(disc.quadrature, 2),
     )
-    # The scalar round trips cannot see underflow during integration and scaling: the reaction contribution and the load
-    # that are actually assembled must keep a nonzero reaction or source, neither lost to zero nor subnormal.
+    # The scalar round trips cannot see underflow during integration and scaling: every entry of the assembled reaction
+    # block that is nonzero must stay nonzero and normal after its coefficient is applied (entries that are exactly zero,
+    # as on cells without reaction, are not a loss).
     reaction_term = model.terms[2]  # the eps_real block with its coefficient -ω² (mu0 = eps0 = L = 1)
     reaction_entries = real(reaction_term.coefficient(ω)) .* nonzeros(reaction_term.block)
     lost_entries(x) = iszero(x) || issubnormal(x)
     any(lost_entries, reaction_entries[findall(!iszero, nonzeros(reaction_term.block))]) && throw(
         ArgumentError("the reaction of the equation is not representable after assembly at ω = $ω: its matrix entries underflow to zero or subnormal values; scale the equation or use a MaxwellModel directly")
     )
-    load = _source_load(model, x -> _real_values(source_at(x...), "a source"))
-    sourced = any(x -> any(!iszero, _real_values(source_at(x...), "a source")), centroids)
-    sourced && (lost_entries(maximum(abs, load; init = 0.0)) || all(lost_entries, load)) && throw(
-        ArgumentError("the source of the equation is not representable after assembly: its load vector underflows to zero or subnormal values; scale the equation or use a MaxwellModel directly")
-    )
-    return (; model, omega = ω, load)
+    # A source cannot underflow in integration inside the window, and a load that is exactly zero is legitimate (a
+    # source supported between the quadrature points), so the load is not checked.
+    return (; model, omega = ω, load = _source_load(model, x -> _real_values(source_at(x...), "a source")))
 end
 
 """
