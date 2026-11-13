@@ -199,6 +199,25 @@ end
     @test occursin("independent equations", message(() -> solve_with([dot(n, Dt.(Eb)) ~ 0])))
 end
 
+@testset "every trace in a boundary condition must be E(t, Γ)" begin
+    Ω = MeshDomain(guide(10.0, 5.0))
+    Γ = boundarypiece(Ω, :top)
+    n = facet_normal(Γ)
+    Eb = trace(Γ)
+    solve_with(bcs) = discretize(system(Ω, [pec(Ω, WALLS); bcs]), edge_disc(Ω))
+    @test solve_with(abc(Γ)) isa LinearProblem
+    τ = π / (2K0)
+    delayed = [E(t - τ, Γ)[c] for c in 1:3]
+    # The delayed derivative carries a phasor factor exp(-iωτ): it is not the matched absorber.
+    shifted = cross(n, curl(Eb, X)) .~ -cross(n, cross(n, Dt.(delayed)))
+    @test occursin("not a condition at one time", message(() -> solve_with(shifted)))
+    # A shifted trace nested in a cross product or a component, and a fixed or scaled time, are rejected too.
+    @test occursin("not a condition at one time", message(() -> solve_with(cross(n, cross(n, delayed)) .~ cross(n, curl(Eb, X)))))
+    @test occursin("not a condition at one time", message(() -> solve_with([cross(n, delayed)[1] ~ 0; abc(Γ)[2:3]])))
+    @test occursin("not a condition at one time", message(() -> solve_with(cross(n, curl(Eb, X)) .~ -cross(n, cross(n, Dt.([E(0.0, Γ)[c] for c in 1:3]))))))
+    @test occursin("not a condition at one time", message(() -> solve_with(cross(n, curl(Eb, X)) .~ -cross(n, cross(n, Dt.([E(2t, Γ)[c] for c in 1:3]))))))
+end
+
 @testset "rejections of absorbing conditions and ports" begin
     grid = guide(10.0, 5.0)
     addfacetset!(grid, "lid", x -> x[3] ≈ 10.0)  # the facets of top again

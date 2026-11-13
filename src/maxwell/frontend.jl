@@ -272,6 +272,7 @@ function _boundary_rules!(rules, ex, eq, slots, ctx)
         f !== nothing && op.order == 1 || throw(
             ArgumentError("$eq has the derivative $(Num(ex)); a boundary condition with omega may only take first derivatives of the components of E(t, Γ) themselves; $_ABC_FORM")
         )
+        _check_trace_arguments(inner, ctx.t, ctx.piece, eq)
         j = findfirst(isequal(op.x), ctx.sivs)
         if isequal(op.x, ctx.t)
             rules[ex] = unwrap(slots.V[ctx.fields[f]])
