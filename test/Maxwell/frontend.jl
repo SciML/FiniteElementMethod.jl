@@ -350,6 +350,16 @@ end
     end
 end
 
+@testset "a source with no quadrature point in its support gives a zero load, not an underflow error" begin
+    Ω = MeshDomain(unit_cube(1))
+    xc = sum(Ferrite.getcoordinates(Ω.mesh, 1)) / 4
+    r = 1.0e-3
+    bump = ifelse(sum((X[i] - xc[i])^2 for i in 1:3) < r^2, 1.0, 0.0)
+    sys = maxwell_system(Ω; f = [bump, 0.0, 0.0])
+    prob = discretize(sys, maxwell_disc(Ω, 1.0))
+    @test prob isa LinearProblem && iszero(prob.b)
+end
+
 @testset "structural terms are rejected however small they are next to ν" begin
     Ω = MeshDomain(unit_cube(2))
     D = Differential.(collect(X))
