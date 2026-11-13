@@ -188,15 +188,15 @@ function maxwell_eigenmodes(
     contrast > 1.0e6 && @warn "maxwell_eigenmodes: the materials of the model differ by a factor $contrast in εr or μr, so the shift-invert is ill-conditioned and modes may be inaccurate"
     nullspace_tol !== nothing && λ_null > scale * (2π * target_frequency)^2 && @warn "maxwell_eigenmodes: nullspace_tol puts the null-space cutoff $λ_null above the target, so the modes there are discarded"
     ωt = 2π * target_frequency
-    σ = max(scale * ωt^2, λ_shift)
-    shift_offset = σ - scale * ωt^2
+    σ0 = max(scale * ωt^2, λ_shift)
+    shift_offset = σ0 - scale * ωt^2
     # A shift exactly on a discrete eigenvalue makes the factorisation singular; nudge it off.
-    F = try
-        lu(K - σ * M)
+    F, σ = try
+        lu(K - σ0 * M), σ0
     catch err
         err isa SingularException || rethrow()
-        σ *= 1 + 1.0e-8
-        lu(K - σ * M)
+        σ1 = σ0 * (1 + 1.0e-8)
+        lu(K - σ1 * M), σ1
     end
 
     # The gradients of the hat functions of nodes off the PEC facets vanish on the PEC edges; project along them.
@@ -221,6 +221,7 @@ function maxwell_eigenmodes(
     # and, with the distance `d` (by default that of the `need`-th), they reach the bound above, or the space is
     # exhausted (dense).
     function search(op_s, start, need, d_fixed = nothing)
+        local θ, λ, vecs, keep, dense, dist  # not the variables of the same names of the enclosing function
         howmany = 2nev
         while true
             dim = max(krylovdim, howmany + 20)
