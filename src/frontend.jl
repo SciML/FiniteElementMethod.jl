@@ -115,7 +115,7 @@ function _split_periodic(bcs, ctx, time)
         length(_trace_pieces(eq.lhs - eq.rhs)) > 1 || (push!(rest, eq); continue)
         lhs, rhs = _unwrap_arg(eq.lhs), _unwrap_arg(eq.rhs)
         f = _field_index(ctx, lhs)
-        (f !== nothing && length(_trace_pieces(lhs)) == 1 && length(_trace_pieces(rhs)) == 1 && SymbolicUtils.iscall(rhs)) ||
+        (f !== nothing && _field_index(ctx, rhs) !== nothing && length(_trace_pieces(lhs)) == 1 && length(_trace_pieces(rhs)) == 1) ||
             throw(ArgumentError("$_PERIODIC_FORM: $eq"))
         f == _field_index(ctx, rhs) ||
             throw(ArgumentError("a periodic condition relates the traces of one field on two pieces, but $eq names two fields"))

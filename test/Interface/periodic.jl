@@ -334,7 +334,12 @@ end
         @test_throws "of the periodic condition" build(bc)
         @test_throws "a fixed, shifted or scaled time is not supported" build(bc)
     end
-    @test_throws "names two fields" build(u(t, left) ~ v(t, right))
+    two = [heat, Dt(v(t, x, y)) ~ Dx(Dx(v(t, x, y))) + Dy(Dy(v(t, x, y)))]
+    @named twofields = PDESystem(
+        two, [u(t, left) ~ v(t, right), u(t, bottom) ~ 0, u(t, top) ~ 0, v(t, bottom) ~ 0, v(t, top) ~ 0, u(0, x, y) ~ 0, v(0, x, y) ~ 0],
+        [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.1)], [t, x, y], [u(t, x, y), v(t, x, y)], []
+    )
+    @test_throws "names two fields" discretize(twofields, FEMDiscretization(Ω, t))
     # Steady: no time argument; a time on a steady system is rejected with the same message.
     Δ(f) = Dx(Dx(f)) + Dy(Dy(f))
     function steady(bc)
