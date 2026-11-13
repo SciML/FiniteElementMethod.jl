@@ -179,3 +179,18 @@ end
         @test all(trace(j) > 1.0e-3 for j in on_facet)
     end
 end
+
+@testset "the linear Lagrange facet dofs are the facet nodes" begin
+    ip = Lagrange{RefTetrahedron, 1}()
+    fv = FacetValues(FacetQuadratureRule{RefTetrahedron}(2), ip)
+    grid = Grid([Tetrahedron((1, 2, 3, 4))], Node.([(0.1, 0.0, 0.0), (1.2, 0.2, 0.0), (0.0, 0.9, 0.1), (0.3, 0.2, 1.1)]))
+    dh = DofHandler(grid)
+    add!(dh, :u, ip)
+    close!(dh)
+    cell = first(CellIterator(dh))
+    for lf in 1:4
+        reinit!(fv, cell, lf)
+        nonzero = [j for j in 1:4 if any(abs(shape_value(fv, q, j)) > 1.0e-12 for q in 1:getnquadpoints(fv))]
+        @test Set(FiniteElementMethod._TET_FACET_NODES[lf]) == Set(nonzero)
+    end
+end

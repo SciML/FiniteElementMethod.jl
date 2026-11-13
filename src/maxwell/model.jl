@@ -147,10 +147,13 @@ end
 # Ferrite in the tests): Ferrite's own spellings of these are not public.
 const _TET_FACET_EDGE_DOFS = ((3, 2, 1), (1, 5, 4), (2, 6, 5), (4, 6, 3))
 const _TET_FACET_NODES = ((1, 3, 2), (1, 2, 4), (2, 3, 4), (1, 4, 3))
+_tet_facet_dofs(::Ferrite.Nedelec{Ferrite.RefTetrahedron, 1}) = _TET_FACET_EDGE_DOFS
+_tet_facet_dofs(::Ferrite.Lagrange{Ferrite.RefTetrahedron, 1}) = _TET_FACET_NODES
 
-# The edge dofs on the PEC facets: the tangential traces there are exactly these dofs.
-function _pec_dofs(dh, grid, pec)
-    local_dofs = _TET_FACET_EDGE_DOFS
+# The edge dofs on the PEC facets: the tangential traces there are exactly these dofs. With another
+# interpolation `ip` of the single field of `dh`, its dofs on those facets.
+function _pec_dofs(dh, grid, pec, ip = _NEDELEC)
+    local_dofs = _tet_facet_dofs(ip)
     dofs = Set{Int}()
     cell_dofs = zeros(Int, Ferrite.ndofs_per_cell(dh))
     for name in pec, facet in Ferrite.getfacetset(grid, name)
