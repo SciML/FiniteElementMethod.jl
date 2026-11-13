@@ -58,6 +58,14 @@ function _parameter_terms(model, (kind, name))
     name = String(name)
     _check_cellset(model.grid, name)
     cells = Ferrite.getcellset(model.grid, name)
+    for pml_set in model.pml_cellsets
+        isdisjoint(cells, Ferrite.getcellset(model.grid, pml_set)) || throw(
+            ArgumentError(
+                "the $(repr(kind)) parameter of cell set $(repr(name)) overlaps the PML cell set $(repr(pml_set)), whose stretched " *
+                    "blocks depend on the material; sensitivities need the PML cells in fixed material"
+            )
+        )
+    end
     for data in model.ports, (cell, _) in Ferrite.getfacetset(model.grid, data.port.facetset)
         cell in cells && throw(
             ArgumentError(
@@ -131,7 +139,8 @@ field of port `i` is the forward field `uᵢ` with port `i` driven, so
 
 at no linear solve beyond [`solve_sweep`](@ref). `dA/dp` is assembled once per parameter over the cells of its
 set, including the absorbing boundary's `sqrt(εc/μr)` on those cells. A cell set adjacent to a wave port is
-rejected: the port's mode, excitation and normalisation depend on its material, and are taken as fixed.
+rejected: the port's mode, excitation and normalisation depend on its material, and are taken as fixed. So is a cell set
+that overlaps a PML cell set (the stretched blocks of the layer depend on the material).
 Terms added with [`FiniteElementMethod.add_term!`](@ref) are taken as independent of the parameters, and must have
 symmetric blocks (an `ArgumentError` otherwise).
 """

@@ -94,6 +94,7 @@ struct MaxwellModel{G, DH, CH, CV}
     terms::Vector{MaxwellTerm}
     absorbing::Vector{String}
     ports::Vector{WavePortData}
+    pml_cellsets::Vector{String}
 end
 
 function MaxwellModel(
@@ -145,7 +146,8 @@ function MaxwellModel(
     port_data = WavePortData[_wave_port(port, dh, blocks.curlcurl, cell_materials, L, ch.prescribed_dofs) for port in ports]
     append!(terms, [_port_term(data, mu0 * eps0, L) for data in port_data])
     return MaxwellModel(
-        grid, dh, ch, cv, cell_materials, pec, float(eps0), float(mu0), L, blocks, terms, absorbing, port_data
+        grid, dh, ch, cv, cell_materials, pec, float(eps0), float(mu0), L, blocks, terms, absorbing, port_data,
+        pml === nothing ? String[] : copy(pml.cellsets)
     )
 end
 

@@ -136,7 +136,7 @@ derivatives of the discrete S-parameters, by the discrete adjoint: the system ma
 so the adjoint field of port `i` is the forward field with port `i` driven, and the sensitivities cost no
 linear solve beyond the sweep, only one sparse product per parameter and frequency. A parameter set may
 touch an absorbing boundary (its `sqrt(εc/μr)` is differentiated) but not a wave port, whose mode is taken
-in fixed material.
+in fixed material, and not a PML cell, whose stretched blocks also depend on the material: either is an `ArgumentError`.
 
 ```julia
 grid = generate_grid(Tetrahedron, (12, 6, 15), Vec(0.0, 0.0, 0.0), Vec(22.86, 10.16, 30.0))
