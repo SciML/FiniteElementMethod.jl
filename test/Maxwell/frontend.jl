@@ -312,3 +312,43 @@ end
     other = MeshDomain(unit_cube(1))
     @test_throws ArgumentError bad(cross(facet_normal(boundarypiece(other, :left)), [E(t, boundarypiece(other, :left))[c] for c in 1:3]) .~ 0)
 end
+
+@testset "the net reaction is formed exactly" begin
+    # a₀ - ω² a₂ = 1 exactly with ω = 3, a₂ = 2^49 and a₀ = 9 a₂ + 1: the constant field (1, 0, 0) solves the equation.
+    Ω = MeshDomain(unit_cube(2))
+    ω = 3.0
+    sys = maxwell_system(Ω; nu = 1.0, a2 = 2.0^49, a0 = 9 * 2.0^49 + 1, f = [1.0, 0.0, 0.0])
+    disc = maxwell_disc(Ω, ω)
+    (; model) = maxwell_model(sys, disc)
+    u = discretize(sys, disc).A \ discretize(sys, disc).b
+    E = field_values(MaxwellSolution(model, ω, u), [Vec(0.31, 0.37, 0.41)]).E[1]
+    @test collect(E) ≈ [1.0, 0.0, 0.0] atol = 1.0e-10
+end
+
+@testset "structural terms are rejected however small they are next to ν" begin
+    Ω = MeshDomain(unit_cube(2))
+    D = Differential.(collect(X))
+    laplacian(c) = -(D[1](D[1](Ev[c])) + D[2](D[2](Ev[c])) + D[3](D[3](Ev[c])))
+    graddiv(c) = -D[c](D[1](Ev[1]) + D[2](Ev[2]) + D[3](Ev[3]))
+    rejected(; kw...) = message(() -> discretize(maxwell_system(Ω; kw...), maxwell_disc(Ω, 2.0))) != "no error"
+    for scale in (1.0, 1.0e12)
+        @test !rejected(; nu = scale, a2 = scale)
+        @test rejected(; nu = scale, a2 = scale, extra = c -> scale * laplacian(c))
+        @test rejected(; nu = scale, a2 = scale, extra = c -> scale * graddiv(c))
+    end
+    # A coefficient 1 next to ν = 1e12 is a term all the same.
+    @test rejected(; nu = 1.0e12, extra = laplacian)
+    @test rejected(; nu = 1.0e12, extra = graddiv)
+end
+
+@testset "a boundary condition at one time is not a perfect conductor" begin
+    Ω = MeshDomain(unit_cube(2))
+    left = boundarypiece(Ω, :left)
+    sys(trace) = maxwell_system(Ω; bcs = cross(facet_normal(left), trace) .~ 0)
+    documented = [E(t, left)[c] for c in 1:3]
+    @test discretize(sys(documented), maxwell_disc(Ω, 1.0)) isa LinearProblem
+    for time in (0.0, t + 1, 2t)
+        trace = [E(time, left)[c] for c in 1:3]
+        @test occursin("not a condition at one time", message(() -> discretize(sys(trace), maxwell_disc(Ω, 1.0))))
+    end
+end
