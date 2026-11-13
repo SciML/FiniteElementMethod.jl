@@ -398,11 +398,14 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
         # Exact rational arithmetic of the Float64 inputs, so that the cancellation does not depend on any BigFloat precision.
         net = Rational{BigInt}(a0) - Rational{BigInt}(ω)^2 * Rational{BigInt}(a2)
         eps_r = Float64(-net / Rational{BigInt}(ω)^2)
-        # The coefficient and the reaction -ω² eps_r that assembly forms from it must neither overflow nor lose a nonzero
-        # net reaction to underflow.
-        reaction = -ω^2 * eps_r
-        lost(x) = iszero(x) || issubnormal(x)
-        isfinite(eps_r) && isfinite(reaction) && (iszero(net) || !(lost(eps_r) || lost(reaction))) || throw(
+        # Round trip: the reaction -ω² eps_r that assembly forms (with ω² rounded as it rounds it) must be the exact net
+        # reaction to 1e-10, far above the few ulps that two roundings cost and far below the loss when ω² or eps_r is
+        # subnormal; a nonzero net may not become zero, subnormal or non-finite.
+        ω2 = ω^2
+        reaction = -ω2 * eps_r
+        roundtrip = isfinite(eps_r) && isfinite(reaction) && !iszero(ω2) && !issubnormal(ω2) && !issubnormal(eps_r) &&
+            abs(Rational{BigInt}(reaction) - net) <= 1.0e-10 * abs(net)
+        isfinite(eps_r) && isfinite(reaction) && (iszero(net) || roundtrip) || throw(
             ArgumentError("the reaction a₀ - ω² a₂ = $(Float64(net)) ($a0 - $ω^2 $a2) in cell $cell is not representable as ε = a₂ - a₀/ω² at this ω; use a frequency nearer 1 or a MaxwellModel directly")
         )
         MaxwellMaterial(; eps_r, mu_r = 1 / nu, sigma = a1)
