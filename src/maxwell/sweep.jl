@@ -1,4 +1,4 @@
-# Frequency sweep of the wave-port scattering matrix of a MaxwellModel: one operator matrix recombined per
+# Frequency sweep of the port scattering matrix of a MaxwellModel: one operator matrix recombined per
 # frequency, one factorisation per frequency for all port excitations.
 
 """
@@ -31,18 +31,28 @@ end
 """
     solve_sweep(model::MaxwellModel, omegas; fields = false, solver = umfpack_solver)
 
-The scattering matrix of the [`WavePort`](@ref)s of `model` at each angular frequency in `omegas` (rad/s),
+The scattering matrix of the [`WavePort`](@ref)s and [`LumpedPort`](@ref)s of `model` at each angular frequency in `omegas` (rad/s),
 as a [`MaxwellSweep`](@ref). Each frequency recombines the nonzero values of one operator matrix with
 [`maxwell_operator!`](@ref), applies the PEC constraints, and solves for all port excitations at once with
 `solver(A, B, cache)` (see [`FiniteElementMethod.umfpack_solver`](@ref)), which may keep its factorisation
 between frequencies in `cache`. `fields = true` keeps the solutions (`ndofs × nports` complex values per
-frequency). An empty `omegas` gives an empty sweep.
+frequency). An empty `omegas` gives an empty sweep. A zero frequency (no static formulation of the ports) and, with
+wave ports, a negative one are an `ArgumentError`.
 """
 function solve_sweep(model::MaxwellModel, omegas; fields::Bool = false, solver = umfpack_solver)
-    isempty(model.ports) && throw(ArgumentError("the model has no wave ports"))
+    isempty(model.ports) && throw(ArgumentError("the model has no ports"))
     omegas = float.(collect(omegas))
-    bad = findfirst(ω -> !(isfinite(ω) && ω > 0), omegas)
-    bad === nothing || throw(ArgumentError("wave ports need finite positive frequencies, got ω = $(omegas[bad])"))
+    wave = any(data -> data isa WavePortData, model.ports)
+    bad = findfirst(ω -> !isfinite(ω) || iszero(ω) || (wave && ω < 0), omegas)
+    if bad !== nothing
+        ω = omegas[bad]
+        throw(
+            ArgumentError(
+                iszero(ω) ? "a port sweep has no static (ω = 0) formulation: the ports and their excitations vanish there" :
+                    wave ? "wave ports need finite positive frequencies, got ω = $ω" : "a port sweep needs finite frequencies, got ω = $ω"
+            )
+        )
+    end
     np = length(model.ports)
     S = zeros(ComplexF64, np, np, length(omegas))
     kept = fields ? Matrix{ComplexF64}[] : nothing
