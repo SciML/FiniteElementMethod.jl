@@ -46,6 +46,7 @@ function solve_sweep(model::MaxwellModel, omegas; fields::Bool = false, solver =
     np = length(model.ports)
     S = zeros(ComplexF64, np, np, length(omegas))
     kept = fields ? Matrix{ComplexF64}[] : nothing
+    isempty(omegas) && return MaxwellSweep(omegas, S, kept)
     A = maxwell_operator(model, first(omegas))
     prescribed = model.ch.prescribed_dofs
     cache = nothing

@@ -341,3 +341,8 @@ end
         @test_throws "finite positive frequencies" solve_sweep(model, [2π * 10.0e9, ω])
     end
 end
+
+@testset "an empty frequency vector gives an empty sweep" begin
+    sweep = solve_sweep(wr90(5.0, 10.0), Float64[]; fields = true)
+    @test isempty(sweep.omegas) && size(sweep.S) == (2, 2, 0) && isempty(sweep.fields)
+end
