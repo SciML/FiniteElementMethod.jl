@@ -182,6 +182,23 @@ end
     @test combination.A == base.A && combination.b == base.b
 end
 
+@testset "a unit offset on a large cancelling term is a coefficient" begin
+    grid = generate_grid(Tetrahedron, (2, 2, 2), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0))
+    for i in eachindex(grid.nodes)
+        x = grid.nodes[i].x
+        grid.nodes[i] = Node(Vec(x[1], x[2], x[3] + 0.25x[1] + 0.5x[2]))
+    end
+    Ω = MeshDomain(grid)
+    Γ = boundarypiece(Ω, :top)  # n = (-1, -2, 4) / sqrt(21), so n[1] + 0.25n[3] = 0
+    n, Eb = facet_normal(Γ), trace(Γ)
+    bc = abc(Γ)
+    solve_with(extra) = discretize(system(Ω, [bc; extra]; f = [1.0, 0.0, 0.0]), edge_disc(Ω; omega = 2.0))
+    q = 1.0e15 * (n[1] + 0.25n[3]) + 1
+    @test occursin("independent equations", message(() -> solve_with([q * dot(n, Dt.(Eb)) ~ 0])))
+    @test message(() -> solve_with([q * dot(n, Eb) ~ 0])) != "no error"
+    @test occursin("independent equations", message(() -> solve_with([dot(n, Dt.(Eb)) ~ 0])))
+end
+
 @testset "rejections of absorbing conditions and ports" begin
     grid = guide(10.0, 5.0)
     addfacetset!(grid, "lid", x -> x[3] ≈ 10.0)  # the facets of top again

@@ -292,22 +292,47 @@ function _absorbing_target(n, ν, c)
     )
 end
 
-# The expression with every term replaced by its absolute value, so that sums add where they would cancel: the size
-# that a coefficient has before cancellation, against which roundoff is judged.
-function _magnitude(ex)
+# The value of the coefficient expression `ex` at the normal `normal` (a Dict from the normal's slots to numbers) with
+# a running forward bound on its rounding error: err(a ± b) = err(a) + err(b) + ε|a ± b|, err(a b) = |a| err(b) +
+# |b| err(a) + ε|a b|, and likewise for quotients and powers. The normal and the constants of the equation are
+# uncertain by a rounding each (a constant by half an ulp, the normal of a facet by an ulp), so a coefficient is as
+# uncertain as its evaluation, not as large as its terms.
+function _value_error(ex, normal)
     if SymbolicUtils.iscall(ex)
         op, args = SymbolicUtils.operation(ex), SymbolicUtils.arguments(ex)
+        parts = [_value_error(a, normal) for a in args]
         if op === (+) || op === (-)
-            return sum(_magnitude, args)
+            v, e = parts[1]
+            if op === (-) && length(parts) == 1
+                return -v, e
+            end
+            for (w, f) in parts[2:end]
+                s = op === (+) ? v + w : v - w
+                v, e = s, e + f + eps() * abs(s)
+            end
+            return v, e
         elseif op === (*)
-            return prod(_magnitude, args)
+            v, e = parts[1]
+            for (w, f) in parts[2:end]
+                p = v * w
+                v, e = p, abs(v) * f + abs(w) * e + eps() * abs(p)
+            end
+            return v, e
         elseif op === (/)
-            return _magnitude(args[1]) / _magnitude(args[2])
+            (v, e), (w, f) = parts
+            q = v / w
+            return q, (e + abs(q) * f) / abs(w) + eps() * abs(q)
+        elseif op === (^)
+            (v, e), (k, _) = parts
+            p = v^k
+            return p, abs(k * v^(k - 1)) * e + eps() * abs(p)
         end
-        return abs(Num(ex))
+        f = op(first.(parts)...)
+        return f, eps() * abs(f) + sum(last, parts) * max(1, abs(f))
     end
     value = SymbolicUtils.unwrap_const(ex)
-    return value isa Number ? abs(value) : abs(Num(ex))
+    value isa Number && return Float64(value), eps() / 2 * abs(value)  # a decimal constant is rounded
+    return normal[ex], eps() * abs(normal[ex])  # the normal of an oblique facet carries its own roundoff
 end
 
 # An orthonormal basis of the row space of M, as rows. Each row is scaled to unit length first, so that the result
@@ -370,15 +395,20 @@ function _recognise_boundaries(bcs, fields, pvals, ctx, domain, cells, ω)
             ArgumentError(isabc ? "the absorbing condition on $name has a source (a term without E), which is not supported; drive the field with a WavePort or a volume source; $form" : "the conditions on $name prescribe a nonzero tangential field, which is not supported; $form")
         )
         C_at = Symbolics.build_function(vec(C), slots.N...; expression = Val(false))[1]
-        B_at = Symbolics.build_function(vec(Num.(_magnitude.(unwrap.(C)))), slots.N...; expression = Val(false))[1]
         for (n, facet) in _facet_normals(domain.mesh, String(name))
             # The roundoff of a normal that lies in a coordinate plane is not a coefficient: snap it to exactly 0, so
             # that n[1] * E vanishes there while n[1] + 1e-16 does not.
             n = [abs(x) < 1.0e-14 ? 0.0 : x for x in n]
             Cn = reshape(_real_values(C_at(n...), "a coefficient of the condition"), length(Bs), 15)
-            # An entry is zero when it is roundoff of the terms that cancel in it: at most 64 eps of their absolute sum.
-            Bn = reshape(_real_values(B_at(n...), "a coefficient of the condition"), length(Bs), 15)
-            Cn = ifelse.(abs.(Cn) .<= 64eps() .* Bn, 0.0, Cn)
+            # An entry is zero when it is within a few ulps of its own evaluation error (see `_value_error`): a residue
+            # of cancelling terms is no larger than that error, whereas a coefficient that is large only through its
+            # terms (1e15 (n[1] + 0.25 n[3]) + 1) is as certain as its error and keeps its real part. The factor 4
+            # allows for the order of the compiled evaluation differing from that of the bound.
+            normal = Dict(unwrap(slots.N[d]) => n[d] for d in 1:3)
+            for i in eachindex(Bs), j in 1:15
+                value, error = _value_error(unwrap(C[i, j]), normal)
+                abs(value) <= 4error && (Cn[i, j] = 0.0)
+            end
             where = "on $name at facet $((facet[1], facet[2])) with normal $(Tuple(round.(n; digits = 6)))"
             if !isabc
                 Cn = Cn[:, 13:15]
