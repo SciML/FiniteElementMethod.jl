@@ -434,38 +434,41 @@ function _recognise_boundaries(bcs, fields, pvals, ctx, domain, cells, ω)
             ArgumentError(isabc ? "the absorbing condition on $name has a source (a term without E), which is not supported; drive the field with a WavePort or a volume source; $form" : "the conditions on $name prescribe a nonzero tangential field, which is not supported; $form")
         )
         C_at = Symbolics.build_function(vec(C), slots.N...; expression = Val(false))[1]
+        abc_facets = Bool[]
         for (n, facet) in _facet_normals(domain.mesh, String(name))
             # The roundoff of a normal that lies in a coordinate plane is not a coefficient: snap it to exactly 0, so
             # that n[1] * E vanishes there while n[1] + 1e-16 does not.
             n = [abs(x) < 1.0e-14 ? 0.0 : x for x in n]
             Cn = reshape(_real_values(C_at(n...), "a coefficient of the condition"), length(Bs), 15)
-            # Each entry is classified by its value v and the running error bound err of its evaluation (`_value_error`):
-            #   clearly nonzero, |v| > 4 err: kept. The factor 4 allows for the compiled evaluation summing in another
-            #     order than the bound;
-            #   clearly zero, |v| <= 4 err and |v| <= 1e-12 times the largest clearly nonzero entry: the residue of
-            #     cancelling terms (an explicit linear combination of the equations), taken as 0;
-            #   ambiguous, |v| <= 4 err but |v| is not tiny: the coefficient is O(1) yet dominated by rounding error
-            #     (1e15 (n[1] + 0.25 n[3]) + 1), so it is neither kept nor dropped silently but rejected.
-            # A coefficient of the size of its own rounding error and tiny next to the equation (n[1] + 0.25 n[3] + 1e-16
-            # is about 1e-16 with an error of the same size) cannot be told from a cancellation residue and is taken as 0.
+            # Each entry is classified by its value v and the running error bound err of its evaluation (`_value_error`),
+            # and by nothing else, so that no other equation can change the outcome:
+            #   v == 0 exactly (a truly vanishing coefficient such as n[1] * E at n[1] = 0 on the snapped normal): zero;
+            #   |v| > 4 err: nonzero, kept (the factor 4 allows for the compiled evaluation summing in another order
+            #     than the bound);
+            #   0 < |v| <= 4 err: ambiguous, rejected. An error interval that contains zero does not show that the
+            #     coefficient is zero (1e15 (n[1] + 0.25 n[3]) + 1 is exactly 1, n[1] + 0.25 n[3] + 1e-16 is 1e-16), and
+            #     dropping it would silently delete an independent equation.
+            # So a redundant combination of the equations is recognised only where it cancels exactly; one whose
+            # cancellation leaves a rounding-level residue (r3 - 0.2 r1 - 0.3 r2 on an oblique face) is rejected as
+            # ambiguous, and should be written without cancelling terms.
             normal = Dict(unwrap(slots.N[d]) => n[d] for d in 1:3)
-            evaluated = [_value_error(unwrap(C[i, j]), normal) for i in eachindex(Bs), j in 1:15]
-            nonzero = [abs(v) > 4e for (v, e) in evaluated]
-            natural = maximum((abs(v) for ((v, e), keep) in zip(evaluated, nonzero) if keep); init = 0.0)
             for i in eachindex(Bs), j in 1:15
-                nonzero[i, j] && continue
-                value, error = evaluated[i, j]
-                abs(value) <= 1.0e-12 * natural || throw(
+                value, error = _value_error(unwrap(C[i, j]), normal)
+                iszero(value) && (Cn[i, j] = 0.0)
+                iszero(value) || abs(value) > 4error || throw(
                     ArgumentError(
                         "the coefficient of $(W[j]) in equation $(eqBs[i][1]) of the conditions on $name at facet $((facet[1], facet[2])) " *
                             "evaluates to $value with a rounding error bound of $error: it cannot be distinguished from rounding error at the " *
                             "working precision; write the equation without cancelling terms (for example without a large multiple of a quantity that vanishes)"
                     )
                 )
-                Cn[i, j] = 0.0
             end
             where = "on $name at facet $((facet[1], facet[2])) with normal $(Tuple(round.(n; digits = 6)))"
-            if !isabc
+            # Absorbing or perfect conductor is decided here, from the equations at the actual normal: a derivative whose
+            # coefficient vanishes there (n[1] * Dt(E) on a face with n[1] = 0) does not make the condition absorbing.
+            facet_abc = any(!iszero, Cn[:, 1:12])
+            push!(abc_facets, facet_abc)
+            if !facet_abc
                 Cn = Cn[:, 13:15]
                 # Each equation is judged by its own size, so that one written with a large coefficient hides no other.
                 Cn = Cn[[norm(Cn[i, :]) > 0 for i in axes(Cn, 1)], :]
@@ -502,7 +505,10 @@ function _recognise_boundaries(bcs, fields, pvals, ctx, domain, cells, ω)
                 ArgumentError("the conditions $where are not n × (ν curl E) = -sqrt(ε/μ) n × (n × ∂ₜE) of the adjacent cell (ν = $nu, sqrt(ε/μ) = $c): the coefficient of curl E, the impedance or the sign differs, or a term in E is added; $form")
             )
         end
-        push!(isabc ? absorbing : pec, String(name))
+        all(abc_facets) || !any(abc_facets) || throw(
+            ArgumentError("the conditions on $name are absorbing on some of its facets and a perfect conductor on others; give each piece one kind of condition")
+        )
+        push!(all(abc_facets) ? absorbing : pec, String(name))
     end
     # Overlapping perfect-conductor pieces only constrain the same dofs again; any other overlap would add a
     # boundary term twice or give a facet two conditions.

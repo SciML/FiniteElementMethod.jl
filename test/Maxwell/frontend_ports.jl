@@ -166,23 +166,33 @@ end
     end
 end
 
-@testset "a linear combination of the absorbing equations is redundant on an oblique face" begin
+@testset "redundant combinations are recognised where they cancel exactly" begin
+    ambiguous(msg) = occursin("cannot be distinguished from rounding error", msg)
+    # An axis-aligned face: the coefficients are exact, so a linear combination of the equations is redundant.
+    Ω = MeshDomain(guide(10.0, 5.0))
+    Γ = boundarypiece(Ω, :top)
+    walls = pec(Ω, WALLS)
+    bc = abc(Γ)
+    r = [e.lhs - e.rhs for e in bc]
+    solve_with(bcs) = discretize(system(Ω, [walls; bcs]), edge_disc(Ω))
+    base = solve_with(bc)
+    combination = solve_with([bc; r[1] + 2r[2] ~ 0])
+    @test combination.A == base.A && combination.b == base.b
+    # An oblique face: the cancellation leaves a rounding-level residue, which cannot be told from a small constraint
+    # and is rejected as ambiguous rather than dropped.
     grid = generate_grid(Tetrahedron, (2, 2, 2), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0))
     for i in eachindex(grid.nodes)
         x = grid.nodes[i].x
         grid.nodes[i] = Node(Vec(x[1], x[2], x[3] + 0.2x[1] + 0.3x[2]))
     end
-    Ω = MeshDomain(grid)
-    Γ = boundarypiece(Ω, :top)
-    bc = abc(Γ)
-    r = [e.lhs - e.rhs for e in bc]
-    solve_with(bcs) = discretize(system(Ω, bcs), edge_disc(Ω; omega = 2.0))
-    base = solve_with(bc)
-    combination = solve_with([bc; -0.2 * r[1] - 0.3 * r[2] + r[3] ~ 0])
-    @test combination.A == base.A && combination.b == base.b
+    Ωs = MeshDomain(grid)
+    Γs = boundarypiece(Ωs, :top)
+    bcs_ = abc(Γs)
+    rs = [e.lhs - e.rhs for e in bcs_]
+    @test ambiguous(message(() -> discretize(system(Ωs, [bcs_; -0.2 * rs[1] - 0.3 * rs[2] + rs[3] ~ 0]), edge_disc(Ωs; omega = 2.0))))
 end
 
-@testset "a coefficient dominated by rounding error is rejected, not dropped" begin
+@testset "a coefficient dominated by rounding error is rejected, not dropped, whatever the other equations" begin
     grid = generate_grid(Tetrahedron, (2, 2, 2), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0))
     for i in eachindex(grid.nodes)
         x = grid.nodes[i].x
@@ -192,24 +202,60 @@ end
     Γ = boundarypiece(Ω, :top)  # n = (-1, -2, 4) / sqrt(21), so n[1] + 0.25n[3] = 0
     n, Eb = facet_normal(Γ), trace(Γ)
     bc = abc(Γ)
-    solve_with(extra) = discretize(system(Ω, [bc; extra]; f = [1.0, 0.0, 0.0]), edge_disc(Ω; omega = 2.0))
-    base = solve_with(Equation[])
-    # q is exactly 1 but evaluates with a rounding error of the size of 1: the constraint can be neither kept nor dropped.
-    for multiplier in (1.0e15, 2.0e15, 1.0e16, 1.0e17)
-        q = multiplier * (n[1] + 0.25n[3]) + 1
-        # Rejected either as ambiguous or, where the evaluation is resolvable, as the independent equation it is.
-        rejected(msg) = occursin("cannot be distinguished from rounding error", msg) || occursin("independent equations", msg)
-        @test rejected(message(() -> solve_with([q * dot(n, Dt.(Eb)) ~ 0])))
-        @test rejected(message(() -> solve_with([q * dot(n, Eb) ~ 0])))
+    ambiguous(msg) = occursin("cannot be distinguished from rounding error", msg)
+    independent(msg) = occursin("independent equations", msg)
+    # The standard condition, unscaled and scaled: the outcome must not depend on the other equations.
+    for scale in (1.0, 1.0e13)
+        equations = [scale * e.lhs ~ scale * e.rhs for e in bc]
+        solve_with(extra) = discretize(system(Ω, [equations; extra]; f = [1.0, 0.0, 0.0]), edge_disc(Ω; omega = 2.0))
+        base = solve_with(Equation[])
+        # q is exactly 1 but evaluates with a rounding error of the size of 1: neither kept nor dropped silently.
+        for multiplier in (1.0e15, 2.0e15, 1.0e16, 1.0e17)
+            q = multiplier * (n[1] + 0.25n[3]) + 1
+            for equation in (q * dot(n, Dt.(Eb)) ~ 0, q * dot(n, Eb) ~ 0)
+                msg = message(() -> solve_with([equation]))
+                @test ambiguous(msg) || independent(msg)
+            end
+        end
+        # Without the cancelling term it is an independent constraint.
+        @test independent(message(() -> solve_with([dot(n, Dt.(Eb)) ~ 0])))
+        # An offset of the size of its own rounding error is ambiguous, never dropped. (An offset of 1e-20 is absorbed
+        # by the first addition, which then evaluates to exactly 0.0: that coefficient is indistinguishable from the
+        # truly vanishing n[1] * E, a limitation of floating-point evaluation.)
+        msg = message(() -> solve_with([(n[1] + 0.25n[3] + 1.0e-16) * dot(n, Dt.(Eb)) ~ 0]))
+        @test ambiguous(msg) || independent(msg)
     end
-    # Without the cancelling term it is an independent constraint.
-    @test occursin("independent equations", message(() -> solve_with([dot(n, Dt.(Eb)) ~ 0])))
-    # A tiny offset is of the size of the rounding error of its own cancelling terms and is taken as the cancellation
-    # residue it cannot be told from (a documented limitation): the problem is the one without it.
-    for offset in (1.0e-16, 1.0e-20)
-        prob = solve_with([(n[1] + 0.25n[3] + offset) * dot(n, Dt.(Eb)) ~ 0])
-        @test prob.A == base.A && prob.b == base.b
-    end
+end
+
+@testset "every trace in a boundary condition must be E(t, Γ)" begin
+    Ω = MeshDomain(guide(10.0, 5.0))
+    Γ = boundarypiece(Ω, :top)
+    n = facet_normal(Γ)
+    Eb = trace(Γ)
+    solve_with(bcs) = discretize(system(Ω, [pec(Ω, WALLS); bcs]), edge_disc(Ω))
+    @test solve_with(abc(Γ)) isa LinearProblem
+    τ = π / (2K0)
+    delayed = [E(t - τ, Γ)[c] for c in 1:3]
+    # The delayed derivative carries a phasor factor exp(-iωτ): it is not the matched absorber.
+    shifted = cross(n, curl(Eb, X)) .~ -cross(n, cross(n, Dt.(delayed)))
+    @test occursin("not a condition at one time", message(() -> solve_with(shifted)))
+    # A shifted trace nested in a cross product or a component, and a fixed or scaled time, are rejected too.
+    @test occursin("not a condition at one time", message(() -> solve_with(cross(n, cross(n, delayed)) .~ cross(n, curl(Eb, X)))))
+    @test occursin("not a condition at one time", message(() -> solve_with([cross(n, delayed)[1] ~ 0; abc(Γ)[2:3]])))
+    @test occursin("not a condition at one time", message(() -> solve_with(cross(n, curl(Eb, X)) .~ -cross(n, cross(n, Dt.([E(0.0, Γ)[c] for c in 1:3]))))))
+    @test occursin("not a condition at one time", message(() -> solve_with(cross(n, curl(Eb, X)) .~ -cross(n, cross(n, Dt.([E(2t, Γ)[c] for c in 1:3]))))))
+end
+
+@testset "a vanishing derivative equation does not make a perfect conductor absorbing" begin
+    Ω = MeshDomain(guide(10.0, 5.0))
+    Γ = boundarypiece(Ω, :top)  # n[1] = 0 on it
+    n, Eb = facet_normal(Γ), trace(Γ)
+    plain = [pec(Ω, WALLS); cross(n, Eb) .~ 0]
+    extended = [pec(Ω, WALLS); cross(n, Eb) .~ 0; n[1] * Dt(Eb[3]) ~ 0]
+    @test (; model = maxwell_model(system(Ω, extended), edge_disc(Ω)).model).model.pec == maxwell_model(system(Ω, plain), edge_disc(Ω)).model.pec
+    a, b = discretize(system(Ω, extended), edge_disc(Ω)), discretize(system(Ω, plain), edge_disc(Ω))
+    @test a.A == b.A && a.b == b.b
+    @test isempty(maxwell_model(system(Ω, extended), edge_disc(Ω)).model.absorbing)
 end
 
 @testset "rejections of absorbing conditions and ports" begin
