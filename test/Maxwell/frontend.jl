@@ -389,6 +389,19 @@ end
     end
 end
 
+@testset "parameter values are validated before they become Float64" begin
+    Ω = MeshDomain(unit_cube(1))
+    @parameters p
+    run(value; kw...) = message(() -> discretize(maxwell_system(Ω; ps = [p => value], kw...), maxwell_disc(Ω, 1.0)))
+    for kw in ((; f = [p, 0.0, 0.0]), (; a0 = p), (; a2 = p), (; a1 = p), (; nu = p))
+        @test occursin("supported window", run(big"1e-400"; kw...))
+        @test occursin("real and finite as a Float64", run(big"1e400"; kw...))
+    end
+    # Exact zero and in-window parameters are accepted.
+    @test discretize(maxwell_system(Ω; ps = [p => big"0"], f = [p, 0.0, 0.0]), maxwell_disc(Ω, 1.0)) isa LinearProblem
+    @test discretize(maxwell_system(Ω; ps = [p => 2.5], a2 = p), maxwell_disc(Ω, 1.0)) isa LinearProblem
+end
+
 @testset "structural terms are rejected however small they are next to ν" begin
     Ω = MeshDomain(unit_cube(2))
     D = Differential.(collect(X))

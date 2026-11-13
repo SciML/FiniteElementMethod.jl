@@ -401,6 +401,7 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
     pv = PDEBase.VariableMap(phasor_sys, disc; replaced_vars = replaced)
     an = StrongForm.analyse(phasor_sys, pv, Dict())
     ctx = StrongForm.SlotContext(phasor_sys, pv)
+    _check_parameter_values(phasor_sys)
     pvals = _parameter_values(phasor_sys, ctx)
     js = [findfirst(isequal(unwrap(p)), ctx.params) for p in s]
     slot_s = an.slots.P[js]
@@ -466,6 +467,22 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
     # the quadrature points), so the load vector itself is not checked.
     checked_source(x) = (v = _real_values(source_at(x...), "a source"); _check_window_sources(v); v)
     return (; model, omega = ω, load = _source_load(model, checked_source))
+end
+
+# The numeric values given for the parameters of the PDESystem, before `_parameter_values` converts them to Float64: a
+# nonzero value that converts to zero or a subnormal number is outside the window, and one that converts to Inf or NaN
+# is not finite, so neither can reach the coefficients and sources as a silent zero.
+function _check_parameter_values(pdesys)
+    ps = pdesys.ps isa SciMLBase.NullParameters ? () : pdesys.ps
+    for p in ps
+        p isa Pair && p.second isa Real || continue
+        value, converted = p.second, Float64(p.second)
+        isfinite(converted) ||
+            throw(ArgumentError("the parameter $(p.first) = $value must be real and finite as a Float64"))
+        iszero(value) || !(iszero(converted) || issubnormal(converted)) ||
+            throw(_window_error("the parameter $(p.first)", value, nothing, _WINDOW...))
+    end
+    return nothing
 end
 
 function _real_values(values, what)
