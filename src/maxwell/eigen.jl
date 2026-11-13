@@ -150,7 +150,8 @@ Returns `(; frequency, Q, omega, modes)`: `omega` the complex angular frequencie
 mode has `Im(ω) > 0` and decays as `exp(-Im(ω) t)`), and `modes` the [`MaxwellSolution`](@ref)s at
 `Re(ω)`, with zeros on the PEC dofs, scaled to `∫ Re(εr) |E|² = 1` over the mesh (mesh units; to a unit dof
 norm where that integral is not positive) with the largest dof real. Conductivity and terms added with
-[`FiniteElementMethod.add_term!`](@ref) make the problem nonlinear in `ω` and are rejected. A problem too
+[`FiniteElementMethod.add_term!`](@ref) make the problem nonlinear in `ω` and are rejected, and so is any material
+with `real(εr) ≤ 0` or `μr ≤ 0` (the gradient projection needs a definite mass form; loss as `Im(εr)` is fine). A problem too
 small for a Krylov space of dimension `krylovdim` is solved densely, and `nev` may not exceed the number of
 modes outside the gradient null space.
 """
@@ -163,6 +164,14 @@ function maxwell_eigenmodes(
         throw(ArgumentError("target_frequency must be positive and finite, got $target_frequency"))
     all(iszero, nonzeros(model.blocks.sigma)) ||
         throw(ArgumentError("maxwell_eigenmodes does not support conductivity (the problem is quadratic in ω); model it as Im(eps_r)"))
+    bad = findfirst(m -> !(real(m.eps_r) > 0 && m.mu_r > 0), model.materials)
+    bad === nothing || throw(
+        ArgumentError(
+            "maxwell_eigenmodes supports ordinary passive materials only: cell $bad (cell sets " *
+                "$(sort!([name for (name, cells) in model.grid.cellsets if bad in cells]))) has eps_r = $(model.materials[bad].eps_r) " *
+                "and mu_r = $(model.materials[bad].mu_r), but real(eps_r) and mu_r must be positive (loss as Im(eps_r) is fine)"
+        )
+    )
     length(model.terms) == 4 ||
         throw(ArgumentError("maxwell_eigenmodes supports only the volume terms of MaxwellModel, not terms added with add_term!"))
     (; blocks, eps0, mu0, length_scale) = model
