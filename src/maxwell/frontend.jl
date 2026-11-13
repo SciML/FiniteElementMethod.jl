@@ -575,8 +575,12 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
     ω = disc.omega
     materials = map(enumerate(cells)) do (cell, c)
         # The net reaction a₀ - ω² a₂ is formed exactly (it cancels when the two are large), then divided once.
-        net = big(c.a0) - big(ω)^2 * big(c.a2)
-        eps_r = Float64(-net / big(ω)^2)
+        all(isfinite, (c.a0, c.a2, ω)) || throw(
+            ArgumentError("the reaction a₀ - ω² a₂ ($(c.a0) - $ω^2 $(c.a2)) in cell $cell is not representable as ε = a₂ - a₀/ω²; the coefficients must be finite")
+        )
+        # Exact rational arithmetic of the Float64 inputs, so that the cancellation does not depend on any BigFloat precision.
+        net = Rational{BigInt}(c.a0) - Rational{BigInt}(ω)^2 * Rational{BigInt}(c.a2)
+        eps_r = Float64(-net / Rational{BigInt}(ω)^2)
         # The coefficient and the reaction -ω² eps_r that assembly forms from it must neither overflow nor lose a nonzero
         # net reaction to underflow.
         reaction = -ω^2 * eps_r

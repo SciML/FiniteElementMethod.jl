@@ -327,6 +327,18 @@ end
     @test collect(E) ≈ [1.0, 0.0, 0.0] atol = 1.0e-10
 end
 
+@testset "the net reaction does not depend on the BigFloat precision" begin
+    # a₀ - ω² a₂ = -1 exactly for ω = 1 + 2^-30, a₂ = 2^60 and a₀ = 2^60 + 2^31, so ε = 1/ω².
+    Ω = MeshDomain(unit_cube(1))
+    ω = 1 + 2.0^-30
+    sys = maxwell_system(Ω; nu = 1.0, a2 = 2.0^60, a0 = 2.0^60 + 2.0^31)
+    eps_r() = maxwell_model(sys, maxwell_disc(Ω, ω)).model.materials[1].eps_r
+    @test eps_r() ≈ 1 / ω^2 rtol = 1.0e-12
+    setprecision(BigFloat, 53) do
+        @test eps_r() ≈ 1 / ω^2 rtol = 1.0e-12
+    end
+end
+
 @testset "structural terms are rejected however small they are next to ν" begin
     Ω = MeshDomain(unit_cube(2))
     D = Differential.(collect(X))
