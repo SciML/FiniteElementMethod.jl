@@ -392,9 +392,14 @@ function maxwell_model(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretizatio
         (iszero(nu) || iszero(1 / nu) || !isfinite(1 / nu)) &&
             throw(ArgumentError("ν = $nu in cell $cell; ν = 1/μ must be nonzero" * (iszero(nu) ? "" : " and 1/ν must be representable")))
         # The net reaction a₀ - ω² a₂ is formed exactly (it cancels when the two are large), then divided once.
-        eps_r = Float64(-(big(a0) - big(ω)^2 * big(a2)) / big(ω)^2)
-        isfinite(eps_r) && (iszero(a0) || abs(a0 / ω^2) >= floatmin()) || throw(
-            ArgumentError("ε = a₂ - a₀/ω² = $a2 - $a0/$ω^2 in cell $cell is not representable at this tiny ω; use a larger frequency or a MaxwellModel directly")
+        net = big(a0) - big(ω)^2 * big(a2)
+        eps_r = Float64(-net / big(ω)^2)
+        # The coefficient and the reaction -ω² eps_r that assembly forms from it must neither overflow nor lose a nonzero
+        # net reaction to underflow.
+        reaction = -ω^2 * eps_r
+        lost(x) = iszero(x) || issubnormal(x)
+        isfinite(eps_r) && isfinite(reaction) && (iszero(net) || !(lost(eps_r) || lost(reaction))) || throw(
+            ArgumentError("the reaction a₀ - ω² a₂ = $(Float64(net)) ($a0 - $ω^2 $a2) in cell $cell is not representable as ε = a₂ - a₀/ω² at this ω; use a frequency nearer 1 or a MaxwellModel directly")
         )
         MaxwellMaterial(; eps_r, mu_r = 1 / nu, sigma = a1)
     end

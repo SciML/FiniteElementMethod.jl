@@ -201,6 +201,8 @@ end
     for (ω, a0) in ((1.0e-160, 1.0),)
         @test occursin("not representable", message(() -> discretize(maxwell_system(Ω; a0), maxwell_disc(Ω, ω))))
     end
+    # The net reaction a₀ - ω² a₂ = 8.4e-17 is exactly representable, but ε = -net/ω² underflows to zero.
+    @test occursin("not representable", message(() -> discretize(maxwell_system(Ω; a0 = 5.0, a2 = 5.0e-308), maxwell_disc(Ω, 1.0e154))))
     # a0/ω² underflows to zero next to a dominant curl-curl term, so the reaction would be silently dropped.
     @test occursin("not representable", message(() -> discretize(maxwell_system(Ω; nu = 1.0e-30, a2 = 0, a0 = 1.0e-20), maxwell_disc(Ω, 1.0e154))))
 end
