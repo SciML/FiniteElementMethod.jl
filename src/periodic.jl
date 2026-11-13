@@ -211,8 +211,8 @@ function apply_ties!(M, K, ties, prescribed)
 end
 
 # Rows of the load vector summed and cleared like the rows of `apply_ties!`.
-function apply_ties!(F::AbstractVector, ties, prescribed)
-    isprescribed = isprescribed_mask(length(F), prescribed)
+apply_ties!(F::AbstractVector, ties, prescribed::AbstractVector{<:Integer}) = apply_ties!(F, ties, isprescribed_mask(length(F), prescribed))
+function apply_ties!(F::AbstractVector, ties, isprescribed::BitVector)
     for (m, s) in ties
         isprescribed[s] || (F[s] += F[m])
         F[m] = 0

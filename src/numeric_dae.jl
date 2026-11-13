@@ -301,9 +301,10 @@ function FEMOperators(
     elseif load isa AbstractVector
         apply_ties!(copy(load), ties, prescribed)
     else
+        isprescribed = isprescribed_mask(n, prescribed)
         function (out, t)
             load(out, t)
-            return apply_ties!(out, ties, prescribed)
+            return apply_ties!(out, ties, isprescribed)
         end
     end
     F = FEMLoad(tied_load, prescribed, dirichlet_values, n)

@@ -244,7 +244,7 @@ function _space(disc, ctx, analysis, dirichlet, periodic, pvals, t0, tend)
             for (bc, (_, _, g)) in zip(analysis.essential, dirichlet)
     ]
     regions = Dict(names[f] => String(disc.regions[op].name) for (f, op) in enumerate(ctx.ops) if haskey(disc.regions, op))
-    _check_region_pieces(grid, regions, names, analysis)
+    _check_region_pieces(grid, regions, names, analysis, periodic)
     for (f, Γa, Γb) in periodic
         ips[f] isa Ferrite.Lagrange || throw(
             ArgumentError(
@@ -264,8 +264,11 @@ end
 
 # A condition on a field restricted to a region must lie on the region: Ferrite would otherwise drop the facets
 # outside it without a word.
-function _check_region_pieces(grid, regions, names, analysis)
-    conditions = [[(bc.field, bc.piece) for bc in analysis.essential]; [(bc.eq, bc.piece) for bc in analysis.natural]]
+function _check_region_pieces(grid, regions, names, analysis, periodic)
+    conditions = [
+        [(bc.field, bc.piece) for bc in analysis.essential]; [(bc.eq, bc.piece) for bc in analysis.natural];
+        [(f, Γ) for (f, Γa, Γb) in periodic for Γ in (Γa, Γb)]
+    ]
     for (f, Γ) in conditions
         haskey(regions, names[f]) || continue
         cells = Ferrite.getcellset(grid, regions[names[f]])

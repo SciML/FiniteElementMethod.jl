@@ -349,3 +349,23 @@ end
     @test steady(u(left) ~ u(right)) isa SciMLBase.NonlinearProblem
     @test_throws "must take no time argument" steady(u(t, left) ~ u(t, right))
 end
+
+# PDE:    the 2D heat equation for u restricted to the upper half y >= 1/2 of the unit square (`regions`)
+# BCs:    a periodic pair on the full left and right sides, which reach outside the region, or on the upper halves of the sides,
+#         which lie inside it; Dirichlet zero on the top
+# Shows:  a periodic piece must lie in the field's region, like any other condition on the field.
+@testset "periodic pieces must lie in the region of their field" begin
+    grid = generate_grid(Triangle, (4, 4), Vec(0.0, 0.0), Vec(1.0, 1.0))
+    Ferrite.addcellset!(grid, "upper_half", p -> p[2] >= 0.5 - 1.0e-12)
+    Ferrite.addfacetset!(grid, "upper_left", p -> p[1] < 1.0e-12 && p[2] >= 0.5 - 1.0e-12)
+    Ferrite.addfacetset!(grid, "upper_right", p -> p[1] > 1 - 1.0e-12 && p[2] >= 0.5 - 1.0e-12)
+    Ω = MeshDomain(grid)
+    left, right, top, upper_left, upper_right = boundarypiece.(Ω, (:left, :right, :top, :upper_left, :upper_right))
+    function build(pair)
+        bcs = [pair, u(t, top) ~ 0, u(0, x, y) ~ 0]
+        @named pdesys = PDESystem([heat], bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.1)], [t, x, y], [u(t, x, y)], [])
+        return discretize(pdesys, FEMDiscretization(Ω, t; regions = Dict(u => Region(Ω, :upper_half)), boundary_check = :off))
+    end
+    @test_throws "has facets outside the region :upper_half of u" build(u(t, left) ~ u(t, right))
+    @test build(u(t, upper_left) ~ u(t, upper_right)) isa SciMLBase.DAEProblem
+end
