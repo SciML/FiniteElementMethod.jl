@@ -415,14 +415,30 @@ function _recognise_boundaries(bcs, fields, pvals, ctx, domain, cells, ω)
             # that n[1] * E vanishes there while n[1] + 1e-16 does not.
             n = [abs(x) < 1.0e-14 ? 0.0 : x for x in n]
             Cn = reshape(_real_values(C_at(n...), "a coefficient of the condition"), length(Bs), 15)
-            # An entry is zero when it is within a few ulps of its own evaluation error (see `_value_error`): a residue
-            # of cancelling terms is no larger than that error, whereas a coefficient that is large only through its
-            # terms (1e15 (n[1] + 0.25 n[3]) + 1) is as certain as its error and keeps its real part. The factor 4
-            # allows for the order of the compiled evaluation differing from that of the bound.
+            # Each entry is classified by its value v and the running error bound err of its evaluation (`_value_error`):
+            #   clearly nonzero, |v| > 4 err: kept. The factor 4 allows for the compiled evaluation summing in another
+            #     order than the bound;
+            #   clearly zero, |v| <= 4 err and |v| <= 1e-12 times the largest clearly nonzero entry: the residue of
+            #     cancelling terms (an explicit linear combination of the equations), taken as 0;
+            #   ambiguous, |v| <= 4 err but |v| is not tiny: the coefficient is O(1) yet dominated by rounding error
+            #     (1e15 (n[1] + 0.25 n[3]) + 1), so it is neither kept nor dropped silently but rejected.
+            # A coefficient of the size of its own rounding error and tiny next to the equation (n[1] + 0.25 n[3] + 1e-16
+            # is about 1e-16 with an error of the same size) cannot be told from a cancellation residue and is taken as 0.
             normal = Dict(unwrap(slots.N[d]) => n[d] for d in 1:3)
+            evaluated = [_value_error(unwrap(C[i, j]), normal) for i in eachindex(Bs), j in 1:15]
+            nonzero = [abs(v) > 4e for (v, e) in evaluated]
+            natural = maximum((abs(v) for ((v, e), keep) in zip(evaluated, nonzero) if keep); init = 0.0)
             for i in eachindex(Bs), j in 1:15
-                value, error = _value_error(unwrap(C[i, j]), normal)
-                abs(value) <= 4error && (Cn[i, j] = 0.0)
+                nonzero[i, j] && continue
+                value, error = evaluated[i, j]
+                abs(value) <= 1.0e-12 * natural || throw(
+                    ArgumentError(
+                        "the coefficient of $(W[j]) in equation $(eqBs[i][1]) of the conditions on $name at facet $((facet[1], facet[2])) " *
+                            "evaluates to $value with a rounding error bound of $error: it cannot be distinguished from rounding error at the " *
+                            "working precision; write the equation without cancelling terms (for example without a large multiple of a quantity that vanishes)"
+                    )
+                )
+                Cn[i, j] = 0.0
             end
             where = "on $name at facet $((facet[1], facet[2])) with normal $(Tuple(round.(n; digits = 6)))"
             if !isabc
