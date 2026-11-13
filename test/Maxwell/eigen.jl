@@ -175,25 +175,20 @@ end
 end
 
 @testset "restart deflation with an indefinite form, and non-passive materials are rejected" begin
-    deflator = FiniteElementMethod._deflator
-    # The Gram identity Bᵀ M (x - P x) = 0, finite output, for an indefinite M, isotropic and dependent vectors.
-    gram_residual(B, M, x) = norm(transpose(B) * (M * deflator(collect(eachcol(B)), M)(x))) / (norm(B) * norm(M * x))
-    M = [1.0 0.0 0.0; 0.0 -1.0 0.0; 0.0 0.0 2.0]
-    B = [1.0 1.0; 1.0 -1.0; 0.0 1.0]  # the first column is isotropic in M
-    @test gram_residual(B, M, [0.3, -0.7, 1.1]) < 1.0e-12
-    x = deflator([[1.0, im]], Matrix(1.0I, 2, 2))([2.0, 3.0])  # an isotropic complex vector: Gram matrix 0
-    @test all(isfinite, x)
-    rng = Random.Xoshiro(7)
-    for T in (Float64, ComplexF64)
-        A = randn(rng, T, 6, 6)
-        M = A + transpose(A)  # symmetric, indefinite (complex symmetric for T = ComplexF64)
-        B = randn(rng, T, 6, 3)
-        B = [B B[:, 1]]  # a repeated column
-        x = randn(rng, T, 6)
-        P = deflator(collect(eachcol(B)), M)
-        @test all(isfinite, P(x))
-        @test gram_residual(B, M, x) < 1.0e-9
-    end
+    # Rayleigh-Ritz of perturbed inputs: two M-orthonormal eigenvectors a, b of a repeated eigenvalue and a tiny
+    # imaginary part of another eigenvector c must give independent modes with small residuals, not normalised noise.
+    cube2 = MaxwellModel(unit_cube(2); pec = CUBE_FACES, eps0 = 1.0, mu0 = 1.0)
+    free2 = setdiff(1:ndofs(cube2.dh), FiniteElementMethod._pec_dofs(cube2.dh, cube2.grid, cube2.pec))
+    K2, M2 = cube2.blocks.curlcurl[free2, free2], cube2.blocks.eps_real[free2, free2]
+    E = eigen(Symmetric(Matrix(K2)), Symmetric(Matrix(M2)))
+    physical = findall(>(1.0), E.values)
+    pair = findfirst(j -> abs(E.values[physical[j + 1]] - E.values[physical[j]]) < 1.0e-8 * E.values[physical[j]], 1:(length(physical) - 1))
+    other = first(setdiff(1:length(physical), (pair, pair + 1)))
+    a, b, c = E.vectors[:, physical[pair]], E.vectors[:, physical[pair + 1]], E.vectors[:, physical[other]]
+    θ, V, _ = FiniteElementMethod._ritz(K2, M2, [a + 1.0e-12im * c, b], false)
+    residuals = [norm(K2 * V[:, j] - θ[j] * (M2 * V[:, j])) / (norm(K2 * V[:, j]) + abs(θ[j]) * norm(M2 * V[:, j])) for j in eachindex(θ)]
+    @test maximum(residuals) < 1.0e-8
+    @test norm(V' * M2 * V - I) < 1.0e-8
     # Materials that are not ordinary and passive are rejected, naming the cell set.
     for (eps_r, mu_r) in ((-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0))
         grid = unit_cube(2)
@@ -238,6 +233,27 @@ end
             @test norm(V' * M * V - I) < 1.0e-6
         end
     end
+end
+
+@testset "nearly repeated modes, and a vacuum box at a resonance, return independent accurate modes" begin
+    function dense_check(height, target, nev; kwargs...)
+        grid = generate_grid(Tetrahedron, (3, 3, 3), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, height))
+        model = MaxwellModel(grid; pec = CUBE_FACES, eps0 = 1.0, mu0 = 1.0)
+        free = setdiff(1:ndofs(model.dh), FiniteElementMethod._pec_dofs(model.dh, model.grid, model.pec))
+        K, M = Matrix(model.blocks.curlcurl[free, free]), Matrix(model.blocks.eps_real[free, free])
+        λ = filter(>(1.0), real.(eigvals(Symmetric(K), Symmetric(M))))
+        reference = sort(sort(sqrt.(λ) ./ 2π; by = f -> abs(f - target))[1:nev])
+        found = maxwell_eigenmodes(model; nev, target_frequency = target, kwargs...)
+        V = reduce(hcat, [m.u[free] for m in found.modes])
+        residual(v, f) = norm(K * v - (2π * f)^2 * (M * v)) / (norm(K * v) + (2π * f)^2 * norm(M * v))
+        @test found.frequency ≈ reference rtol = 1.0e-8
+        @test maximum(residual(V[:, j], found.frequency[j]) for j in 1:nev) < 1.0e-8
+        @test minimum(svdvals(V)) / maximum(svdvals(V)) > 1.0e-6
+        @test norm(V' * M * V - I) < 1.0e-6
+    end
+    dense_check(1.0000005, 0.8777626842989034, 4; tol = 1.0e-12)  # nearly repeated: the box is 5e-7 too tall
+    dense_check(1.0, 0.8777628447553723, 4; tol = 1.0e-12)  # a lossless Rayleigh quotient with an imaginary roundoff
+    dense_check(1.0, 0.8777628447544944, 4; tol = 1.0e-12, krylovdim = 10_000)
 end
 
 @testset "lossy: nearest in complex ω, and the candidate bound holds" begin

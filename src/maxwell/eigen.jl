@@ -91,22 +91,10 @@ function _gradient_projection(G, M)
     return x -> x - G * (FG \ (GtM * x))
 end
 
-# The projector that removes the span of `vecs` from a vector in the bilinear form xᵀ M y (the form of the symmetric
-# pencil, with the transpose also for complex data): x ↦ x - B G⁺ Bᵀ M x with B the vectors as columns and
-# G = Bᵀ M B their Gram matrix. There is no orthonormalisation, so an indefinite form (negative Re(εr)), a vector
-# isotropic in it or a dependent one needs no square root or division: the rank-revealing pseudo-inverse G⁺ drops the
-# directions that G cannot resolve.
-function _deflator(vecs, M)
-    B = reduce(hcat, vecs)
-    MB = M * B
-    Gp = pinv(transpose(B) * MB; rtol = 4 * sqrt(eps()))
-    return x -> x - B * (Gp * (transpose(MB) * x))
-end
-
 # The factorisation of K - σ M at a shift σ ≥ σ0 that is not so close to an eigenvalue that the solves are inaccurate: a
 # shift on (or within roundoff of) an eigenvalue can still factorise, with a condition number of 1/eps that corrupts
 # every Ritz pair, not only the one at the shift. The solve of a fixed vector estimates the condition number
-# (‖K - σM‖ ‖x‖ / ‖b‖ ≤ κ), and the shift moves up by a growing relative step until eps times it is below 1e-8.
+# (‖K - σM‖ ‖x‖ / ‖b‖ ≤ κ), and the shift moves up by a growing relative step until eps times it is below 1e-11, so that the solves leave residuals of the other modes at 1e-11.
 function _accurate_shifted_lu(K, M, σ0)
     b = cos.(1.7 .* (1:size(K, 1)))
     σ, F = σ0, nothing
@@ -120,7 +108,7 @@ function _accurate_shifted_lu(K, M, σ0)
         end
         F === nothing && continue
         x = F \ b
-        (opnorm(K, 1) + abs(σ) * opnorm(M, 1)) * norm(x) / norm(b) * eps() < 1.0e-8 && return F, σ
+        (opnorm(K, 1) + abs(σ) * opnorm(M, 1)) * norm(x) / norm(b) * eps() < 1.0e-11 && return F, σ
     end
     F === nothing && throw(SingularException(0))
     return F, σ
@@ -129,40 +117,48 @@ end
 # The relative residual of the pair (λ, v) of the original pencil K v = λ M v.
 _pencil_residual(K, M, λ, v) = norm(K * v - λ * (M * v)) / (norm(K * v) + abs(λ) * norm(M * v))
 
-# The M-orthonormal real vectors of a lossless problem. A real shifted operator can return a complex-conjugate pair
-# inside a repeated real eigenspace, whose real parts are the same vector, so the real parts of the returned vectors are
-# not taken one by one: per cluster of equal eigenvalues (to 1e-6 relative), the real and imaginary parts of all its
-# vectors are orthonormalised in the form xᵀ M y (positive for passive materials) with a relative rank test, and as many
-# independent ones as the cluster has vectors replace them. A cluster that does not yield that many keeps its vectors.
-function _real_cluster_vectors!(vecs, λ, keep, M)
-    order = sort(keep; by = j -> real(λ[j]))
-    i = 1
-    while i <= length(order)
-        k = i
-        while k < length(order) && abs(λ[order[k + 1]] - λ[order[i]]) <= 1.0e-6 * max(abs(λ[order[i]]), eps())
-            k += 1
+# An orthonormal basis of the span of `vectors`, in the form xᵀ M y for a lossless problem (M is positive definite on
+# the free dofs for passive materials) and in the Euclidean form for a lossy one. Two Gram-Schmidt sweeps; a vector whose
+# part outside the basis has under 1e-6 of its own norm is dependent and dropped.
+function _orthonormal_basis(vectors, M, lossy)
+    basis = Vector{eltype(first(vectors))}[]
+    mbasis = similar(basis)
+    form(b, mb, w) = lossy ? dot(b, w) : dot(mb, w)
+    for v in vectors
+        size0 = real(lossy ? dot(v, v) : dot(v, M * v))
+        size0 > 0 || continue
+        w = copy(v)
+        for _ in 1:2, (b, mb) in zip(basis, mbasis)
+            w .-= b .* form(b, mb, w)
         end
-        cluster = order[i:k]
-        basis = Vector{Float64}[]
-        for j in cluster, part in (real(vecs[j]), imag(vecs[j]))
-            length(basis) == length(cluster) && break
-            size0 = real(dot(part, M * part))
-            size0 > 0 || continue
-            w = copy(part)
-            for _ in 1:2, b in basis
-                w .-= b .* dot(b, M * w)
-            end
-            s = real(dot(w, M * w))
-            s > 1.0e-12 * size0 && push!(basis, w ./ sqrt(s))
-        end
-        if length(basis) == length(cluster)
-            for (j, b) in zip(cluster, basis)
-                vecs[j] = ComplexF64.(b)
-            end
-        end
-        i = k + 1
+        mw = lossy ? w : M * w
+        s = real(lossy ? dot(w, w) : dot(w, mw))
+        s > 1.0e-12 * size0 || continue
+        push!(basis, w ./ sqrt(s))
+        push!(mbasis, mw ./ sqrt(s))
     end
-    return vecs
+    return reduce(hcat, basis)
+end
+
+# Rayleigh-Ritz of the pencil K v = λ M v on the span of `vectors`: the Ritz values and vectors (as columns) and the
+# orthonormal basis. For a lossless problem the real and imaginary parts of each vector are separate candidates, the
+# small problem is real symmetric, and the Ritz vectors are real, independent and M-orthonormal by construction; for a
+# lossy one the vectors are complex and the small problem is the complex symmetric pair (QᵀKQ, QᵀMQ).
+function _ritz(K, M, vectors, lossy)
+    candidates = Vector{lossy ? ComplexF64 : Float64}[]
+    for v in vectors
+        if lossy
+            push!(candidates, ComplexF64.(v))
+        else
+            push!(candidates, real.(v))
+            eltype(v) <: Complex && push!(candidates, imag.(v))
+        end
+    end
+    Q = _orthonormal_basis(candidates, M, lossy)
+    KQ, MQ = K * Q, M * Q
+    E = lossy ? eigen(transpose(Q) * KQ, transpose(Q) * MQ) :
+        eigen(Symmetric(transpose(Q) * KQ), Symmetric(transpose(Q) * MQ))
+    return E.values, Q * E.vectors, Q
 end
 
 # The largest ratio between the εr (real part) or μr values of the cells.
@@ -310,53 +306,64 @@ function maxwell_eigenmodes(
         return
     end
     λ, vecs, keep, dense = search(op, x0, nev)
-    if !dense && length(keep) >= nev
-        # A Krylov space from one starting vector holds one vector per distinct eigenvalue, so a repeated eigenvalue
-        # may have been found once only. Restart from vectors M-orthogonal to everything found, widening the
-        # candidates like the first search, until a pass finds nothing nearer than the current nev-th mode: each pass
-        # can add one copy of a repeated eigenvalue.
-        pool_λ, pool_vecs = λ[keep], vecs[keep]
-        pool_dist = abs.(sqrt.(complex.(pool_λ) ./ scale) .- ωt)
+    # Rayleigh-Ritz on the span of every vector the searches return: real, independent and M-orthonormal modes of a
+    # lossless problem by construction, whatever the multiplicities and near-multiplicities of the Krylov chains.
+    pool = collect(vecs)
+    local θ, V, Q, selected, d_nev
+    function extract()
+        θ, V, Q = _ritz(K, M, pool, lossy)
+        usable = findall(j -> isfinite(θ[j]) && abs(θ[j]) >= λ_null && physical(V[:, j]), eachindex(θ))
+        dist = abs.(sqrt.(complex.(θ[usable]) ./ scale) .- ωt)
+        order = sortperm(dist)
+        selected = usable[order[1:min(nev, end)]]
+        d_nev = length(order) >= nev ? dist[order[nev]] : Inf
+        return
+    end
+    extract()
+    if !dense && length(selected) >= nev
+        # A Krylov space from one starting vector holds one vector per distinct eigenvalue and mixes nearly repeated
+        # ones, so restart from vectors M-orthogonal to the basis until a pass finds nothing nearer than the current
+        # nev-th Ritz value: each pass can add one more direction of a (nearly) repeated eigenvalue.
         for pass in 1:nev
-            d_nev = sort(pool_dist)[nev]
-            deflate = _deflator(pool_vecs, M)
+            deflate(x) = x - Q * (lossy ? Q' * x : transpose(Q) * (M * x))
             raw = project(T.(cos.(2.399963 .* pass .* (1:length(free)) .^ 1.37 .+ pass)))
             start = deflate(raw)
             norm(start) > 1.0e-8 * norm(raw) || break  # nothing is left outside the span of what was found
             λ_found, found, new, _ = search(x -> deflate(op(x)), start, 1, d_nev)
             dist_new = abs.(sqrt.(complex.(λ_found[new]) ./ scale) .- ωt)
             any(<(d_nev * (1 - 1.0e-8)), dist_new) || break
-            append!(pool_λ, λ_found[new])
-            append!(pool_vecs, found[new])
-            append!(pool_dist, dist_new)
+            append!(pool, found)
+            extract()
         end
-        λ, vecs = pool_λ, pool_vecs
-        keep = sortperm(pool_dist)
     end
-    length(keep) < nev && @warn "maxwell_eigenmodes found $(length(keep)) of $nev modes"
-    keep = keep[1:min(nev, end)]
-    # Every pair returned is checked against the original pencil, and refined by inverse iteration with the shifted
-    # factorisation when its residual is above what tol allows for.
+    length(selected) < nev && @warn "maxwell_eigenmodes found $(length(selected)) of $nev modes"
+    # Every Ritz pair is checked against the original pencil; a pair above what tol allows for gets the shift-invert
+    # image of its vector added to the subspace, a few times, and then a warning.
     residual_tol = max(1.0e3 * tol, 1.0e-8)
-    for j in keep
-        vecs[j] = ComplexF64.(vecs[j])
-        for _ in 1:5
-            _pencil_residual(K, M, λ[j], vecs[j]) <= residual_tol && break
-            w = op(vecs[j])
-            vecs[j] = w ./ norm(w)
-            λ[j] = (transpose(vecs[j]) * (K * vecs[j])) / (transpose(vecs[j]) * (M * vecs[j]))
+    for _ in 1:6
+        failing = [j for j in selected if _pencil_residual(K, M, θ[j], V[:, j]) > residual_tol]
+        isempty(failing) && break
+        for j in failing
+            w = V[:, j]
+            for _ in 1:3
+                w = op(w)
+                w ./= norm(w)
+                push!(pool, w)
+            end
         end
-        r = _pencil_residual(K, M, λ[j], vecs[j])
+        extract()
+    end
+    for j in selected
+        r = _pencil_residual(K, M, θ[j], V[:, j])
         r <= residual_tol || @warn "maxwell_eigenmodes: a returned pair has the relative residual $r of the original pencil, above $residual_tol; the shifted solve is ill-conditioned"
     end
-    lossy || _real_cluster_vectors!(vecs, λ, keep, M)
-    keep = keep[sortperm(real.(sqrt.(complex.(λ[keep]))))]
+    keep = selected[sortperm(real.(sqrt.(complex.(θ[selected]))))]
 
-    omega = sqrt.(complex.(λ[keep])) ./ sqrt(scale)
-    Q = [iszero(imag(ω)) ? Inf : real(ω) / (2imag(ω)) for ω in omega]
+    omega = sqrt.(complex.(θ[keep])) ./ sqrt(scale)
+    quality = [iszero(imag(ω)) ? Inf : real(ω) / (2imag(ω)) for ω in omega]
     Mr = blocks.eps_real[free, free]
     modes = map(keep, omega) do j, ω
-        v = ComplexF64.(vecs[j])
+        v = ComplexF64.(V[:, j])
         w = real(dot(v, Mr * v))
         v ./= w > 0 ? sqrt(w) : norm(v)  # Re(εr) ≤ 0 somewhere can make the weighted norm vanish
         v .*= conj(sign(v[argmax(abs.(v))]))
@@ -364,5 +371,5 @@ function maxwell_eigenmodes(
         u[free] = v
         MaxwellSolution(model, real(ω), u)
     end
-    return (; frequency = real.(omega) ./ 2π, Q, omega, modes)
+    return (; frequency = real.(omega) ./ 2π, Q = quality, omega, modes)
 end
