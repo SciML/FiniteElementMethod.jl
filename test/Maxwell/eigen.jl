@@ -220,6 +220,26 @@ end
     end
 end
 
+@testset "repeated eigenvalues return independent real modes" begin
+    # A real shifted operator can return a complex-conjugate pair inside a repeated real eigenspace, whose real parts
+    # are one vector: the modes must be independent and M-orthonormal, with the frequencies of the dense eigensolve.
+    for (n, nev) in ((2, 4), (3, 4))
+        model = MaxwellModel(unit_cube(n); pec = CUBE_FACES, eps0 = 1.0, mu0 = 1.0)
+        free = setdiff(1:ndofs(model.dh), FiniteElementMethod._pec_dofs(model.dh, model.grid, model.pec))
+        K, M = Matrix(model.blocks.curlcurl[free, free]), Matrix(model.blocks.eps_real[free, free])
+        λ = sort(filter(>(1.0), real.(eigvals(Symmetric(K), Symmetric(M)))))
+        target = sqrt(λ[nev]) * (1 + 1.0e-12) / 2π
+        reference = sort(sqrt.(λ) ./ 2π; by = f -> abs(f - target))[1:nev]
+        for kwargs in ((;), (; krylovdim = 10_000))
+            found = maxwell_eigenmodes(model; nev, target_frequency = target, kwargs...)
+            V = reduce(hcat, [m.u[free] for m in found.modes])
+            @test found.frequency ≈ sort(reference) rtol = 1.0e-8
+            @test minimum(svdvals(V)) / maximum(svdvals(V)) > 1.0e-6
+            @test norm(V' * M * V - I) < 1.0e-6
+        end
+    end
+end
+
 @testset "lossy: nearest in complex ω, and the candidate bound holds" begin
     # eps_r = 1 - 100i scales ω by 1/√(1 - 100i): the lowest modes sit at Re f = 0.0592, 0.0794, 0.0854 with
     # Im f about as large. From 0.0854 the nearest in complex ω is the first, and shift-invert ranks the first

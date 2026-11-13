@@ -129,6 +129,42 @@ end
 # The relative residual of the pair (λ, v) of the original pencil K v = λ M v.
 _pencil_residual(K, M, λ, v) = norm(K * v - λ * (M * v)) / (norm(K * v) + abs(λ) * norm(M * v))
 
+# The M-orthonormal real vectors of a lossless problem. A real shifted operator can return a complex-conjugate pair
+# inside a repeated real eigenspace, whose real parts are the same vector, so the real parts of the returned vectors are
+# not taken one by one: per cluster of equal eigenvalues (to 1e-6 relative), the real and imaginary parts of all its
+# vectors are orthonormalised in the form xᵀ M y (positive for passive materials) with a relative rank test, and as many
+# independent ones as the cluster has vectors replace them. A cluster that does not yield that many keeps its vectors.
+function _real_cluster_vectors!(vecs, λ, keep, M)
+    order = sort(keep; by = j -> real(λ[j]))
+    i = 1
+    while i <= length(order)
+        k = i
+        while k < length(order) && abs(λ[order[k + 1]] - λ[order[i]]) <= 1.0e-6 * max(abs(λ[order[i]]), eps())
+            k += 1
+        end
+        cluster = order[i:k]
+        basis = Vector{Float64}[]
+        for j in cluster, part in (real(vecs[j]), imag(vecs[j]))
+            length(basis) == length(cluster) && break
+            size0 = real(dot(part, M * part))
+            size0 > 0 || continue
+            w = copy(part)
+            for _ in 1:2, b in basis
+                w .-= b .* dot(b, M * w)
+            end
+            s = real(dot(w, M * w))
+            s > 1.0e-12 * size0 && push!(basis, w ./ sqrt(s))
+        end
+        if length(basis) == length(cluster)
+            for (j, b) in zip(cluster, basis)
+                vecs[j] = ComplexF64.(b)
+            end
+        end
+        i = k + 1
+    end
+    return vecs
+end
+
 # The largest ratio between the εr (real part) or μr values of the cells.
 function _material_contrast(materials)
     spread(values) = maximum(values) / minimum(values)
@@ -303,7 +339,7 @@ function maxwell_eigenmodes(
     # factorisation when its residual is above what tol allows for.
     residual_tol = max(1.0e3 * tol, 1.0e-8)
     for j in keep
-        vecs[j] = ComplexF64.(vecs[j]) |> v -> lossy ? v : real.(v)
+        vecs[j] = ComplexF64.(vecs[j])
         for _ in 1:5
             _pencil_residual(K, M, λ[j], vecs[j]) <= residual_tol && break
             w = op(vecs[j])
@@ -313,6 +349,7 @@ function maxwell_eigenmodes(
         r = _pencil_residual(K, M, λ[j], vecs[j])
         r <= residual_tol || @warn "maxwell_eigenmodes: a returned pair has the relative residual $r of the original pencil, above $residual_tol; the shifted solve is ill-conditioned"
     end
+    lossy || _real_cluster_vectors!(vecs, λ, keep, M)
     keep = keep[sortperm(real.(sqrt.(complex.(λ[keep]))))]
 
     omega = sqrt.(complex.(λ[keep])) ./ sqrt(scale)
