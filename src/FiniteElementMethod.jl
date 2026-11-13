@@ -13,7 +13,7 @@ using DiffEqBase: BrownFullBasicInit
 using DomainSets: DomainSets
 using Ferrite: Ferrite, Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexahedron
 using ForwardDiff: ForwardDiff
-using LinearAlgebra: dot, mul!, norm
+using LinearAlgebra: cross, dot, lu, lu!, mul!, norm
 using ModelingToolkit: ModelingToolkit, @parameters, @variables, Differential, MTKParameters,
     ProblemTypeCtx, System, complete, getmetadata
 using NonlinearSolveFirstOrder: NewtonRaphson
@@ -22,7 +22,7 @@ using PrecompileTools: PrecompileTools
 using RuntimeGeneratedFunctions: RuntimeGeneratedFunctions
 using SciMLBase: SciMLBase, DAEFunction, DAEProblem
 using SciMLBase.SymbolicIndexingInterface: SymbolicIndexingInterface, getp, parameter_index, variable_index
-using SparseArrays: SparseMatrixCSC, nnz, nonzeros, nzrange, rowvals
+using SparseArrays: SparseMatrixCSC, dropzeros!, findnz, nnz, nonzeros, nzrange, rowvals, sparse
 using SymbolicUtils: SymbolicUtils
 using Symbolics: Symbolics, Equation, Num, @register_array_symbolic, substitute, unwrap
 
@@ -53,10 +53,15 @@ export MeshDomain, Region, boundarypiece, boundarypieces, NormalDerivative
 export Weighted
 
 # Frequency-domain Maxwell: a separate entry point assembled directly on Ferrite, not through the PDESystem front end.
+include("maxwell/ports.jl")
 include("maxwell/model.jl")
 include("maxwell/driven.jl")
+include("maxwell/sweep.jl")
+include("maxwell/adjoint.jl")
 export MaxwellMaterial, MaxwellModel, MaxwellTerm, maxwell_operator, maxwell_operator!
 export MaxwellSolution, driven_problem, solve_driven, field_values
+export WavePort, MaxwellSweep, solve_sweep
+export MaxwellSensitivities, s_parameter_sensitivities, adjoint_gradient
 
 include("precompile.jl")
 
