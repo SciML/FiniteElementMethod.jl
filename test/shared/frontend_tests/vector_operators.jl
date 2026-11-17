@@ -162,6 +162,34 @@ same_operators(a, b) = a.M ≈ b.M && a.K ≈ b.K && a.F ≈ b.F && a.u0 ≈ b.u
         @test all(isequal.(lower_vector_ops(lazy), hand))
     end
 
+    @testset "operators nested in Differentials, in operators and in functions lower without looping" begin
+        U = u(x, y)
+        Dxx_Dyy = Dx(Dx(U)) + Dy(Dy(U))
+        @test !FiniteElementMethod._has_vector_op(only(lower_vector_ops([0 ~ Dx(grad(U)[1])])).rhs)
+        @test isequal(only(lower_vector_ops([0 ~ Dy(grad ⋅ grad(U))])).rhs, Dy(Dxx_Dyy))
+        @test isequal(only(lower_vector_ops([0 ~ grad ⋅ [Dx(U), Dy(U)]])).rhs, Dxx_Dyy)
+        @test isequal(only(lower_vector_ops([0 ~ grad ⋅ (Grad(X)(Laplacian(X)(U)))])).rhs, Dx(Dx(Dxx_Dyy)) + Dy(Dy(Dxx_Dyy)))
+        @test isequal(only(lower_vector_ops([0 ~ sin(Laplacian(X)(U))])).rhs, sin(Dxx_Dyy))
+        poisson(eq) = steady_operators([eq], [U], 0.0)
+        @test same_operators(poisson(0 ~ Dx(grad(U)[1]) + Dy(grad(U)[2])), poisson(0 ~ Dxx_Dyy))
+    end
+
+    @testset "equation-keyed ibp and pairing options accept the operator form of the equation" begin
+        U, V = u(x, y), v(x, y)
+        w = 1 + x
+        lazy = 0 ~ Laplacian(X)(U)
+        hand = 0 ~ Dx(Dx(U)) + Dy(Dy(U))
+        other = 0 ~ Laplacian(X)(V) + U
+        operators_with(eq, key) = begin
+            Ω = square()
+            bcs = [field(dv)(Γ) ~ 0 for dv in (U, V) for Γ in sides(Ω)]
+            @named pdesys = PDESystem([eq, other], bcs, [(x, y) ∈ Ω], [x, y], [U, V], [])
+            disc = FEMDiscretization(Ω; ibp = Dict(key => Weighted(w)), pairing = Dict(key => u))
+            operators(pdesys, disc)
+        end
+        @test same_operators(operators_with(lazy, lazy), operators_with(hand, hand))
+    end
+
     @testset "an operator in a variable that is not an independent variable of the system is an error" begin
         Ω = square()
         @named pdesys = PDESystem([0 ~ Laplacian([x, z])(u(x, y))], Equation[], [(x, y) ∈ Ω], [x, y], [u(x, y)], [])

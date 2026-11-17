@@ -35,6 +35,8 @@ function _apply_vector_op(op::Symbolics.Curl{false, N}, v) where {N}
 end
 
 # Innermost first: a lazy term whose argument has no lazy operator is replaced, and the pass repeats on the result.
+# `substitute` skips the arguments of a `Differential` unless told otherwise, and an operator can sit inside one
+# (`Dx(∇(u)[1])`), so the filter admits every term; a pass that changes nothing is an error rather than a loop.
 function _lower_vector_op(ex)
     ex = _unwrap_arg(ex)
     while true
@@ -44,7 +46,10 @@ function _lower_vector_op(ex)
                 !_has_vector_op(only(SymbolicUtils.arguments(e))) && (inner = e)
         end
         inner === nothing && return ex
-        ex = _unwrap_arg(substitute(ex, Dict(inner => _apply_vector_op(SymbolicUtils.operation(inner), only(SymbolicUtils.arguments(inner))))))
+        lowered = _apply_vector_op(SymbolicUtils.operation(inner), only(SymbolicUtils.arguments(inner)))
+        next = _unwrap_arg(substitute(ex, Dict(inner => lowered); filterer = Returns(true)))
+        isequal(next, ex) && throw(ArgumentError("cannot rewrite the vector operator $inner in $ex to Differentials"))
+        ex = next
     end
     return
 end
@@ -83,3 +88,7 @@ function lower_vector_ops(pdesys::ModelingToolkit.PDESystem)
         initial_conditions = pdesys.initial_conditions, name = nameof(pdesys)
     )
 end
+
+# An equation key of `ibp` or `pairing`, lowered like the equations it names; other keys are left as they are.
+_lowered_keys(key::Equation) = lower_vector_ops([key])
+_lowered_keys(key) = [key]
