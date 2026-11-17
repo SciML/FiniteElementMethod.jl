@@ -17,7 +17,7 @@ _has_vector_op(ex) = !isempty(_vector_ops(ex))
 _components(ex) = Symbolics.scalarize(Symbolics.wrap(ex))
 
 function _apply_vector_op(op::Symbolics.Grad, s)
-    return SymbolicUtils.Const{SymbolicUtils.SymReal}(unwrap.([Differential(x)(s) for x in op.vars]))
+    return SymbolicUtils.Const{SymbolicUtils.vartype(unwrap(s))}(unwrap.([Differential(x)(s) for x in op.vars]))
 end
 
 function _apply_vector_op(op::Symbolics.Divergence, v)
@@ -29,7 +29,7 @@ function _apply_vector_op(op::Symbolics.Curl{false, N}, v) where {N}
     comps = _components(v)
     D = Differential.(op.vars)
     N == 2 && return unwrap(D[1](comps[2]) - D[2](comps[1]))
-    return SymbolicUtils.Const{SymbolicUtils.SymReal}(
+    return SymbolicUtils.Const{SymbolicUtils.vartype(first(op.vars))}(
         unwrap.([D[2](comps[3]) - D[3](comps[2]), D[3](comps[1]) - D[1](comps[3]), D[1](comps[2]) - D[2](comps[1])])
     )
 end
@@ -96,7 +96,11 @@ end
 # integer key indexes the flattened input equations, so it names every component of a vector equation: `spans[i]` is
 # the range of lowered equations that input equation `i` became.
 _lowered_keys(key::Equation, spans) = lower_vector_ops([key])
-_lowered_keys(key::Integer, spans) = spans === nothing || !(key in eachindex(spans)) ? [key] : collect(spans[key])
+function _lowered_keys(key::Integer, spans)
+    spans === nothing && return [key]
+    key in eachindex(spans) || throw(ArgumentError("the integer key $key is not the index of an equation of the system, which has $(length(spans))"))
+    return collect(spans[key])
+end
 _lowered_keys(key, spans) = [key]
 
 function _lowering_spans(eqs)

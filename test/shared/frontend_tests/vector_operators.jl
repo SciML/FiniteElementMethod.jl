@@ -201,6 +201,17 @@ same_operators(a, b) = a.M ≈ b.M && a.K ≈ b.K && a.F ≈ b.F && a.u0 ≈ b.u
         @test same_operators(system(lazy, Dict(2 => Weighted(1 + x))), system(hand, Dict(3 => Weighted(1 + x))))
         @test same_operators(system(lazy, Dict(1 => Weighted(1 + x))), system(hand, Dict(1 => Weighted(1 + x), 2 => Weighted(1 + x))))
 
+        # There are two input equations, so 3 (the third lowered equation) and 0 name none.
+        for key in (3, 0, -1)
+            err = try
+                system(lazy, Dict(key => Weighted(1 + x)))
+                nothing
+            catch e
+                e
+            end
+            @test err isa ArgumentError && occursin("integer key $key", err.msg)
+        end
+
         E = [E1(x, y, z), E2(x, y, z), E3(x, y, z)]
         X3 = [x, y, z]
         Ω3 = MeshDomain(generate_grid(Tetrahedron, (1, 1, 1), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0)))
