@@ -34,13 +34,19 @@ function _apply_vector_op(op::Symbolics.Curl{false, N}, v) where {N}
     )
 end
 
+# Innermost first: a lazy term whose argument has no lazy operator is replaced, and the pass repeats on the result.
 function _lower_vector_op(ex)
     ex = _unwrap_arg(ex)
-    _has_vector_op(ex) || return ex
-    op = SymbolicUtils.operation(ex)
-    args = [_lower_vector_op(a) for a in SymbolicUtils.arguments(ex)]
-    op isa _LAZY_VECTOR_OPS && return _apply_vector_op(op, only(args))
-    return SymbolicUtils.maketerm(typeof(ex), op, args, nothing)
+    while true
+        inner = nothing
+        _walk(ex) do e
+            inner === nothing && SymbolicUtils.iscall(e) && SymbolicUtils.operation(e) isa _LAZY_VECTOR_OPS &&
+                !_has_vector_op(only(SymbolicUtils.arguments(e))) && (inner = e)
+        end
+        inner === nothing && return ex
+        ex = _unwrap_arg(substitute(ex, Dict(inner => _apply_vector_op(SymbolicUtils.operation(inner), only(SymbolicUtils.arguments(inner))))))
+    end
+    return
 end
 
 _is_array_valued(ex) = !isempty(SymbolicUtils.shape(unwrap(ex)))
