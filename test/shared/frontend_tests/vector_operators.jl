@@ -240,6 +240,23 @@ same_operators(a, b) = a.M ≈ b.M && a.K ≈ b.K && a.F ≈ b.F && a.u0 ≈ b.u
         @test same_operators(system3(Curl{true}(X3)(Curl{true}(X3)(E)) + E ~ rhs), system3(Curl{true}(X3)(Curl{true}(X3)(E)) + E .~ rhs))
     end
 
+    @testset "reductions over a lowered gradient become scalar arithmetic; matrix equations flatten" begin
+        U, V = u(x, y), v(x, y)
+        g = Grad(X)
+        lowered(ex) = only(lower_vector_ops([ex ~ x])).lhs
+        @test isequal(lowered(Dx(Dx(U)) + sum(g(U))), Dx(Dx(U)) + Dx(U) + Dy(U))
+        @test isequal(lowered(g(U) ⋅ g(U)), Dx(U)^2 + Dy(U)^2)
+        @test isequal(lowered(sqrt(g(U) ⋅ g(U)) * U), sqrt(Dx(U)^2 + Dy(U)^2) * U)
+        # |∇u|² in a nonlinear diffusion coefficient reaches the discretization as the hand-written equation.
+        nonlinear(c) = discretize(steady_system([0 ~ grad ⋅ ((1 + c) * grad(U)) - 1], [U], 0.0)...)
+        @test nonlinear(U^2 + g(U) ⋅ g(U)) isa SciMLBase.NonlinearProblem
+        matrix = [Dx(U) Dy(U); Dx(V) Dy(V)] ~ fill(x, 2, 2)
+        eqs = lower_vector_ops([matrix])
+        @test length(eqs) == 4
+        @test isequal(eqs[2].lhs, Dx(V)) && isequal(eqs[3].lhs, Dy(U))   # column-major
+        @test length(FiniteElementMethod._lowering_spans([matrix, 0 ~ Dx(U)])[1]) == 4
+    end
+
     @testset "Navier–Stokes in the operator form lowers to exactly the hand-written equations" begin
         @parameters ν
         U, V, P = u(t, x, y), v(t, x, y), p(t, x, y)

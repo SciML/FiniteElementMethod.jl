@@ -45,7 +45,7 @@ function _lower_vector_op(ex)
             inner === nothing && SymbolicUtils.iscall(e) && SymbolicUtils.operation(e) isa _LAZY_VECTOR_OPS &&
                 !_has_vector_op(only(SymbolicUtils.arguments(e))) && (inner = e)
         end
-        inner === nothing && return ex
+        inner === nothing && return _is_array_valued(ex) ? ex : _scalarized(ex)
         lowered = _apply_vector_op(SymbolicUtils.operation(inner), only(SymbolicUtils.arguments(inner)))
         next = _unwrap_arg(substitute(ex, Dict(inner => lowered); filterer = Returns(true)))
         isequal(next, ex) && throw(ArgumentError("cannot rewrite the vector operator $inner in $ex to Differentials"))
@@ -56,6 +56,26 @@ end
 
 _is_array_valued(ex) = !isempty(SymbolicUtils.shape(unwrap(ex)))
 
+# An array term other than the base of an index (`A[1]` of an array variable) is something the analysis cannot read.
+function _check_scalar(ex, whole)
+    ex = _unwrap_arg(ex)
+    SymbolicUtils.iscall(ex) || return nothing
+    SymbolicUtils.operation(ex) === getindex && return foreach(a -> _check_scalar(a, whole), SymbolicUtils.arguments(ex)[2:end])
+    isempty(SymbolicUtils.shape(ex)) ||
+        throw(ArgumentError("cannot rewrite $whole to scalar Differentials: the array term $ex remains"))
+    foreach(a -> _check_scalar(a, whole), SymbolicUtils.arguments(ex))
+    return nothing
+end
+
+# A scalar expression with reductions over the lowered component arrays (`sum(∇u)`, `∇u ⋅ ∇u`) expanded to scalar arithmetic,
+# which is all the strong-form analysis reads.
+function _scalarized(ex)
+    scalar = _unwrap_arg(Symbolics.scalarize(Symbolics.wrap(ex)))
+    isequal(scalar, ex) || return scalar
+    _check_scalar(ex, ex)
+    return ex
+end
+
 # The scalar equations that `eq` stands for: itself, or one per component when its sides are vectors (a 3D curl
 # equation, written with a lazy or an eager operator). The sides must have the same number of components.
 function _scalar_equations(eq::Equation)
@@ -65,7 +85,7 @@ function _scalar_equations(eq::Equation)
     _is_array_valued(lhs) || _is_array_valued(rhs) || return [Symbolics.wrap(lhs) ~ Symbolics.wrap(rhs)]
     (_is_array_valued(lhs) && _is_array_valued(rhs) && size(_components(lhs)) == size(_components(rhs))) ||
         throw(ArgumentError("equation $eq has sides with different shapes, so it cannot be split into scalar equations"))
-    return Equation[a ~ b for (a, b) in zip(_components(lhs), _components(rhs))]
+    return Equation[a ~ b for (a, b) in zip(vec(_components(lhs)), vec(_components(rhs)))]
 end
 
 _flat_equations(eq::Equation) = [eq]
