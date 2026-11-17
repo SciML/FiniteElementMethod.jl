@@ -293,6 +293,23 @@ same_operators(a, b) = a.M ≈ b.M && a.K ≈ b.K && a.F ≈ b.F && a.u0 ≈ b.u
         @test same_operators(system([0 ~ Divergence(X)(B) + B[0], second]), system([0 ~ Dx(B[0]) + Dy(B[1]) + B[0], second]))
     end
 
+    @testset "indexing a computed gradient and offset fields in one expression" begin
+        U = u(x, y)
+        g = Grad(X)
+        M = [x y; y x]
+        lowered(ex) = only(lower_vector_ops([ex ~ 1])).lhs
+        @test isequal(lowered((M * g(U))[1]), x * Dx(U) + y * Dy(U))
+        @test isequal(lowered((M * g(U))[2]), y * Dx(U) + x * Dy(U))
+        @test isequal(lowered(Dx((M * g(U))[1])), Dx(x * Dx(U) + y * Dy(U)))
+        @test isequal(lowered(Dx(Dx(U)) + Dy(Dy(U)) + (M * g(U))[1]), Dx(Dx(U)) + Dy(Dy(U)) + x * Dx(U) + y * Dy(U))
+        @variables B(x, y)[0:1]
+        @test isequal(lowered(sum(g(U)) + B[0]), Dx(U) + Dy(U) + B[0])
+        @test isequal(lowered(Dx(sum(g(U)) * B[0])), Dx((Dx(U) + Dy(U)) * B[0]))
+        steady = 0 ~ Laplacian(X)(U) + (M * g(U))[1]
+        hand = 0 ~ Dx(Dx(U)) + Dy(Dy(U)) + x * Dx(U) + y * Dy(U)
+        @test same_operators(steady_operators([steady], [U], 0.0), steady_operators([hand], [U], 0.0))
+    end
+
     @testset "Navier–Stokes in the operator form lowers to exactly the hand-written equations" begin
         @parameters ν
         U, V, P = u(t, x, y), v(t, x, y), p(t, x, y)

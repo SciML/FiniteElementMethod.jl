@@ -78,18 +78,33 @@ function _array_term(ex)
     return nothing
 end
 
-# A scalar expression with reductions over the lowered component arrays (`sum(∇u)`, `∇u ⋅ ∇u`) expanded to scalar arithmetic,
-# which is all the strong-form analysis reads. `scalarize` is left out of expressions with no array term, since it indexes
-# array variables from 1 and fails on a field `A[0:1]`.
+# An array variable `A(x, y)` read through an index is a plain field; anything else with array shape is computed.
+_is_field(a) = SymbolicUtils.iscall(a) && SymbolicUtils.issym(SymbolicUtils.operation(a))
+_is_computed_array(a) = !isempty(SymbolicUtils.shape(a)) && !_is_field(a)
+
+# The outermost scalar subterms of `ex` that read a computed array (`sum(∇u)`, `∇u ⋅ ∇u`, `(M * ∇u)[1]`), wherever they sit,
+# also inside a `Differential`. Plain fields read through an index (`A[0]`) are not touched.
+function _array_reads!(found, ex)
+    SymbolicUtils.iscall(ex) || return found
+    args = SymbolicUtils.arguments(ex)
+    SymbolicUtils.operation(ex) === getindex && _is_field(args[1]) && (args = args[2:end])
+    if isempty(SymbolicUtils.shape(ex)) && any(_is_computed_array, args)
+        push!(found, ex)
+    else
+        foreach(a -> _array_reads!(found, a), args)
+    end
+    return found
+end
+
+# `ex` with each such subterm scalarized on its own, so that `scalarize`, which indexes arrays from 1, never sees an
+# offset-indexed field elsewhere in the expression; an array term that remains is an error.
 function _scalarized(ex)
     ex = _unwrap_arg(ex)
-    # `scalarize` does not look inside a `Differential`, so each one gets its argument scalarized first.
-    derivatives = Any[]
-    _walk(e -> SymbolicUtils.iscall(e) && SymbolicUtils.operation(e) isa Differential && push!(derivatives, e), ex)
-    rules = Dict(d => SymbolicUtils.operation(d)(_scalarized(only(SymbolicUtils.arguments(d)))) for d in derivatives)
-    isempty(rules) || (ex = _unwrap_arg(substitute(ex, rules; filterer = Returns(true))))
-    _array_term(ex) === nothing && return ex
-    ex = _unwrap_arg(Symbolics.scalarize(Symbolics.wrap(ex)))
+    reads = _array_reads!(Any[], ex)
+    if !isempty(reads)
+        rules = Dict(r => _unwrap_arg(Symbolics.scalarize(Symbolics.wrap(r))) for r in reads)
+        ex = _unwrap_arg(substitute(ex, rules; filterer = Returns(true)))
+    end
     term = _array_term(ex)
     term === nothing || throw(ArgumentError("cannot rewrite to scalar Differentials: the array term $term remains in $ex"))
     return ex
