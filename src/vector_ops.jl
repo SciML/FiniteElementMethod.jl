@@ -14,7 +14,15 @@ end
 
 _has_vector_op(ex) = !isempty(_vector_ops(ex))
 
-_components(ex) = Symbolics.scalarize(Symbolics.wrap(ex))
+# The components of an array-valued expression in column-major order, as a 1-based array. `scalarize` indexes from 1,
+# so an array over other axes (a field `A[0:1]`) is indexed by its own axes instead.
+function _components(ex)
+    axes_ = SymbolicUtils.shape(unwrap(ex))
+    wrapped = Symbolics.wrap(ex)
+    all(r -> first(r) == 1, axes_) || return reshape([wrapped[i...] for i in Iterators.product(axes_...)], length.(axes_)...)
+    comps = Symbolics.scalarize(wrapped)
+    return reshape(collect(Iterators.flatten(comps)), size(comps))
+end
 
 function _apply_vector_op(op::Symbolics.Grad, s)
     return SymbolicUtils.Const{SymbolicUtils.vartype(unwrap(s))}(unwrap.([Differential(x)(s) for x in op.vars]))
@@ -45,7 +53,7 @@ function _lower_vector_op(ex)
             inner === nothing && SymbolicUtils.iscall(e) && SymbolicUtils.operation(e) isa _LAZY_VECTOR_OPS &&
                 !_has_vector_op(only(SymbolicUtils.arguments(e))) && (inner = e)
         end
-        inner === nothing && return _is_array_valued(ex) ? ex : _scalarized(ex)
+        inner === nothing && return ex
         lowered = _apply_vector_op(SymbolicUtils.operation(inner), only(SymbolicUtils.arguments(inner)))
         next = _unwrap_arg(substitute(ex, Dict(inner => lowered); filterer = Returns(true)))
         isequal(next, ex) && throw(ArgumentError("cannot rewrite the vector operator $inner in $ex to Differentials"))
@@ -56,19 +64,23 @@ end
 
 _is_array_valued(ex) = !isempty(SymbolicUtils.shape(unwrap(ex)))
 
-# An array term other than the base of an index (`A[1]` of an array variable) is something the analysis cannot read.
-function _check_scalar(ex, whole)
+# The first array term of `ex` other than the base of an index (`A[1]` of an array variable), which the analysis cannot read.
+function _array_term(ex)
     ex = _unwrap_arg(ex)
     SymbolicUtils.iscall(ex) || return nothing
-    SymbolicUtils.operation(ex) === getindex && return foreach(a -> _check_scalar(a, whole), SymbolicUtils.arguments(ex)[2:end])
-    isempty(SymbolicUtils.shape(ex)) ||
-        throw(ArgumentError("cannot rewrite $whole to scalar Differentials: the array term $ex remains"))
-    foreach(a -> _check_scalar(a, whole), SymbolicUtils.arguments(ex))
+    args = SymbolicUtils.arguments(ex)
+    SymbolicUtils.operation(ex) === getindex && (args = args[2:end])
+    isempty(SymbolicUtils.shape(ex)) || return ex
+    for a in args
+        term = _array_term(a)
+        term === nothing || return term
+    end
     return nothing
 end
 
 # A scalar expression with reductions over the lowered component arrays (`sum(∇u)`, `∇u ⋅ ∇u`) expanded to scalar arithmetic,
-# which is all the strong-form analysis reads.
+# which is all the strong-form analysis reads. `scalarize` is left out of expressions with no array term, since it indexes
+# array variables from 1 and fails on a field `A[0:1]`.
 function _scalarized(ex)
     ex = _unwrap_arg(ex)
     # `scalarize` does not look inside a `Differential`, so each one gets its argument scalarized first.
@@ -76,9 +88,10 @@ function _scalarized(ex)
     _walk(e -> SymbolicUtils.iscall(e) && SymbolicUtils.operation(e) isa Differential && push!(derivatives, e), ex)
     rules = Dict(d => SymbolicUtils.operation(d)(_scalarized(only(SymbolicUtils.arguments(d)))) for d in derivatives)
     isempty(rules) || (ex = _unwrap_arg(substitute(ex, rules; filterer = Returns(true))))
-    scalar = _unwrap_arg(Symbolics.scalarize(Symbolics.wrap(ex)))
-    isequal(scalar, ex) || return scalar
-    _check_scalar(ex, ex)
+    _array_term(ex) === nothing && return ex
+    ex = _unwrap_arg(Symbolics.scalarize(Symbolics.wrap(ex)))
+    term = _array_term(ex)
+    term === nothing || throw(ArgumentError("cannot rewrite to scalar Differentials: the array term $term remains in $ex"))
     return ex
 end
 
@@ -88,10 +101,14 @@ function _scalar_equations(eq::Equation)
     lazy = _has_vector_op(eq.lhs) || _has_vector_op(eq.rhs)
     lazy || _is_array_valued(eq.lhs) || _is_array_valued(eq.rhs) || return [eq]
     lhs, rhs = _lower_vector_op(eq.lhs), _lower_vector_op(eq.rhs)
-    _is_array_valued(lhs) || _is_array_valued(rhs) || return [Symbolics.wrap(lhs) ~ Symbolics.wrap(rhs)]
-    (_is_array_valued(lhs) && _is_array_valued(rhs) && size(_components(lhs)) == size(_components(rhs))) ||
-        throw(ArgumentError("equation $eq has sides with different shapes, so it cannot be split into scalar equations"))
-    return Equation[a ~ b for (a, b) in zip(vec(_components(lhs)), vec(_components(rhs)))]
+    if _is_array_valued(lhs) || _is_array_valued(rhs)
+        (_is_array_valued(lhs) && _is_array_valued(rhs) && size(_components(lhs)) == size(_components(rhs))) ||
+            throw(ArgumentError("equation $eq has sides with different shapes, so it cannot be split into scalar equations"))
+        pairs = zip(vec(_components(lhs)), vec(_components(rhs)))
+    else
+        pairs = [(lhs, rhs)]
+    end
+    return Equation[Symbolics.wrap(_scalarized(a)) ~ Symbolics.wrap(_scalarized(b)) for (a, b) in pairs]
 end
 
 _flat_equations(eq::Equation) = [eq]

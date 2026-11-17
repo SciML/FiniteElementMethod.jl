@@ -272,6 +272,27 @@ same_operators(a, b) = a.M ≈ b.M && a.K ≈ b.K && a.F ≈ b.F && a.u0 ≈ b.u
         @test operators(pdesys, FEMDiscretization(Ω)).K isa AbstractMatrix
     end
 
+    @testset "components of a split equation are scalarized like scalar equations" begin
+        U, V = u(x, y), v(x, y)
+        g = Grad(X)
+        hand_extra = Dx(Dx(U) + Dy(U))
+        lowered = lower_vector_ops([[Dx(Dx(U)) + Dy(Dy(U)) + Dx(sum(g(U))), Dx(Dx(V)) + Dy(Dy(V))] ~ [x, y]])
+        @test isequal(lowered[1].lhs, Dx(Dx(U)) + Dy(Dy(U)) + hand_extra)
+        vector = [Dx(Dx(U)) + Dy(Dy(U)) + Dx(sum(g(U))), Dx(Dx(V)) + Dy(Dy(V))] ~ [x, y]
+        scalar = [Dx(Dx(U)) + Dy(Dy(U)) + hand_extra ~ x, Dx(Dx(V)) + Dy(Dy(V)) ~ y]
+        @test same_operators(steady_operators([vector], [U, V], 0.0), steady_operators(scalar, [U, V], 0.0))
+    end
+
+    @testset "fields over offset axes work with the lazy divergence" begin
+        @variables B(x, y)[0:1]
+        function system(eqs)
+            @named pdesys = PDESystem(eqs, Equation[], [(x, y) ∈ square()], [x, y], [B[0], B[1]], [])
+            return operators(pdesys, FEMDiscretization(pdesys.domain[1].domain; boundary_check = :off))
+        end
+        second = 0 ~ Dx(Dx(B[0])) + Dy(Dy(B[1])) + B[1]
+        @test same_operators(system([0 ~ Divergence(X)(B) + B[0], second]), system([0 ~ Dx(B[0]) + Dy(B[1]) + B[0], second]))
+    end
+
     @testset "Navier–Stokes in the operator form lowers to exactly the hand-written equations" begin
         @parameters ν
         U, V, P = u(t, x, y), v(t, x, y), p(t, x, y)
