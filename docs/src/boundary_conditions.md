@@ -120,7 +120,7 @@ error.
 normal of `Γ`. The data `h` may depend on the coordinates, time and parameters. The condition
 enters the weak form as a facet integral, so it holds weakly, not node by node.
 
-When the equation's flux has a coefficient, write it: for `Dt(u) ~ Dx(k * Dx(u)) + …` the
+When the equation's flux has a coefficient, write it: for `Dt(u) ~ grad ⋅ (k * grad(u)) + …` (`Dx(k * Dx(u)) + …` in `Differential`s) the
 natural condition is on `k * Dn(u(t, Γ))`. A condition written against the wrong coefficient is
 rescaled when it is proportional to the conormal derivative; a condition that is not, such as
 `Dx(u(t, Γ)) ~ h` on a piece that is not perpendicular to the `x` axis, is an error asking for
@@ -184,7 +184,7 @@ is an error that names the problem; nothing falls back to `mtkcompile`.
 
 | Input | Result in this release |
 |:--- |:--- |
-| A time-dependent coefficient in the mass or stiffness operator, such as `Dx((1 + t) * Dx(u))` | error |
+| A time-dependent coefficient in the mass or stiffness operator, such as `grad ⋅ ((1 + t) * grad(u))` | error |
 | A time-dependent Robin coefficient, such as `Dn(u(t, Γ)) + (1 + t) * u(t, Γ) ~ 0` | error |
 | `FEMDiscretization(…; codegen = :mtk)` | error |
 | A mesh with mixed cell types | error |

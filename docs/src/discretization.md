@@ -54,11 +54,12 @@ a quadratic velocity with a linear pressure:
 
 ```julia
 @variables x y u1(..) u2(..) p(..)
-Δ(f) = Dx(Dx(f)) + Dy(Dy(f))
-continuity = 0 ~ Dx(u1(t, x, y)) + Dy(u2(t, x, y))
+grad = Grad([x, y])
+Δ = Laplacian([x, y])
+continuity = 0 ~ grad ⋅ [u1(t, x, y), u2(t, x, y)]
 eqs = [
-    Dt(u1(t, x, y)) ~ Δ(u1(t, x, y)) - Dx(p(t, x, y)) + f1,
-    Dt(u2(t, x, y)) ~ Δ(u2(t, x, y)) - Dy(p(t, x, y)) + f2,
+    Dt(u1(t, x, y)) ~ Δ(u1(t, x, y)) - grad(p(t, x, y))[1] + f1,
+    Dt(u2(t, x, y)) ~ Δ(u2(t, x, y)) - grad(p(t, x, y))[2] + f2,
     continuity,
 ]
 P2, P1 = Lagrange{RefTriangle, 2}(), Lagrange{RefTriangle, 1}()
@@ -221,9 +222,8 @@ variables have no time argument.
 using FiniteElementMethod, ModelingToolkit, NonlinearSolve
 using Ferrite: Triangle
 @variables x y u(..)
-Dx, Dy = Differential(x), Differential(y)
 Ω = MeshDomain(FiniteElementMethod.rectangle_grid(Triangle, (16, 16)))
-eq = Dx(Dx(u(x, y))) + Dy(Dy(u(x, y))) ~ -1
+eq = Laplacian([x, y])(u(x, y)) ~ -1
 @named pdesys = PDESystem([eq], [u(Γ) ~ 0 for Γ in boundarypieces(Ω)], [(x, y) ∈ Ω], [x, y], [u(x, y)], [])
 prob = discretize(pdesys, FEMDiscretization(Ω))
 sol = solve(prob, NewtonRaphson())

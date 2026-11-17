@@ -13,15 +13,16 @@ drag and lift functional (`forces.jl`) and a hand-written Ferrite solver used as
 ```julia
 @parameters ν Umax
 @variables x y u(..) v(..) p(..)
-Dt, Dx, Dy = Differential(t), Differential(x), Differential(y)
+Dt = Differential(t)
+grad = Grad([x, y])      # ∇; `using LinearAlgebra: ⋅` for the dot
 
 Ω = MeshDomain(dfg_channel_grid(; h = 0.04, hc = 0.0025))     # Gmsh, all quadrilaterals, curved cylinder
 Γin, Γout, Γwall, Γcyl = boundarypiece.(Ω, (:inlet, :outlet, :walls, :cylinder))
 U, V, P = u(t, x, y), v(t, x, y), p(t, x, y)
 eqs = [
-    Dt(U) ~ Dx(ν * Dx(U)) + Dy(ν * Dy(U)) - U * Dx(U) - V * Dy(U) - Dx(P),
-    Dt(V) ~ Dx(ν * Dx(V)) + Dy(ν * Dy(V)) - U * Dx(V) - V * Dy(V) - Dy(P),
-    0 ~ Dx(U) + Dy(V),
+    Dt(U) ~ grad ⋅ (ν * grad(U)) - ([U, V] ⋅ grad)(U) - grad(P)[1],
+    Dt(V) ~ grad ⋅ (ν * grad(V)) - ([U, V] ⋅ grad)(V) - grad(P)[2],
+    0 ~ grad ⋅ [U, V],
 ]
 inflow = (1 - exp(-t^2)) * 4Umax * y * (0.41 - y) / 0.41^2
 bcs = [

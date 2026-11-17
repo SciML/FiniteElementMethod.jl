@@ -146,6 +146,22 @@ same_operators(a, b) = a.M ≈ b.M && a.K ≈ b.K && a.F ≈ b.F && a.u0 ≈ b.u
         end
     end
 
+    @testset "Navier–Stokes in the operator form lowers to exactly the hand-written equations" begin
+        @parameters ν
+        U, V, P = u(t, x, y), v(t, x, y), p(t, x, y)
+        lazy = [
+            Dt(U) ~ grad ⋅ (ν * grad(U)) - ([U, V] ⋅ grad)(U) - grad(P)[1],
+            Dt(V) ~ grad ⋅ (ν * grad(V)) - ([U, V] ⋅ grad)(V) - grad(P)[2],
+            0 ~ grad ⋅ [U, V],
+        ]
+        hand = [
+            Dt(U) ~ Dx(ν * Dx(U)) + Dy(ν * Dy(U)) - U * Dx(U) - V * Dy(U) - Dx(P),
+            Dt(V) ~ Dx(ν * Dx(V)) + Dy(ν * Dy(V)) - U * Dx(V) - V * Dy(V) - Dy(P),
+            0 ~ Dx(U) + Dy(V),
+        ]
+        @test all(isequal.(lower_vector_ops(lazy), hand))
+    end
+
     @testset "an operator in a variable that is not an independent variable of the system is an error" begin
         Ω = square()
         @named pdesys = PDESystem([0 ~ Laplacian([x, z])(u(x, y))], Equation[], [(x, y) ∈ Ω], [x, y], [u(x, y)], [])

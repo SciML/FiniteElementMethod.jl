@@ -51,18 +51,20 @@ edge. A mesh stored in a file is read the same way, with `FerriteGmsh.togrid("pl
 
 ```julia
 using FiniteElementMethod, ModelingToolkit, DomainSets, OrdinaryDiffEqBDF
+using LinearAlgebra: ⋅
 using ModelingToolkit: t_nounits as t
 
 @parameters k α
 @variables x y u(..)
-Dt, Dx, Dy = Differential(t), Differential(x), Differential(y)
+Dt = Differential(t)
+grad = Grad([x, y])
 
 grid = lshape_grid()
 Ω = MeshDomain(grid)
 Γ_in, Γ_wall, Γ_out = boundarypiece.(Ω, (:inlet, :wall, :outlet))
 Dn_wall, Dn_out = NormalDerivative(Γ_wall), NormalDerivative(Γ_out)
 
-eqs = [Dt(u(t, x, y)) ~ Dx(k * Dx(u(t, x, y))) + Dy(k * Dy(u(t, x, y))) + 1]
+eqs = [Dt(u(t, x, y)) ~ grad ⋅ (k * grad(u(t, x, y))) + 1]
 bcs = [
     u(t, Γ_in) ~ sin(t),
     Dn_wall(u(t, Γ_wall)) ~ 0,
@@ -86,6 +88,14 @@ Line by line:
     is an operator like `Differential(x)`.
   - The equation is written in strong form, as for MethodOfLines. The package derives the
     Galerkin weak form from it; you do not write test functions or integrals.
+  - `grad = Grad([x, y])` is the gradient operator of Symbolics, so `grad ⋅ (k * grad(u))` is the
+    divergence form `∇⋅(k∇u)`. `Laplacian([x, y])(u)` is `Δu`, `grad ⋅ [u, v]` a divergence,
+    `Curl([x, y])([u, v])` the scalar curl in 2D and `grad × E` (`using LinearAlgebra: ×`) the curl
+    in 3D; a vector equation such as `grad × (grad × E) + E ~ f` stands for one equation per
+    component. The operators are rewritten to `Differential`s before the equation is analysed, with
+    no product rule applied, so each form has the same discrete system as its expansion
+    `Dx(k * Dx(u)) + Dy(k * Dy(u))`, which stays supported. The variables of the operator must be
+    independent variables of the `PDESystem`.
   - `u(t, Γ_in) ~ sin(t)` is a time-dependent Dirichlet condition. `u(t, Γ)` is the trace of `u`
     on `Γ`: the piece replaces the spatial arguments and time stays in its declared position
     (see [Trace syntax](@ref)).
