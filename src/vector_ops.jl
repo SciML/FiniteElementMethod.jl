@@ -92,3 +92,20 @@ end
 # An equation key of `ibp` or `pairing`, lowered like the equations it names; other keys are left as they are.
 _lowered_keys(key::Equation) = lower_vector_ops([key])
 _lowered_keys(key) = [key]
+
+# The options of `ibp` or `pairing` with their equation keys lowered. Two keys that lower to one equation, a lazy
+# equation and its expansion, must carry the same value (`same`), or one of them would win by dictionary order.
+function _lowered_options(options, same, name)
+    lowered = Dict{Any, Any}()
+    origin = Dict{Any, Any}()
+    for (key, value) in options, k in _lowered_keys(key)
+        if haskey(lowered, k)
+            same(lowered[k], value) || throw(
+                ArgumentError("the $name keys $(origin[k]) and $key are the same equation once the vector operators are rewritten, but their values $(lowered[k]) and $value differ")
+            )
+        else
+            lowered[k], origin[k] = value, key
+        end
+    end
+    return lowered
+end

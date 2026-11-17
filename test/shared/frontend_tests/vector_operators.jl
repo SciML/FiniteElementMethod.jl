@@ -146,6 +146,29 @@ same_operators(a, b) = a.M ≈ b.M && a.K ≈ b.K && a.F ≈ b.F && a.u0 ≈ b.u
         end
     end
 
+    @testset "a lazy equation and its expansion as two option keys must agree" begin
+        U, V = u(x, y), v(x, y)
+        lazy = 0 ~ Laplacian(X)(U)
+        hand = 0 ~ Dx(Dx(U)) + Dy(Dy(U))
+        other = 0 ~ Laplacian(X)(V) + U
+        function system(options)
+            Ω = square()
+            bcs = [field(dv)(Γ) ~ 0 for dv in (U, V) for Γ in sides(Ω)]
+            @named pdesys = PDESystem([lazy, other], bcs, [(x, y) ∈ Ω], [x, y], [U, V], [])
+            return operators(pdesys, FEMDiscretization(Ω; options...))
+        end
+        agreeing = system((; ibp = Dict(lazy => Weighted(1 + x), hand => Weighted(1 + x)), pairing = Dict(lazy => u, hand => u)))
+        @test same_operators(agreeing, system((; ibp = Dict(hand => Weighted(1 + x)), pairing = Dict(hand => u))))
+        message(options) = try
+            system(options)
+            ""
+        catch err
+            sprint(showerror, err)
+        end
+        @test occursin("ibp keys", message((; ibp = Dict(lazy => Weighted(1 + x), hand => Weighted(1 + y)))))
+        @test occursin("pairing keys", message((; pairing = Dict(lazy => u, hand => v))))
+    end
+
     @testset "Navier–Stokes in the operator form lowers to exactly the hand-written equations" begin
         @parameters ν
         U, V, P = u(t, x, y), v(t, x, y), p(t, x, y)
