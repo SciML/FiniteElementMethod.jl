@@ -70,6 +70,12 @@ end
 # A scalar expression with reductions over the lowered component arrays (`sum(∇u)`, `∇u ⋅ ∇u`) expanded to scalar arithmetic,
 # which is all the strong-form analysis reads.
 function _scalarized(ex)
+    ex = _unwrap_arg(ex)
+    # `scalarize` does not look inside a `Differential`, so each one gets its argument scalarized first.
+    derivatives = Any[]
+    _walk(e -> SymbolicUtils.iscall(e) && SymbolicUtils.operation(e) isa Differential && push!(derivatives, e), ex)
+    rules = Dict(d => SymbolicUtils.operation(d)(_scalarized(only(SymbolicUtils.arguments(d)))) for d in derivatives)
+    isempty(rules) || (ex = _unwrap_arg(substitute(ex, rules; filterer = Returns(true))))
     scalar = _unwrap_arg(Symbolics.scalarize(Symbolics.wrap(ex)))
     isequal(scalar, ex) || return scalar
     _check_scalar(ex, ex)
@@ -99,8 +105,9 @@ lower_vector_ops(eqs) = reduce(vcat, map(_scalar_equations, _flat_equations(eqs)
 # reaches PDEBase untouched.
 function lower_vector_ops(pdesys::ModelingToolkit.PDESystem)
     eqs = _flat_equations([pdesys.eqs; pdesys.bcs])
+    flat = all(e -> e isa Equation, pdesys.eqs) && all(e -> e isa Equation, pdesys.bcs)
     ops = reduce(vcat, [_vector_ops(e.lhs) for e in eqs]; init = []) ∪ reduce(vcat, [_vector_ops(e.rhs) for e in eqs]; init = [])
-    isempty(ops) && !any(e -> _is_array_valued(e.lhs) || _is_array_valued(e.rhs), eqs) && return pdesys
+    isempty(ops) && flat && !any(e -> _is_array_valued(e.lhs) || _is_array_valued(e.rhs), eqs) && return pdesys
     # Symbolics differentiates by any variable without complaint, which would leave a stray `Differential` for PDEBase.
     for op in ops, x in op.vars
         any(iv -> isequal(unwrap(iv), x), pdesys.ivs) ||

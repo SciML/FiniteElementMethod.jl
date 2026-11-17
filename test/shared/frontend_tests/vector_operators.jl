@@ -250,11 +250,26 @@ same_operators(a, b) = a.M ≈ b.M && a.K ≈ b.K && a.F ≈ b.F && a.u0 ≈ b.u
         # |∇u|² in a nonlinear diffusion coefficient reaches the discretization as the hand-written equation.
         nonlinear(c) = discretize(steady_system([0 ~ grad ⋅ ((1 + c) * grad(U)) - 1], [U], 0.0)...)
         @test nonlinear(U^2 + g(U) ⋅ g(U)) isa SciMLBase.NonlinearProblem
+        @test isequal(lowered(Dx(sum(g(U)))), Dx(Dx(U) + Dy(U)))
+        @test isequal(lowered(Dx(Dy(sum(g(U)) * U))), Dx(Dy((Dx(U) + Dy(U)) * U)))
+        poisson_plus(extra) = discretize(steady_system([0 ~ Dx(Dx(U)) + Dy(Dy(U)) + extra - 1], [U], 0.0)...)
+        @test poisson_plus(Dx(sum(g(U)))) isa SciMLBase.NonlinearProblem
         matrix = [Dx(U) Dy(U); Dx(V) Dy(V)] ~ fill(x, 2, 2)
         eqs = lower_vector_ops([matrix])
         @test length(eqs) == 4
         @test isequal(eqs[2].lhs, Dx(V)) && isequal(eqs[3].lhs, Dy(U))   # column-major
         @test length(FiniteElementMethod._lowering_spans([matrix, 0 ~ Dx(U)])[1]) == 4
+    end
+
+    @testset "a matrix of scalar equations in a PDESystem is flattened" begin
+        U, V, W, Z = u(x, y), v(x, y), w(x, y), p(x, y)
+        Ω = square()
+        bcs = [field(dv)(Γ) ~ 0 for dv in (U, V, W, Z) for Γ in sides(Ω)]
+        matrix = [Dx(Dx(U)) + Dy(Dy(U)) Dx(Dx(V)) + Dy(Dy(V)); Dx(Dx(W)) + Dy(Dy(W)) Dx(Dx(Z)) + Dy(Dy(Z))] .~ fill(x, 2, 2)
+        @named pdesys = PDESystem(matrix, bcs, [(x, y) ∈ Ω], [x, y], [U, V, W, Z], [])
+        @test lower_vector_ops(pdesys) !== pdesys
+        @test length(lower_vector_ops(pdesys).eqs) == 4
+        @test operators(pdesys, FEMDiscretization(Ω)).K isa AbstractMatrix
     end
 
     @testset "Navier–Stokes in the operator form lowers to exactly the hand-written equations" begin
