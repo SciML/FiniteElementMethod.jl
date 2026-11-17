@@ -169,6 +169,51 @@ same_operators(a, b) = a.M ≈ b.M && a.K ≈ b.K && a.F ≈ b.F && a.u0 ≈ b.u
         @test occursin("pairing keys", message((; pairing = Dict(lazy => u, hand => v))))
     end
 
+    @testset "vector equations: component counts must match, integer ibp keys follow the split, eager ~ splits" begin
+        U, V, W = u(x, y), v(x, y), w(x, y)
+        Δ = Laplacian{true}(X)
+        err = try
+            lower_vector_ops([[Dx(U), Dy(U)] ~ [x]])
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError   # Symbolics or the splitter, either way no component is dropped silently
+        g = Grad(X)
+        err = try
+            lower_vector_ops([[g(U)[1], g(U)[2]] ~ [x]])
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+
+        # [ΔU, ΔV] ~ [x, y] is two equations, so integer key 2 is the third equation's index in the input but the
+        # second input equation, W's; key 1 names both components.
+        lazy = [[Laplacian(X)(U), Laplacian(X)(V)] ~ [x, y], Laplacian(X)(W) ~ 1]
+        hand = [Dx(Dx(U)) + Dy(Dy(U)) ~ x, Dx(Dx(V)) + Dy(Dy(V)) ~ y, Dx(Dx(W)) + Dy(Dy(W)) ~ 1]
+        function system(eqs, ibp)
+            Ω = square()
+            bcs = [field(dv)(Γ) ~ 0 for dv in (U, V, W) for Γ in sides(Ω)]
+            @named pdesys = PDESystem(eqs, bcs, [(x, y) ∈ Ω], [x, y], [U, V, W], [])
+            return operators(pdesys, FEMDiscretization(Ω; ibp))
+        end
+        @test same_operators(system(lazy, Dict(2 => Weighted(1 + x))), system(hand, Dict(3 => Weighted(1 + x))))
+        @test same_operators(system(lazy, Dict(1 => Weighted(1 + x))), system(hand, Dict(1 => Weighted(1 + x), 2 => Weighted(1 + x))))
+
+        E = [E1(x, y, z), E2(x, y, z), E3(x, y, z)]
+        X3 = [x, y, z]
+        Ω3 = MeshDomain(generate_grid(Tetrahedron, (1, 1, 1), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0)))
+        faces3 = boundarypiece.(Ω3, (:left, :right, :bottom, :top, :front, :back))
+        function system3(eq)
+            bcs = [field(dv)(Γ) ~ 0 for dv in E for Γ in faces3]
+            @named pdesys = PDESystem(eq, bcs, [(x, y, z) ∈ Ω3], [x, y, z], E, [])
+            return operators(pdesys, FEMDiscretization(Ω3))
+        end
+        rhs = [x, y, z]
+        @test same_operators(system3(Curl{true}(X3)(Curl{true}(X3)(E)) + E ~ rhs), system3(Curl{true}(X3)(Curl{true}(X3)(E)) + E .~ rhs))
+    end
+
     @testset "Navier–Stokes in the operator form lowers to exactly the hand-written equations" begin
         @parameters ν
         U, V, P = u(t, x, y), v(t, x, y), p(t, x, y)

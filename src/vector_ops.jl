@@ -57,11 +57,14 @@ end
 _is_array_valued(ex) = !isempty(SymbolicUtils.shape(unwrap(ex)))
 
 # The scalar equations that `eq` stands for: itself, or one per component when its sides are vectors (a 3D curl
-# equation; Symbolics requires both sides to have the same shape).
+# equation, written with a lazy or an eager operator). The sides must have the same number of components.
 function _scalar_equations(eq::Equation)
-    (_has_vector_op(eq.lhs) || _has_vector_op(eq.rhs)) || return [eq]
+    lazy = _has_vector_op(eq.lhs) || _has_vector_op(eq.rhs)
+    lazy || _is_array_valued(eq.lhs) || _is_array_valued(eq.rhs) || return [eq]
     lhs, rhs = _lower_vector_op(eq.lhs), _lower_vector_op(eq.rhs)
-    _is_array_valued(lhs) || return [Symbolics.wrap(lhs) ~ Symbolics.wrap(rhs)]
+    _is_array_valued(lhs) || _is_array_valued(rhs) || return [Symbolics.wrap(lhs) ~ Symbolics.wrap(rhs)]
+    (_is_array_valued(lhs) && _is_array_valued(rhs) && length(_components(lhs)) == length(_components(rhs))) ||
+        throw(ArgumentError("equation $eq has sides with different numbers of components, so it cannot be split into scalar equations"))
     return Equation[a ~ b for (a, b) in zip(_components(lhs), _components(rhs))]
 end
 
@@ -77,7 +80,7 @@ lower_vector_ops(eqs) = reduce(vcat, map(_scalar_equations, _flat_equations(eqs)
 function lower_vector_ops(pdesys::ModelingToolkit.PDESystem)
     eqs = _flat_equations([pdesys.eqs; pdesys.bcs])
     ops = reduce(vcat, [_vector_ops(e.lhs) for e in eqs]; init = []) ∪ reduce(vcat, [_vector_ops(e.rhs) for e in eqs]; init = [])
-    isempty(ops) && return pdesys
+    isempty(ops) && !any(e -> _is_array_valued(e.lhs) || _is_array_valued(e.rhs), eqs) && return pdesys
     # Symbolics differentiates by any variable without complaint, which would leave a stray `Differential` for PDEBase.
     for op in ops, x in op.vars
         any(iv -> isequal(unwrap(iv), x), pdesys.ivs) ||
@@ -89,16 +92,28 @@ function lower_vector_ops(pdesys::ModelingToolkit.PDESystem)
     )
 end
 
-# An equation key of `ibp` or `pairing`, lowered like the equations it names; other keys are left as they are.
-_lowered_keys(key::Equation) = lower_vector_ops([key])
-_lowered_keys(key) = [key]
+# An equation key of `ibp` or `pairing`, lowered like the equations it names; other keys are left as they are. An
+# integer key indexes the flattened input equations, so it names every component of a vector equation: `spans[i]` is
+# the range of lowered equations that input equation `i` became.
+_lowered_keys(key::Equation, spans) = lower_vector_ops([key])
+_lowered_keys(key::Integer, spans) = spans === nothing || !(key in eachindex(spans)) ? [key] : collect(spans[key])
+_lowered_keys(key, spans) = [key]
+
+function _lowering_spans(eqs)
+    stop = 0
+    return map(_flat_equations(eqs)) do eq
+        start = stop + 1
+        stop += length(_scalar_equations(eq))
+        start:stop
+    end
+end
 
 # The options of `ibp` or `pairing` with their equation keys lowered. Two keys that lower to one equation, a lazy
 # equation and its expansion, must carry the same value (`same`), or one of them would win by dictionary order.
-function _lowered_options(options, same, name)
+function _lowered_options(options, same, name, spans = nothing)
     lowered = Dict{Any, Any}()
     origin = Dict{Any, Any}()
-    for (key, value) in options, k in _lowered_keys(key)
+    for (key, value) in options, k in _lowered_keys(key, spans)
         if haskey(lowered, k)
             same(lowered[k], value) || throw(
                 ArgumentError("the $name keys $(origin[k]) and $key are the same equation once the vector operators are rewritten, but their values $(lowered[k]) and $value differ")
@@ -109,3 +124,6 @@ function _lowered_options(options, same, name)
     end
     return lowered
 end
+
+# Two integration-by-parts policies are the same when they are of one type and, for `Weighted`, have equal weights.
+_same_policy(a, b) = typeof(a) == typeof(b) && (!(a isa Weighted) || isequal(a.w, b.w))
