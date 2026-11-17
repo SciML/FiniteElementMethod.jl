@@ -310,6 +310,17 @@ same_operators(a, b) = a.M ≈ b.M && a.K ≈ b.K && a.F ≈ b.F && a.u0 ≈ b.u
         @test same_operators(steady_operators([steady], [U], 0.0), steady_operators([hand], [U], 0.0))
     end
 
+    @testset "nested reductions reach a fixpoint; an empty shaped bcs container is harmless" begin
+        U = u(x, y)
+        g = Grad(X)
+        lowered = only(lower_vector_ops([0 ~ Laplacian(X)(U) + sum(g(U) .+ Dx(sum(g(U)))) - 1])).rhs
+        @test isequal(lowered, Dx(Dx(U)) + Dy(Dy(U)) + Dx(U) + Dy(U) + 2 * Dx(Dx(U) + Dy(U)) - 1) ||
+            isequal(Symbolics.expand(Symbolics.wrap(lowered - (Dx(Dx(U)) + Dy(Dy(U)) + Dx(U) + Dy(U) + 2 * Dx(Dx(U) + Dy(U)) - 1))), 0)
+        Ω = square()
+        @named pdesys = PDESystem([Laplacian(X)(U) ~ 1], Matrix{Equation}(undef, 0, 2), [(x, y) ∈ Ω], [x, y], [U], [])
+        @test operators(pdesys, FEMDiscretization(Ω; boundary_check = :off)).K isa AbstractMatrix
+    end
+
     @testset "Navier–Stokes in the operator form lowers to exactly the hand-written equations" begin
         @parameters ν
         U, V, P = u(t, x, y), v(t, x, y), p(t, x, y)

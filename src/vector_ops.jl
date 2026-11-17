@@ -100,8 +100,11 @@ end
 # offset-indexed field elsewhere in the expression; an array term that remains is an error.
 function _scalarized(ex)
     ex = _unwrap_arg(ex)
-    reads = _array_reads!(Any[], ex)
-    if !isempty(reads)
+    # An outer read can hold an inner one that only shows once the outer is scalarized, so the pass repeats; each pass
+    # removes an array operation, so the cap is only a guard.
+    for _ in 1:100
+        reads = _array_reads!(Any[], ex)
+        isempty(reads) && break
         rules = Dict(r => _unwrap_arg(Symbolics.scalarize(Symbolics.wrap(r))) for r in reads)
         ex = _unwrap_arg(substitute(ex, rules; filterer = Returns(true)))
     end
@@ -136,7 +139,7 @@ lower_vector_ops(eqs) = reduce(vcat, map(_scalar_equations, _flat_equations(eqs)
 # The `pdesys` itself when no equation or condition uses a lazy operator, so a system in the `Differential` form
 # reaches PDEBase untouched.
 function lower_vector_ops(pdesys::ModelingToolkit.PDESystem)
-    eqs = _flat_equations([pdesys.eqs; pdesys.bcs])
+    eqs = vcat(_flat_equations(pdesys.eqs), _flat_equations(pdesys.bcs))
     flat = all(e -> e isa Equation, pdesys.eqs) && all(e -> e isa Equation, pdesys.bcs)
     ops = reduce(vcat, [_vector_ops(e.lhs) for e in eqs]; init = []) ∪ reduce(vcat, [_vector_ops(e.rhs) for e in eqs]; init = [])
     isempty(ops) && flat && !any(e -> _is_array_valued(e.lhs) || _is_array_valued(e.rhs), eqs) && return pdesys
