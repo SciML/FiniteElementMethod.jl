@@ -53,6 +53,7 @@ without an entry get `Lagrange{RefShape, 1}()`. All fields share one quadrature 
 a quadratic velocity with a linear pressure:
 
 ```julia
+using LinearAlgebra: ⋅
 @variables x y u1(..) u2(..) p(..)
 grad = Grad([x, y])
 Δ = Laplacian([x, y])

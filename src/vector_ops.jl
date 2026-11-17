@@ -63,8 +63,8 @@ function _scalar_equations(eq::Equation)
     lazy || _is_array_valued(eq.lhs) || _is_array_valued(eq.rhs) || return [eq]
     lhs, rhs = _lower_vector_op(eq.lhs), _lower_vector_op(eq.rhs)
     _is_array_valued(lhs) || _is_array_valued(rhs) || return [Symbolics.wrap(lhs) ~ Symbolics.wrap(rhs)]
-    (_is_array_valued(lhs) && _is_array_valued(rhs) && length(_components(lhs)) == length(_components(rhs))) ||
-        throw(ArgumentError("equation $eq has sides with different numbers of components, so it cannot be split into scalar equations"))
+    (_is_array_valued(lhs) && _is_array_valued(rhs) && size(_components(lhs)) == size(_components(rhs))) ||
+        throw(ArgumentError("equation $eq has sides with different shapes, so it cannot be split into scalar equations"))
     return Equation[a ~ b for (a, b) in zip(_components(lhs), _components(rhs))]
 end
 
@@ -98,7 +98,7 @@ end
 _lowered_keys(key::Equation, spans) = lower_vector_ops([key])
 function _lowered_keys(key::Integer, spans)
     spans === nothing && return [key]
-    key in eachindex(spans) || throw(ArgumentError("the integer key $key is not the index of an equation of the system, which has $(length(spans))"))
+    (key isa Bool || !(key in eachindex(spans))) && throw(ArgumentError("the integer key $key is not the index of an equation of the system, which has $(length(spans))"))
     return collect(spans[key])
 end
 _lowered_keys(key, spans) = [key]

@@ -201,6 +201,21 @@ same_operators(a, b) = a.M ≈ b.M && a.K ≈ b.K && a.F ≈ b.F && a.u0 ≈ b.u
         @test same_operators(system(lazy, Dict(2 => Weighted(1 + x))), system(hand, Dict(3 => Weighted(1 + x))))
         @test same_operators(system(lazy, Dict(1 => Weighted(1 + x))), system(hand, Dict(1 => Weighted(1 + x), 2 => Weighted(1 + x))))
 
+        err = try
+            lower_vector_ops([[Dx(U) Dy(U)] ~ [x, y]])
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError   # a 1×2 matrix and a 2-vector have two elements each but are not the same shape
+        err = try
+            system(lazy, Dict(true => Weighted(1 + x)))
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError && occursin("integer key true", err.msg)
+
         # There are two input equations, so 3 (the third lowered equation) and 0 name none.
         for key in (3, 0, -1)
             err = try

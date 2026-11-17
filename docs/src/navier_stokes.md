@@ -11,10 +11,11 @@ drag and lift functional (`forces.jl`) and a hand-written Ferrite solver used as
 (`reference.jl`) sit next to it. The core is ordinary strong-form ModelingToolkit:
 
 ```julia
+using LinearAlgebra: ⋅
 @parameters ν Umax
 @variables x y u(..) v(..) p(..)
 Dt = Differential(t)
-grad = Grad([x, y])      # ∇; `using LinearAlgebra: ⋅` for the dot
+grad = Grad([x, y])      # ∇
 
 Ω = MeshDomain(dfg_channel_grid(; h = 0.04, hc = 0.0025))     # Gmsh, all quadrilaterals, curved cylinder
 Γin, Γout, Γwall, Γcyl = boundarypiece.(Ω, (:inlet, :outlet, :walls, :cylinder))
