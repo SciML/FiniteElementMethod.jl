@@ -57,10 +57,8 @@ end
 _flat_equations(eq::Equation) = [eq]
 _flat_equations(eqs) = reduce(vcat, map(_flat_equations, eqs); init = Equation[])
 
-"""
-The equations of `eqs` with the lazy vector operators rewritten to `Differential`s, vector equations split into
-components. Anything else is returned as it is.
-"""
+# The equations of `eqs` with the lazy vector operators rewritten to `Differential`s, vector equations split into
+# components. Anything else is returned as it is.
 lower_vector_ops(eqs) = reduce(vcat, map(_scalar_equations, _flat_equations(eqs)); init = Equation[])
 
 # The `pdesys` itself when no equation or condition uses a lazy operator, so a system in the `Differential` form
