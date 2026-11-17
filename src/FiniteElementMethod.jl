@@ -45,6 +45,7 @@ export Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexa
 using PDEBase: StrongForm, MeshDomain, Region, boundarypiece, boundarypieces, NormalDerivative
 using PDEBase.StrongForm: Weighted
 include("discretization.jl")
+include("vector_ops.jl")
 include("frontend.jl")
 _is_normal_derivative(op) = op isa NormalDerivative
 export FEMDiscretization, Galerkin, SUPG, add_boundary_pieces!, ferrite_grid
