@@ -297,7 +297,11 @@ function _recognise_pec(bcs, fields, pvals, ctx, domain)
         end
         unique!(pieces)
         length(pieces) == 1 || throw(
-            ArgumentError("with omega every condition must be a boundary condition on one piece, and initial conditions are not used; got $eq")
+            ArgumentError(
+                length(pieces) == 2 ?
+                    "$eq ties the traces on $(pieces[1].name) and $(pieces[2].name): periodic conditions are not supported for the Nédélec (edge element) space of the frequency-domain Maxwell path, whose dofs need orientation signs across the seam; $pform" :
+                    "with omega every condition must be a boundary condition on one piece, and initial conditions are not used; got $eq"
+            )
         )
         Γ = only(pieces)
         Γ.parent === domain || throw(ArgumentError("the boundary piece $(Γ.name) of $eq is not a piece of the FEMDiscretization's MeshDomain"))
