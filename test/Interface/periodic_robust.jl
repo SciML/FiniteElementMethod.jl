@@ -2,6 +2,7 @@
 # along the periodic axis, and `operators` when every periodic node is prescribed.
 using FiniteElementMethod, ModelingToolkit, DomainSets, NonlinearSolveFirstOrder, Test
 using FiniteElementMethod: FEMSpace
+using ModelingToolkit: t_nounits as t
 using Ferrite: Ferrite, Lagrange, RefQuadrilateral, Grid, Node, Tetrahedron, Hexahedron, Quadrilateral, generate_grid, addfacetset!, Vec
 using LinearAlgebra: det
 
@@ -75,4 +76,34 @@ end
     addfacetset!(square, "diagonal_a", X -> (X[1] == 0.0 && X[2] <= 0.5) || (X[1] == 1.0 && X[2] >= 0.5))
     addfacetset!(square, "diagonal_b", X -> (X[1] == 0.0 && X[2] >= 0.5) || (X[1] == 1.0 && X[2] <= 0.5))
     @test_throws "periodic pieces Γ_diagonal_a and Γ_diagonal_b of u coincide" FEMSpace(square, [:u => Lagrange{RefQuadrilateral, 1}()]; periodic = [(:u, "diagonal_a", "diagonal_b")])
+end
+
+# Shows:  the scatter of a mirror row of the nonlinear Jacobian into its master row is inferred and allocates nothing, though
+#         `FEMNonlinear` stores its ties untyped.
+@testset "the periodic Jacobian scatter is type-stable and allocation-free" begin
+    out, vals = zeros(6), collect(1.0:6.0)
+    from, to = [1, 3, 5], [2, 4, 6]
+    @inferred FiniteElementMethod.scatter_ties!(out, vals, from, to)
+    @test out == [0.0, 1.0, 0.0, 3.0, 0.0, 5.0]
+    FiniteElementMethod.scatter_ties!(out, vals, from, to)
+    @test (@allocated FiniteElementMethod.scatter_ties!(out, vals, from, to)) == 0
+end
+
+# PDE:    u_t = u_xx + u_yy on a single Q1 quadrilateral
+# BCs:    left and right periodic, u = 0 on bottom and top, so all four nodes are prescribed and the solver's tie list is empty
+# Shows:  `operators` still returns the identification: P has one column per class and `tied` lists the non-master members.
+@testset "operators with every periodic node prescribed" begin
+    Ω = MeshDomain(periodic_square((0.0, 0.0), (1.0, 1.0)))
+    left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+    Dt = Differential(t)
+    @named pdesys = PDESystem(
+        [Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y)))],
+        [u(t, left) ~ u(t, right), u(t, bottom) ~ 0, u(t, top) ~ 0, u(0, x, y) ~ 0], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], []
+    )
+    ops = FiniteElementMethod.operators(pdesys, FEMDiscretization(Ω, t))
+    @test sort(ops.prescribed) == 1:4
+    @test size(ops.P) == (4, 2)
+    @test length(ops.tied) == 2 && issorted(ops.tied)
+    @test all(sum(ops.P; dims = 2) .== 1)
+    @test !any(d -> d in ops.tied, [argmax(Vector(ops.P[:, c])) for c in 1:2])
 end
