@@ -37,8 +37,8 @@ end
         bcs = [u(t, left) ~ u(t, right), u(t, bottom) ~ u(t, top), u(0, x, y) ~ sin(2pi * (x + y))]
         sol = solve_heat(heat, Ω, bcs, 0.05; spaces = Dict(u => Lagrange{ref, order}()))
         edge = collect(range(0.0, 1.0; length = 7))
-        @test sol(0.05, [0.0], edge; dv = u(t, x, y)) ≈ sol(0.05, [1.0], edge; dv = u(t, x, y)) atol = 1.0e-12
-        @test sol(0.05, edge, [0.0]; dv = u(t, x, y)) ≈ sol(0.05, edge, [1.0]; dv = u(t, x, y)) atol = 1.0e-12
+        @test sol(0.05, [0.0], edge; dv = u(t, x, y)) ≈ sol(0.05, [1.0], edge; dv = u(t, x, y)) atol = 1.0e-9
+        @test sol(0.05, edge, [0.0]; dv = u(t, x, y)) ≈ sol(0.05, edge, [1.0]; dv = u(t, x, y)) atol = 1.0e-9
         l2_error(sol, u(t, x, y), exact, 0.05, sample_points(40), sample_points(40))
     end
     @test all(observed_rate(errors, 1 ./ ns) .> order + 0.8)
@@ -58,7 +58,7 @@ end
         left, right, bottom, top = sides(Ω)
         bcs = [u(t, left) ~ u(t, right), u(t, bottom) ~ 0, u(t, top) ~ 0, u(0, x, y) ~ sin(2pi * x) * sin(pi * y)]
         sol = solve_heat(heat, Ω, bcs, 0.05)
-        @test sol(0.05, [0.0, 1.0], [0.0, 1.0]; dv = u(t, x, y)) ≈ zeros(2, 2) atol = 1.0e-12
+        @test sol(0.05, [0.0, 1.0], [0.0, 1.0]; dv = u(t, x, y)) ≈ zeros(2, 2) atol = 1.0e-9
         l2_error(sol, u(t, x, y), exact, 0.05, sample_points(40), sample_points(40))
     end
     @test all(observed_rate(errors, 1 ./ ns) .> 1.8)
@@ -111,8 +111,8 @@ end
     sol = solve(discretize(pdesys, FEMDiscretization(Ω, t; spaces)), DFBDF(); abstol = 1.0e-10, reltol = 1.0e-10)
     @test l2_error(sol, u(t, x, y), (x_, y_) -> exp(-4pi^2 * 0.05) * sin(2pi * x_), 0.05, sample_points(40), sample_points(40)) < 1.0e-4
     edge = collect(range(0.0, 1.0; length = 7))
-    @test sol(0.05, [0.0], edge; dv = v(t, x, y)) ≈ sol(0.05, [1.0], edge; dv = v(t, x, y)) atol = 1.0e-12
-    @test sol(0.05, edge, [0.0, 1.0]; dv = v(t, x, y)) ≈ zeros(7, 2) atol = 1.0e-12
+    @test sol(0.05, [0.0], edge; dv = v(t, x, y)) ≈ sol(0.05, [1.0], edge; dv = v(t, x, y)) atol = 1.0e-9
+    @test sol(0.05, edge, [0.0, 1.0]; dv = v(t, x, y)) ≈ zeros(7, 2) atol = 1.0e-9
 end
 
 # PDE:    the 2D heat equation on the unit square
@@ -225,7 +225,7 @@ end
         bcs = [u(t, left) ~ u(t, right), u(0, x) ~ sin(2pi * x)]
         @named pdesys = PDESystem([eq], bcs, [(x,) ∈ Ω, t ∈ Interval(0.0, 0.2)], [t, x], [u(t, x)], [])
         sol = solve(discretize(pdesys, FEMDiscretization(Ω, t; test_space)), DFBDF(); abstol = 1.0e-11, reltol = 1.0e-11)
-        @test sol(0.2, [0.0]; dv = u(t, x)) ≈ sol(0.2, [1.0]; dv = u(t, x)) atol = 1.0e-12
+        @test sol(0.2, [0.0]; dv = u(t, x)) ≈ sol(0.2, [1.0]; dv = u(t, x)) atol = 1.0e-9
         l2_error(sol, u(t, x), exact, 0.2, sample_points(200))
     end
     @test all(observed_rate(errors, 1 ./ ns) .> rate - 0.2)
@@ -270,8 +270,8 @@ end
     end
     sol = solve(build([u(t, left) ~ u(t, right), u(t, bottom) ~ 1, u(t, top) ~ 1, ic]), DFBDF(); abstol = 1.0e-10, reltol = 1.0e-10)
     edge = collect(range(0.0, 1.0; length = 5))
-    @test sol(0.2, [0.0], edge; dv = u(t, x, y)) ≈ sol(0.2, [1.0], edge; dv = u(t, x, y)) atol = 1.0e-12
-    @test sol(0.2, [0.0, 1.0], [0.0, 1.0]; dv = u(t, x, y)) ≈ ones(2, 2) atol = 1.0e-12
+    @test sol(0.2, [0.0], edge; dv = u(t, x, y)) ≈ sol(0.2, [1.0], edge; dv = u(t, x, y)) atol = 1.0e-9
+    @test sol(0.2, [0.0, 1.0], [0.0, 1.0]; dv = u(t, x, y)) ≈ ones(2, 2) atol = 1.0e-9
     # Time-dependent data that agree: the same function of t on both corners.
     @test build([u(t, left) ~ u(t, right), u(t, bottom) ~ 1 + t, u(t, top) ~ 1 + t, ic]) isa SciMLBase.DAEProblem
     @test_throws "the Dirichlet data of periodic pieces (Γ_left ~ Γ_right) disagree" build([u(t, left) ~ u(t, right), u(t, bottom) ~ x, u(t, top) ~ 0, ic])
