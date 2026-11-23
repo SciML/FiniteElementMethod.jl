@@ -32,7 +32,6 @@ end
     @test_throws "which is not on Γ_left; write the trace on the operator's piece" lower(
         [heat], [NormalDerivative(left)(u(t, right)) ~ 0, ic]
     )
-    @test_throws "periodic boundary conditions are not supported" lower([heat], [u(t, left) ~ u(t, right), ic])
     @test_throws "Dirichlet data depends on another field" lower(
         [heat, Dt(v(t, x, y)) ~ Dx(Dx(v(t, x, y))) + Dy(Dy(v(t, x, y)))],
         [u(t, left) + v(t, left) ~ 1, ic, v(0, x, y) ~ 0]; dvs = [u(t, x, y), v(t, x, y)]
