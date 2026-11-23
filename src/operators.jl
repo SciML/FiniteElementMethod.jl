@@ -1,10 +1,10 @@
 # Nonlinear operator and linear-operator cache with the reassembly policy (spec §8.1–8.3, red-cell m5).
 
 """
-    NonlinearOperator(ctx, kernels; ch = nothing)
+    NonlinearOperator(ctx, kernels; ch = nothing, pattern = allocate_matrix(dh, ch))
 
 The `:nonlinear` kernels of `kernels` on `ctx`, with preallocated residual `r`, Jacobian `J` (sparsity from
-`allocate_matrix(dh, ch)`) and element scratch. Use [`residual!`](@ref), [`jacobian!`](@ref) and
+`allocate_matrix(dh, ch)`, or `pattern`) and element scratch. Use [`residual!`](@ref), [`jacobian!`](@ref) and
 [`residual_jacobian!`](@ref); `op(r, u, p, t)` is `residual!(r, op, u, p, t)`.
 """
 struct NonlinearOperator{C <: AssemblyContext, V <: Tuple, G <: Tuple, JT, T <: AbstractFloat}
@@ -18,11 +18,11 @@ struct NonlinearOperator{C <: AssemblyContext, V <: Tuple, G <: Tuple, JT, T <: 
     u_elem::Vector{T}
 end
 
-function NonlinearOperator(ctx::AssemblyContext, kernels; ch = nothing)
+function NonlinearOperator(ctx::AssemblyContext, kernels; ch = nothing, pattern = allocate_pattern(ctx, ch))
     ne = _max_ndofs(ctx.dh)
     volume, groups = _split(ctx, kernels, (:nonlinear,))
     r = zeros(Ferrite.ndofs(ctx.dh))
-    return NonlinearOperator(ctx, volume, groups, r, allocate_pattern(ctx, ch), zeros(ne, ne), zeros(ne), zeros(ne))
+    return NonlinearOperator(ctx, volume, groups, r, copy(pattern), zeros(ne, ne), zeros(ne), zeros(ne))
 end
 
 function _nonlinear!(r, aJ, op::NonlinearOperator, u, p, t)
