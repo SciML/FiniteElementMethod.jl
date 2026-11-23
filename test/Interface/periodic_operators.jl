@@ -144,6 +144,7 @@ end
     ops = operators(pdesys, FEMDiscretization(Ω, t))
     master_dofs = [first(findall(==(1.0), ops.P[:, j])) for j in axes(ops.P, 2)]
     @test ops.P * ops.u0[master_dofs] == ops.u0
+    @test ops.metadata.u0 == ops.u0
     dirichlet = zeros(size(ops.P, 1))
     dirichlet[ops.prescribed] = ops.dirichlet_values
     @test (ops.P * dirichlet[master_dofs])[ops.prescribed] == ops.dirichlet_values

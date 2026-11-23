@@ -750,6 +750,7 @@ function operators(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
         u0[member] = u0[master]
         haskey(position, member) && (dirichlet_values[position[member]] = dirichlet_values[position[master]])
     end
+    isempty(ties) || (md = FEMMetadata(md.space, md.time, md.x̄, md.fields, md.pieces, md.pdesys; u0, md.elimination))
     return (;
         M = copy(M), K = copy(K), F = copy(load), fields, differential_vars, prescribed = copy(prescribed),
         dirichlet_values, u0, metadata = md,
