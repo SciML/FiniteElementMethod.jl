@@ -710,7 +710,23 @@ It is the linear, time-independent case only, and anything else raises an `Argum
 nonlinear term ("operators returns linear operators only, but the PDESystem has nonlinear
 terms"), a time-dependent source ("operators needs time-independent sources, but a source
 depends on time") and time-dependent Dirichlet data ("operators needs Dirichlet data that are
-constant in time"), and a periodic condition. Parameters are substituted by their values, as for the `DAEProblem`.
+constant in time"). Parameters are substituted by their values, as for the `DAEProblem`.
+
+Periodic conditions `u(t, Γa) ~ u(t, Γb)` are accepted under the pairing, bijection, master and
+Dirichlet-agreement rules of `discretize`. `M`, `K` and `F` stay the operators over all dofs; the
+identification is returned beside them as
+
+  - `P`: a sparse `ndofs × n_independent` matrix with one column per dof that is not tied to
+    another (each periodic class master and each untied dof, in dof order) and a 1 in each row for
+    the column of that dof's master. Without periodic pairs it is the identity;
+  - `tied`: the sorted dofs that are tied to their class master.
+
+`P' * M * P`, `P' * K * P` and `P' * F` are the periodic system. It is the condensation `discretize`
+uses: the row of each tied dof is added to its master's row (`discretize` then replaces the tied
+row by `u_tied - u_master`, and skips the sum into a prescribed master, whose row the Dirichlet
+condition replaces). Dirichlet conditions are not imposed on `P' * K * P`: a master is a prescribed
+dof of its class when it has one, so `prescribed` indexes columns of `P` through
+`findfirst(!iszero, P[d, :])`, and `u0` is the dof vector with each tied dof equal to its master.
 """
 function operators(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
     parts = _lower(pdesys, disc)
@@ -718,15 +734,16 @@ function operators(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
     nonlinear && throw(ArgumentError("operators returns linear operators only, but the PDESystem has nonlinear terms"))
     load isa AbstractVector || throw(ArgumentError("operators needs time-independent sources, but a source depends on time"))
     timedep_dirichlet && throw(ArgumentError("operators needs Dirichlet data that are constant in time"))
-    isempty(parts.md.space.ties) || throw(ArgumentError("operators does not support periodic conditions; use discretize"))
     differential_vars = falses(size(M, 1))
     for (k, i) in enumerate(rowvals(M))
         iszero(nonzeros(M)[k]) || (differential_vars[i] = true)
     end
     md = parts.md
     fields = [f.name => field_range(md.space, f.name) for f in md.fields]
+    ties = md.space.ties
     return (;
         M = copy(M), K = copy(K), F = copy(load), fields, differential_vars, prescribed = copy(prescribed),
         dirichlet_values = copy(dirichlet_values), u0 = parts.full_u0, metadata = md,
+        P = periodic_projection(size(M, 1), ties), tied = sort!(first.(ties)),
     )
 end

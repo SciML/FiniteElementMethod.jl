@@ -152,6 +152,18 @@ function check_agreement(classes::DirichletClasses, value, t)
     return nothing
 end
 
+#     periodic_projection(n, ties) -> SparseMatrixCSC{Float64, Int}
+#
+# The `n × n_independent` matrix `P` of the identification `ties`: one column per dof that is not a mirror, in dof order,
+# and a 1 in each row for the column of that dof's master. `P' * M * P` and `P' * F` are the condensation `apply_ties!`
+# writes, up to its identification rows.
+function periodic_projection(n, ties)
+    master = collect(1:n)
+    foreach(((mirror, m),) -> master[mirror] = m, ties)
+    column = cumsum(master .== 1:n)
+    return sparse(1:n, column[master], 1.0, n, last(column))
+end
+
 # The tied rows whose residual is summed into the master's row: those whose master is not prescribed.
 _summed(ties, isprescribed) = [m => s for (m, s) in ties if !isprescribed[s]]
 
