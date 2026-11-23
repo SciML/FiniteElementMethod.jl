@@ -11,15 +11,20 @@ using ModelingToolkit: t_nounits as t
 @variables x y z u(..)
 Dt, Dx, Dy, Dz = Differential(t), Differential(x), Differential(y), Differential(z)
 
-# The reduced solution at `tend`: the dofs of `P' M P dc/dt = -P' K P c` restricted to the columns `free` (all but the
-# prescribed ones, whose value is zero here), from the projection of the initial dof vector.
+# The reduced solution at `tend`: the dofs of `P' M P dc/dt = -P' K P c + P' F` restricted to the columns `free` (all but
+# the prescribed ones, whose value is zero here), from the projection of the initial dof vector. The affine system is
+# advanced exactly through the exponential of the matrix [-A b; 0 0].
 function reduced_solution(ops, tend)
-    (; M, K, P, u0) = ops
+    (; M, K, F, P, u0) = ops
     c0 = (P' * P) \ (P' * u0)
     free = setdiff(1:size(P, 2), ops.prescribed_columns)
-    A = Matrix(P' * M * P)[free, free] \ Matrix(P' * K * P)[free, free]
+    Mr = Matrix(P' * M * P)[free, free]
+    A = Mr \ Matrix(P' * K * P)[free, free]
+    b = Mr \ (P' * F)[free]
+    nf = length(free)
+    E = exp(tend * [-A b; zeros(1, nf + 1)]) * [c0[free]; 1.0]
     c = zeros(size(P, 2))
-    c[free] = exp(-tend * A) * c0[free]
+    c[free] = E[1:nf]
     return P * c
 end
 
@@ -94,9 +99,55 @@ end
     )
     disc = FEMDiscretization(Ω, t)
     ops = with_columns(operators(pdesys, disc))
-    @test isdisjoint(ops.tied, ops.prescribed)
     diff = reldiff(reduced_solution(ops, 0.05), discretize_solution(pdesys, disc, 0.05))
     println("periodic x, Dirichlet y relative difference: ", diff)
+    @test diff < 1.0e-10
+end
+
+# PDE:    u_t = u_xx + u_yy
+# Domain: the unit square, t in (0, 0.05), 8 x 8 triangle pairs, P1
+# BCs:    periodic left and right; u = 0 on bottom and top
+# Shows:  the left and right nodes on a Dirichlet edge are one periodic class, so `P` has one column for the pair and maps
+#         every reduced vector to equal values at equivalent dofs, although neither is tied by the solver.
+@testset "P has one column per periodic class when the class holds several prescribed dofs" begin
+    n = 8
+    Ω = MeshDomain(generate_grid(Triangle, (n, n), Vec(0.0, 0.0), Vec(1.0, 1.0)))
+    left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+    @named pdesys = PDESystem(
+        [Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y)))],
+        [u(t, left) ~ u(t, right), u(t, bottom) ~ 0, u(t, top) ~ 0, u(0, x, y) ~ sin(2π * x) * sin(π * y)],
+        [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.05)], [t, x, y], [u(t, x, y)], []
+    )
+    ops = operators(pdesys, FEMDiscretization(Ω, t))
+    xy = dof_coordinates(ops.metadata)
+    key(d) = (round(mod(xy[1, d], 1.0); digits = 8), round(xy[2, d]; digits = 8))
+    classes = unique(key.(axes(xy, 2)))
+    @test size(ops.P, 2) == length(classes) == n * (n + 1)
+    @test length(ops.tied) == size(xy, 2) - length(classes)
+    @test all(count(!iszero, ops.P[d, :]) == 1 && sum(ops.P[d, :]) == 1 for d in axes(ops.P, 1))
+    values = ops.P * randn(size(ops.P, 2))
+    @test all(values[d] == values[first(findall(e -> key(e) == key(d), axes(xy, 2)))] for d in axes(xy, 2))
+end
+
+# PDE:    u_t = u_xx + u_yy + 1
+# Domain: the unit square, t in (0, 0.05), 8 x 8 triangle pairs, P1
+# BCs:    periodic in x and y; IC u = 0
+# Shows:  `P' * F` carries the source: the reduced system gives u = t, as `discretize` does.
+@testset "operators reduces a constant source on a periodic box through P'F" begin
+    Ω = MeshDomain(generate_grid(Triangle, (8, 8), Vec(0.0, 0.0), Vec(1.0, 1.0)))
+    left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+    @named pdesys = PDESystem(
+        [Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + 1],
+        [u(t, left) ~ u(t, right), u(t, bottom) ~ u(t, top), u(0, x, y) ~ 0],
+        [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.05)], [t, x, y], [u(t, x, y)], []
+    )
+    disc = FEMDiscretization(Ω, t)
+    ops = with_columns(operators(pdesys, disc))
+    reduced = reduced_solution(ops, 0.05)
+    exact_error = norm(reduced .- 0.05, Inf)
+    diff = reldiff(reduced, discretize_solution(pdesys, disc, 0.05))
+    println("periodic source u(t) = t error: ", exact_error, ", relative difference from discretize: ", diff)
+    @test exact_error < 1.0e-10
     @test diff < 1.0e-10
 end
 

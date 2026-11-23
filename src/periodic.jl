@@ -152,6 +152,10 @@ function check_agreement(classes::DirichletClasses, value, t)
     return nothing
 end
 
+# Every `member => master` of the periodic classes: the solver's `ties` plus the prescribed members of a class beyond its
+# master, whose Dirichlet rows already enforce them (the master is the first of each group).
+class_ties(ties, classes::DirichletClasses) = sort!([ties; [d => first(g) for g in classes.groups for d in view(g, 2:length(g))]])
+
 #     periodic_projection(n, ties) -> SparseMatrixCSC{Float64, Int}
 #
 # The `n × n_independent` matrix `P` of the identification `ties`: one column per dof that is not a mirror, in dof order,

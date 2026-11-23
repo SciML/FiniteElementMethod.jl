@@ -719,14 +719,15 @@ identification is returned beside them as
   - `P`: a sparse `ndofs × n_independent` matrix with one column per dof that is not tied to
     another (each periodic class master and each untied dof, in dof order) and a 1 in each row for
     the column of that dof's master. Without periodic pairs it is the identity;
-  - `tied`: the sorted dofs that are tied to their class master.
+  - `tied`: the sorted dofs that are not the master of their periodic class, including the prescribed
+    members of a class beyond its master.
 
 `P' * M * P`, `P' * K * P` and `P' * F` are the periodic system. It is the condensation `discretize`
 uses: the row of each tied dof is added to its master's row (`discretize` then replaces the tied
 row by `u_tied - u_master`, and skips the sum into a prescribed master, whose row the Dirichlet
 condition replaces). Dirichlet conditions are not imposed on `P' * K * P`: a master is a prescribed
-dof of its class when it has one, so `prescribed` indexes columns of `P` through
-`findfirst(!iszero, P[d, :])`, and `u0` is the dof vector with each tied dof equal to its master.
+dof of its class when it has one, and the other prescribed dofs of a class share its column, so
+`prescribed` indexes columns of `P` through `findfirst(!iszero, P[d, :])`, and `u0` is the dof vector with each tied dof equal to its master.
 """
 function operators(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
     parts = _lower(pdesys, disc)
@@ -740,7 +741,7 @@ function operators(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
     end
     md = parts.md
     fields = [f.name => field_range(md.space, f.name) for f in md.fields]
-    ties = md.space.ties
+    ties = class_ties(md.space.ties, md.space.classes)
     return (;
         M = copy(M), K = copy(K), F = copy(load), fields, differential_vars, prescribed = copy(prescribed),
         dirichlet_values = copy(dirichlet_values), u0 = parts.full_u0, metadata = md,
