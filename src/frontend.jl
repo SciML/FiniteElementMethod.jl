@@ -728,6 +728,8 @@ row by `u_tied - u_master`, and skips the sum into a prescribed master, whose ro
 condition replaces). Dirichlet conditions are not imposed on `P' * K * P`: a master is a prescribed
 dof of its class when it has one, and the other prescribed dofs of a class share its column, so
 `prescribed` indexes columns of `P` through `findfirst(!iszero, P[d, :])`, and `u0` is the dof vector with each tied dof equal to its master.
+Values at periodically equivalent dofs that agree only within the agreement tolerance are replaced by the master's, in
+`u0` and in `dirichlet_values`, so `P * c == u0` for `c = u0[masters]`.
 """
 function operators(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
     parts = _lower(pdesys, disc)
@@ -742,9 +744,15 @@ function operators(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
     md = parts.md
     fields = [f.name => field_range(md.space, f.name) for f in md.fields]
     ties = class_ties(md.space.ties, md.space.classes)
+    u0, dirichlet_values = copy(parts.full_u0), copy(dirichlet_values)
+    position = Dict(d => i for (i, d) in enumerate(prescribed))
+    for (member, master) in ties
+        u0[member] = u0[master]
+        haskey(position, member) && (dirichlet_values[position[member]] = dirichlet_values[position[master]])
+    end
     return (;
         M = copy(M), K = copy(K), F = copy(load), fields, differential_vars, prescribed = copy(prescribed),
-        dirichlet_values = copy(dirichlet_values), u0 = parts.full_u0, metadata = md,
+        dirichlet_values, u0, metadata = md,
         P = periodic_projection(size(M, 1), ties), tied = sort!(first.(ties)),
     )
 end

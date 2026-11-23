@@ -129,6 +129,32 @@ end
     @test all(values[d] == values[first(findall(e -> key(e) == key(d), axes(xy, 2)))] for d in axes(xy, 2))
 end
 
+# PDE:    u_t = u_xx + u_yy
+# Domain: the unit square, 8 x 8 triangle pairs, P1
+# BCs:    periodic left and right; u = 5e-9 x on bottom and u = 0 on top, whose corner values differ within the agreement tolerance
+# Shows:  the returned `u0` and `dirichlet_values` are constant on each periodic class, so `P * c == u0` for some `c`.
+@testset "operators returns u0 and Dirichlet values that P reproduces when corner data agree within tolerance" begin
+    Ω = MeshDomain(generate_grid(Triangle, (8, 8), Vec(0.0, 0.0), Vec(1.0, 1.0)))
+    left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+    @named pdesys = PDESystem(
+        [Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y)))],
+        [u(t, left) ~ u(t, right), u(t, bottom) ~ 5.0e-9 * x, u(t, top) ~ 0, u(0, x, y) ~ sin(2π * x) * sin(π * y)],
+        [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.05)], [t, x, y], [u(t, x, y)], []
+    )
+    ops = operators(pdesys, FEMDiscretization(Ω, t))
+    master_dofs = [first(findall(==(1.0), ops.P[:, j])) for j in axes(ops.P, 2)]
+    @test ops.P * ops.u0[master_dofs] == ops.u0
+    dirichlet = zeros(size(ops.P, 1))
+    dirichlet[ops.prescribed] = ops.dirichlet_values
+    @test (ops.P * dirichlet[master_dofs])[ops.prescribed] == ops.dirichlet_values
+    xy = dof_coordinates(ops.metadata)
+    corners = [d for d in ops.prescribed if xy[2, d] == 0 && xy[1, d] in (0.0, 1.0)]
+    @test length(corners) == 2
+    spread = abs(dirichlet[corners[1]] - dirichlet[corners[2]]) + abs(ops.u0[corners[1]] - ops.u0[corners[2]])
+    println("bottom corner values u0: ", ops.u0[corners], ", Dirichlet: ", dirichlet[corners], ", spread: ", spread)
+    @test spread == 0
+end
+
 # PDE:    u_t = u_xx + u_yy + 1
 # Domain: the unit square, t in (0, 0.05), 8 x 8 triangle pairs, P1
 # BCs:    periodic in x and y; IC u = 0
