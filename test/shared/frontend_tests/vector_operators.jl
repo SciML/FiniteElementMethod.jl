@@ -5,7 +5,7 @@
 using FiniteElementMethod, ModelingToolkit, DomainSets, NonlinearSolveFirstOrder, Test
 using FiniteElementMethod: operators, lower_vector_ops
 using Ferrite: generate_grid, Triangle, Tetrahedron, Vec
-using LinearAlgebra: ⋅, ×
+using LinearAlgebra: ⋅, ×, norm
 using ModelingToolkit: t_nounits as t
 using Symbolics: Symbolics, Grad, Divergence, Curl, Laplacian
 
@@ -319,6 +319,25 @@ same_operators(a, b) = a.M ≈ b.M && a.K ≈ b.K && a.F ≈ b.F && a.u0 ≈ b.u
         Ω = square()
         @named pdesys = PDESystem([Laplacian(X)(U) ~ 1], Matrix{Equation}(undef, 0, 2), [(x, y) ∈ Ω], [x, y], [U], [])
         @test operators(pdesys, FEMDiscretization(Ω; boundary_check = :off)).K isa AbstractMatrix
+    end
+
+    @testset "a periodic box with the operator form in the PDE matches the Differential form" begin
+        Ω = square()
+        left, right, bottom, top = sides(Ω)
+        bcs = [u(t, left) ~ u(t, right), u(t, bottom) ~ u(t, top), u(0, x, y) ~ sin(2pi * (x + y))]
+        function periodic_system(eq)
+            @named pdesys = PDESystem([eq], bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.05)], [t, x, y], [u(t, x, y)], [])
+            return pdesys, FEMDiscretization(Ω, t; spaces = Dict(u => Lagrange{RefTriangle, 2}()))
+        end
+        lazy_pdesys, disc = periodic_system(Dt(ut) ~ grad ⋅ (k(x, y) * grad(ut)))
+        hand_pdesys, _ = periodic_system(Dt(ut) ~ Dx(k(x, y) * Dx(ut)) + Dy(k(x, y) * Dy(ut)))
+        @test lower_vector_ops(lazy_pdesys).bcs == lazy_pdesys.bcs
+        lazy, hand = discretize(lazy_pdesys, disc), discretize(hand_pdesys, disc)
+        @test lazy.u0 == hand.u0
+        state = sin.(1:length(lazy.u0))
+        residual(prob) = (r = zero(state); prob.f(r, cos.(1:length(state)), state, prob.p, 0.01); r)
+        @test residual(lazy) ≈ residual(hand)
+        @test norm(residual(lazy)) > 0
     end
 
     @testset "Navier–Stokes in the operator form lowers to exactly the hand-written equations" begin
