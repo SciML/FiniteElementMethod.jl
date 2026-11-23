@@ -295,6 +295,14 @@ end
     @test_throws ArgumentError("with omega every condition must be a boundary condition on one piece, and initial conditions are not used; got $(first(PDEBase.make_pdesys_compatible(initial)[1].bcs))") discretize(initial, disc)
 end
 
+@testset "a periodic pair on the edge-element space is refused, naming the space" begin
+    Ω = MeshDomain(unit_cube(1))
+    left, right = boundarypiece(Ω, :left), boundarypiece(Ω, :right)
+    bcs = [E(t, left)[c] ~ E(t, right)[c] for c in 1:3]
+    msg = message(() -> discretize(maxwell_system(Ω; bcs), maxwell_disc(Ω, 1.0)))
+    @test occursin("periodic conditions are not supported for the Nédélec (edge element) space", msg)
+end
+
 @testset "rejections of the boundary conditions" begin
     Ω = MeshDomain(unit_cube(1))
     Γ = boundarypiece(Ω, :left)
