@@ -153,8 +153,11 @@ end
     left, right, bottom, top = sides(Ω)
     bcs = [u(t, left) ~ u(t, right), u(t, bottom) ~ 0, u(t, top) ~ 0, u(0, x, y) ~ 0]
     @named pdesys = PDESystem([heat], bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
-    disc = FEMDiscretization(Ω, t; spaces = Dict(u => Ferrite.Nedelec{RefTriangle, 1}()))
-    @test_throws "is not a nodal Lagrange space" discretize(pdesys, disc)
+    # Either guard refuses it with an error naming the space: the nodal-Lagrange check of the periodic ties, or, since a
+    # Nédélec space belongs to the frequency-domain Maxwell path, the demand for omega when the discretization is built.
+    @test_throws r"is not a nodal Lagrange space|Nédélec space is discretized by the frequency-domain Maxwell path" discretize(
+        pdesys, FEMDiscretization(Ω, t; spaces = Dict(u => Ferrite.Nedelec{RefTriangle, 1}()))
+    )
 end
 
 # PDE:    ((1 + u^2) u_x)_x + ((1 + u^2) u_y)_y - u = f, a steady nonlinear diffusion solved by Newton's method
