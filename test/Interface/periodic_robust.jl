@@ -93,6 +93,17 @@ end
     @test out32 == Float32[0, 1, 0, 3, 0, 5]
     FiniteElementMethod.scatter_ties!(out32, vals32, from, to)
     @test (@allocated FiniteElementMethod.scatter_ties!(out32, vals32, from, to)) == 0
+    # Mixed value types: the sum is formed in the wider type and converted on assignment, so a small difference survives.
+    mixed = Float32[1.0, 0.0]
+    FiniteElementMethod.scatter_ties!(mixed, [-1.0 + 2.0^-25], [1], [1])
+    @test mixed[1] == Float32(2.0^-25)
+    @inferred FiniteElementMethod.scatter_ties!(zeros(Float32, 6), vals, from, to)
+    @test (@allocated FiniteElementMethod.scatter_ties!(out32, vals, from, to)) == 0
+    # A complex destination (a complex Jacobian with real state values).
+    outc = zeros(ComplexF64, 6)
+    @inferred FiniteElementMethod.scatter_ties!(outc, vals, from, to)
+    @test outc == ComplexF64[0, 1, 0, 3, 0, 5]
+    @test (@allocated FiniteElementMethod.scatter_ties!(outc, vals, from, to)) == 0
 end
 
 # PDE:    u_t = u_xx + u_yy on a single Q1 quadrilateral
