@@ -410,7 +410,7 @@ function _recognise_boundaries(bcs, fields, pvals, ctx, domain, cells, ω)
         length(pieces) == 1 || throw(
             ArgumentError(
                 length(pieces) == 2 ?
-                    "$eq ties the traces on $(pieces[1].name) and $(pieces[2].name): periodic conditions are not supported for the Nédélec (edge element) space of the frequency-domain Maxwell path, whose dofs need orientation signs across the seam; $pform" :
+                    "$eq ties the traces on $(pieces[1].name) and $(pieces[2].name): periodic conditions are not supported for the Nédélec (edge element) space of the frequency-domain Maxwell path, whose dofs need orientation signs across the seam; $_PEC_FORM" :
                     "with omega every condition must be a boundary condition on one piece, and initial conditions are not used; got $eq"
             )
         )
