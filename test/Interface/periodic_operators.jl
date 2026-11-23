@@ -145,6 +145,11 @@ end
     master_dofs = [first(findall(==(1.0), ops.P[:, j])) for j in axes(ops.P, 2)]
     @test ops.P * ops.u0[master_dofs] == ops.u0
     @test ops.metadata.u0 == ops.u0
+    @test ops.metadata.u0 !== ops.u0
+    initial = copy(ops.u0)
+    fill!(ops.u0, 0)
+    @test ops.metadata.u0 == initial
+    ops.u0 .= initial
     dirichlet = zeros(size(ops.P, 1))
     dirichlet[ops.prescribed] = ops.dirichlet_values
     @test (ops.P * dirichlet[master_dofs])[ops.prescribed] == ops.dirichlet_values
