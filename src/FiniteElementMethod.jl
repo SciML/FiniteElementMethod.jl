@@ -48,7 +48,7 @@ using PDEBase.StrongForm: Weighted
 include("discretization.jl")
 include("frontend.jl")
 _is_normal_derivative(op) = op isa NormalDerivative
-export FEMDiscretization, Galerkin, SUPG, add_boundary_pieces!, ferrite_grid
+export FEMDiscretization, Galerkin, SUPG, add_boundary_pieces!, ferrite_grid, gmsh_domain
 export MeshDomain, Region, boundarypiece, boundarypieces, NormalDerivative
 # The integration-by-parts policy `ibp = Dict(eq => Weighted(w))` of `FEMDiscretization`.
 export Weighted

@@ -1,6 +1,6 @@
 # Discretization
 
-`FEMDiscretization`, `Galerkin`, `SUPG`, `add_boundary_pieces!` and `ferrite_grid` are exported, as are the PDEBase names a model needs
+`FEMDiscretization`, `Galerkin`, `SUPG`, `add_boundary_pieces!`, `ferrite_grid` and `gmsh_domain` are exported, as are the PDEBase names a model needs
 (`MeshDomain`, `Region`, `boundarypiece`, `boundarypieces`, `NormalDerivative`) and Ferrite's
 `Lagrange` and reference shapes. [Getting started](@ref) shows them in use.
 
@@ -25,6 +25,21 @@ add_boundary_pieces!
 
 ```@docs
 ferrite_grid
+```
+
+## Gmsh meshes
+
+With FerriteGmsh.jl loaded, `gmsh_domain` reads a `.msh` file into a `MeshDomain` in one line, without
+`using Ferrite`. Each physical group of dimension `dim - 1` is a boundary piece:
+
+```julia
+using FiniteElementMethod, FerriteGmsh
+Ω = gmsh_domain("plate.msh")
+inlet = boundarypiece(Ω, :inlet)
+```
+
+```@docs
+gmsh_domain
 ```
 
 `discretize(pdesys, disc)` returns the `DAEProblem` of the discretization (the `NonlinearProblem` of a steady one, see [Steady problems](@ref)). `symbolic_discretize(pdesys, disc)`
