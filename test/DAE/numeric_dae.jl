@@ -296,3 +296,19 @@ heat_operators(fe; kw...) = FEMOperators(fe.M, fe.K, fe.F, [:u => 1:length(fe.F)
         @test occursin("not finite", e.msg)
     end
 end
+
+@testset "periodic ties act on the load buffer, not on the callback's return value" begin
+    # A dense 3 x 3 pattern holds the entries of the tie 2 => 1; the in-place load returns nothing, as `load!` allows.
+    dense(A) = (S = sparse(ones(3, 3)); S.nzval .= vec(A); S)
+    M = dense(Matrix(1.0I, 3, 3))
+    K = dense([2.0 -1 0; -1 2 -1; 0 -1 2])
+    load = (out, t) -> (fill!(out, 1.0); nothing)
+    ops = FEMOperators(M, K, load, [:u => 1:3]; ties = [2 => 1])
+    @test FiniteElementMethod.load!(zeros(3), ops.load, 0.0) == [2.0, 0.0, 1.0]
+    prob = numeric_dae_problem(ops, [0.5, 0.5, 0.0], (0.0, 0.5))
+    sol = solve(prob, DImplicitEuler(); dt = 0.1, adaptive = false)
+    @test SciMLBase.successful_retcode(sol)
+    @test sol.u[end][1] == sol.u[end][2]
+    # The steady residual evaluates the same load.
+    @test FiniteElementMethod.load!(zeros(3), ops.load, 1.0) == [2.0, 0.0, 1.0]
+end
