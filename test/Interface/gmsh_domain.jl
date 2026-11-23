@@ -9,7 +9,7 @@ using ModelingToolkit: t_nounits as t
 @variables x y u(..)
 Dt, Dx, Dy = Differential(t), Differential(x), Differential(y)
 
-function write_lshape(path; h = 0.5, groups = true, unnamed = false)
+function write_lshape(path; h = 0.5, groups = true, unnamed = false, order = 1)
     Gmsh.initialize()
     try
         gmsh.option.setNumber("General.Terminal", 0)
@@ -25,6 +25,7 @@ function write_lshape(path; h = 0.5, groups = true, unnamed = false)
             gmsh.model.addPhysicalGroup(1, lines[[1, 3, 4, 5]], -1, unnamed ? "" : "wall")
             gmsh.model.addPhysicalGroup(2, [surface], -1, "domain")
         end
+        gmsh.option.setNumber("Mesh.ElementOrder", order)
         gmsh.model.mesh.generate(2)
         gmsh.write(path)
     finally
@@ -72,5 +73,35 @@ end
 
         padded = " " * path * " "
         @test boundarypieces(gmsh_domain(strip(padded))) |> length == 3
+    end
+end
+
+# Shows: `gmsh_domain` leaves the Gmsh session as it found it: a session of the caller keeps its models, and a
+#        session started by `gmsh_domain` is finalized also when the conversion throws (cubic triangles).
+@testset "gmsh_domain leaves the Gmsh session as it found it" begin
+    mktempdir() do dir
+        path = write_lshape(joinpath(dir, "lshape.msh"))
+        cubic = write_lshape(joinpath(dir, "cubic.msh"); order = 3)
+        Gmsh.initialize()
+        try
+            gmsh.option.setNumber("General.Terminal", 0)
+            gmsh.model.add("caller")
+            models = gmsh.model.list()
+            for _ in 1:2
+                gmsh_domain(path)
+                @test gmsh.model.list() == models
+                @test gmsh.model.getCurrent() == "caller"
+            end
+            @test_throws Exception gmsh_domain(cubic)
+            @test gmsh.model.list() == models
+            @test gmsh.model.getCurrent() == "caller"
+        finally
+            Gmsh.finalize()
+        end
+        @test iszero(gmsh.isInitialized())
+        @test_throws Exception gmsh_domain(cubic)
+        @test iszero(gmsh.isInitialized())
+        @test gmsh_domain(path) isa MeshDomain
+        @test iszero(gmsh.isInitialized())
     end
 end
