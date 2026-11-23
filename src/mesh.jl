@@ -216,9 +216,11 @@ end
 The `MeshDomain` of the Gmsh mesh file `path` (a `.msh` file), read with FerriteGmsh.jl, which must be loaded
 (`using FerriteGmsh`); no `using Ferrite` is needed. It is `MeshDomain(FerriteGmsh.togrid(path))`: each Gmsh
 physical group of dimension `dim - 1` is a boundary piece, so `boundarypiece(Ω, :inlet)` is the physical group
-`"inlet"`. A missing file, or a mesh without physical groups of that dimension, is an `ArgumentError`.
+`"inlet"`. A missing file, a mesh without physical groups of that dimension, or physical groups that are
+unnamed or share a name (FerriteGmsh keys facet sets by name, so they would overwrite each other) is an
+`ArgumentError`.
 """
-function gmsh_domain(path::AbstractString)
+function gmsh_domain(path)
     throw(ArgumentError("gmsh_domain needs FerriteGmsh.jl; run `using FerriteGmsh` first"))
 end
 

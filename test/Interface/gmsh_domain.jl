@@ -9,7 +9,7 @@ using ModelingToolkit: t_nounits as t
 @variables x y u(..)
 Dt, Dx, Dy = Differential(t), Differential(x), Differential(y)
 
-function write_lshape(path; h = 0.5, groups = true)
+function write_lshape(path; h = 0.5, groups = true, unnamed = false)
     Gmsh.initialize()
     try
         gmsh.option.setNumber("General.Terminal", 0)
@@ -20,9 +20,9 @@ function write_lshape(path; h = 0.5, groups = true)
         surface = gmsh.model.geo.addPlaneSurface([gmsh.model.geo.addCurveLoop(lines)])
         gmsh.model.geo.synchronize()
         if groups
-            gmsh.model.addPhysicalGroup(1, [lines[6]], -1, "inlet")
-            gmsh.model.addPhysicalGroup(1, [lines[2]], -1, "outlet")
-            gmsh.model.addPhysicalGroup(1, lines[[1, 3, 4, 5]], -1, "wall")
+            gmsh.model.addPhysicalGroup(1, [lines[6]], -1, unnamed ? "" : "inlet")
+            gmsh.model.addPhysicalGroup(1, [lines[2]], -1, unnamed ? "" : "outlet")
+            gmsh.model.addPhysicalGroup(1, lines[[1, 3, 4, 5]], -1, unnamed ? "" : "wall")
             gmsh.model.addPhysicalGroup(2, [surface], -1, "domain")
         end
         gmsh.model.mesh.generate(2)
@@ -67,5 +67,10 @@ end
         @test_throws "no such file" gmsh_domain(joinpath(dir, "missing.msh"))
         bare = write_lshape(joinpath(dir, "bare.msh"); groups = false)
         @test_throws "no physical groups" gmsh_domain(bare)
+        unnamed = write_lshape(joinpath(dir, "unnamed.msh"); unnamed = true)
+        @test_throws "every physical group must be named" gmsh_domain(unnamed)
+
+        padded = " " * path * " "
+        @test boundarypieces(gmsh_domain(strip(padded))) |> length == 3
     end
 end
