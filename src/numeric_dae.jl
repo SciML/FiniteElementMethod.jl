@@ -189,9 +189,9 @@ nonlinear_residual!(r, N::FEMNonlinear, u, t) = add_nonlinear!(fill!(r, 0), N, u
 
 # Adds the entries `vals[from]` of the mirror rows into the master rows' entries `out[to]`; a function barrier, since the
 # ties are stored untyped in `FEMNonlinear`.
-function scatter_ties!(out::AbstractVector{Float64}, vals::AbstractVector{Float64}, from::Vector{Int}, to::Vector{Int})
+function scatter_ties!(out::AbstractVector{T}, vals::AbstractVector{<:Real}, from::Vector{Int}, to::Vector{Int}) where {T <: Real}
     for k in eachindex(from, to)
-        out[to[k]] += vals[from[k]]
+        out[to[k]] += T(vals[from[k]])
     end
     return out
 end

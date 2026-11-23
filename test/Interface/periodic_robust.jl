@@ -87,6 +87,12 @@ end
     @test out == [0.0, 1.0, 0.0, 3.0, 0.0, 5.0]
     FiniteElementMethod.scatter_ties!(out, vals, from, to)
     @test (@allocated FiniteElementMethod.scatter_ties!(out, vals, from, to)) == 0
+    # A Jacobian with another value type (here Float32) is accepted too: inferred, allocation-free, the same scatter.
+    out32, vals32 = zeros(Float32, 6), Float32.(vals)
+    @inferred FiniteElementMethod.scatter_ties!(out32, vals32, from, to)
+    @test out32 == Float32[0, 1, 0, 3, 0, 5]
+    FiniteElementMethod.scatter_ties!(out32, vals32, from, to)
+    @test (@allocated FiniteElementMethod.scatter_ties!(out32, vals32, from, to)) == 0
 end
 
 # PDE:    u_t = u_xx + u_yy on a single Q1 quadrilateral
