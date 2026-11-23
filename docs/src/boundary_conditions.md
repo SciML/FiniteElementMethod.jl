@@ -19,7 +19,7 @@ rendering.
 | Dirichlet | yes |
 | Neumann | yes |
 | Robin | yes |
-| Periodic | no |
+| Periodic | yes |
 | Interface | no |
 | Time-dependent | yes |
 
@@ -28,7 +28,7 @@ Restrictions of this release:
   - Geometries are `Ferrite.Grid` meshes (1D, 2D and 3D cell shapes) wrapped as `MeshDomain(grid)`, with boundary pieces named by the grid's facet sets. 1D, 2D and 3D meshes are tested; meshes with mixed cell types are rejected.
   - Coordinates are Cartesian and named by the `(x, y) ∈ Ω` pairing. Time is the first or last argument of every dependent variable, never between spatial arguments.
   - Dirichlet data may depend on space, time and parameters but not on another field. Neumann and Robin conditions are written with `NormalDerivative(Γ)`, with any conormal coefficient written explicitly. Neumann and Robin data may depend on time; the Robin coefficient multiplying `u(t, Γ)` may depend only on space and parameters.
-  - Periodic conditions `u(t, Γa) ~ u(t, Γb)` are rejected. Interface conditions between regions have no syntax; every field lives on the whole mesh.
+  - Periodic conditions `u(t, Γa) ~ u(t, Γb)` pair two pieces that are translates of each other; they need `dirichlet = :algebraic` and are not returned by `operators`. Interface conditions between regions have no syntax; every field lives on the whole mesh.
   - Boundary pieces must be disjoint and lie on the boundary. Boundary facets with no condition for a field get the natural zero-flux condition, with a warning when that field's equation has a flux; `natural` declares them and `boundary_check` makes the warning an error or turns it off.
   - Where two Dirichlet pieces of one field meet, the condition listed last in the `PDESystem` wins.
   - Every field with a time derivative needs an initial condition, linear in that one field and finite at every node.
@@ -140,9 +140,71 @@ Like a Neumann condition, it enters the weak form as a facet integral.
 
 ## Periodic conditions
 
-Not supported in this release. An equation between traces on two pieces,
-`u(t, Γ_left) ~ u(t, Γ_right)`, is rejected with
-`periodic boundary conditions are not supported`.
+An equation between the traces of one field on two pieces, `u(t, Γ_left) ~ u(t, Γ_right)` (or
+`u(Γ_left) ~ u(Γ_right)` for a steady problem), makes the field take equal values on the two
+pieces. The pieces must be translates of each other: the translation is the difference of their
+centroids, and every node of one piece (every dof of the field, for a higher-order space) must
+have a node of the other at the translated place. Otherwise `discretize` throws an `ArgumentError`
+that names both pieces and the mismatch. The pairs are per field, so one field may be periodic
+where another carries Dirichlet pieces, and they work with any element space, including the
+Taylor–Hood pair of a Navier–Stokes system, in the time-dependent and steady paths and with
+`SUPG` test spaces.
+
+For a fully periodic box write one pair per direction. A corner node belongs to several pairs;
+the nodes of all pairs of a field are collected into classes of equal nodes, and each class keeps
+one master. Where a periodic piece meets a Dirichlet piece, the class contains a prescribed node
+and that node is the master, so the Dirichlet value holds at the shared corner. If a class holds more than one
+prescribed node (a Dirichlet piece touching both ends of a periodic pair), their data must agree. `discretize` compares them at 17 evenly spaced times of the time interval, and
+time-dependent data are compared again at every evaluation by the solver; a difference beyond a relative `1e-8` is an
+`ArgumentError` naming the periodic pieces, the nodes, the two values and the time.
+
+```julia
+using FiniteElementMethod, ModelingToolkit, DomainSets, OrdinaryDiffEqBDF
+using Ferrite: generate_grid, Triangle, Vec
+using ModelingToolkit: t_nounits as t
+@variables x y u(..)
+Dt, Dx, Dy = Differential(t), Differential(x), Differential(y)
+
+Ω = MeshDomain(generate_grid(Triangle, (16, 16), Vec(0.0, 0.0), Vec(1.0, 1.0)))
+left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+@named pdesys = PDESystem(
+    [Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y)))],
+    [u(t, left) ~ u(t, right), u(t, bottom) ~ u(t, top), u(0, x, y) ~ sin(2π * (x + y))],
+    [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.05)], [t, x, y], [u(t, x, y)], [])
+prob = discretize(pdesys, FEMDiscretization(Ω, t))
+```
+
+The solution is `exp(-8π² t) sin(2π (x + y))` and converges at the optimal rate;
+`test/Interface/periodic.jl` runs this case, the steady and Navier–Stokes ones.
+
+Periodic pairs work in every problem class of this package, including nonlinear terms (the
+nonlinear residual and Jacobian get the same row sums and ties inside Newton's method), SUPG test
+spaces, steady and transient problems and coupled fields with different spaces:
+
+| Problem class with a periodic pair | Status | Covered by |
+|:--- |:--- |:--- |
+| Scalar linear, transient, 2D, P1 and P2, triangles and quadrilaterals, fully periodic | supported | `test/Interface/periodic.jl`, heat on a periodic box |
+| Periodic in one direction with Dirichlet pieces in the other | supported | `test/Interface/periodic.jl`, periodic in x |
+| Scalar linear on a line, transient, Galerkin and SUPG | supported | `test/Interface/periodic.jl`, periodic line |
+| Scalar linear on a hexahedral mesh, steady, fully periodic | supported | `test/Interface/periodic.jl`, periodic cube |
+| Steady (`NonlinearProblem`), linear terms, Galerkin and SUPG | supported | `test/Interface/periodic.jl`, steady advection–diffusion |
+| Steady, nonlinear terms | supported | `test/Interface/periodic.jl`, steady nonlinear diffusion |
+| Transient (`DAEProblem`), nonlinear terms and a time-dependent source | supported | `test/Interface/periodic.jl`, viscous Burgers |
+| Coupled fields, different spaces per field, per-field pairs | supported | `test/Interface/periodic.jl`, coupled P2/P1 |
+| Taylor–Hood Navier–Stokes, steady and transient (index-2 DAE) | supported | `test/Interface/periodic_navier_stokes.jl` |
+| Boundary integrals (Neumann, Robin) on the other, non-periodic pieces | supported | assembled as before; the periodic pieces take no boundary integral |
+| Pieces that are not translates of each other | error `periodic pieces Γa and Γb of u do not match under a translation: …` | `test/Interface/periodic.jl`, rejected pairs |
+| A periodic piece that also carries another condition for that field | error `… has a periodic condition on Γ and a Dirichlet condition on the same piece` | same |
+| `dirichlet = :eliminate`, or `operators` | error `… does not support periodic conditions …` | same |
+| A space that is not a scalar Lagrange space (edge elements need orientation signs across the map) | error `… is not a nodal Lagrange space; periodic conditions are supported for scalar Lagrange spaces only …` | same, edge-element case |
+
+The operators keep every dof as an unknown. Each node of a class other than its master is tied
+to it by an algebraic row `u_node − u_master = 0`, and the Galerkin equation of the tied node is
+added to its master's, which is the condensed system `PᵀKP` of the identification. No boundary
+integral is assembled on a periodic piece, since the two contributions cancel for a periodic
+solution. The initial value of a tied node is its master's. A piece of a periodic pair cannot
+also carry a Dirichlet, Neumann or Robin condition for that field. `dirichlet = :eliminate` and
+[`operators`](@ref FiniteElementMethod.operators) do not support periodic conditions.
 
 ## Interface conditions
 
@@ -188,7 +250,9 @@ is an error that names the problem; nothing falls back to `mtkcompile`.
 | A time-dependent Robin coefficient, such as `Dn(u(t, Γ)) + (1 + t) * u(t, Γ) ~ 0` | error |
 | `FEMDiscretization(…; codegen = :mtk)` | error |
 | A mesh with mixed cell types | error |
-| A periodic condition `u(t, Γa) ~ u(t, Γb)` | error |
+| A periodic condition `u(t, Γa) ~ u(t, Γb)` between pieces that are not translates of each other | error naming both pieces |
+| A periodic piece that also carries a Dirichlet, Neumann or Robin condition for that field | error |
+| A periodic condition with `dirichlet = :eliminate`, or in `operators` | error |
 | A time argument between spatial arguments, such as `u(x, t, y)` | error |
 | Two Dirichlet pieces of one field sharing nodes | the condition listed last wins |
 | Boundary facets with no condition for a field | natural zero-flux condition, with one warning per `discretize` call when that field's equation has a flux; `natural` declares them, `boundary_check = :error` or `:off` |
