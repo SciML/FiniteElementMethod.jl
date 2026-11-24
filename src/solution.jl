@@ -108,8 +108,18 @@ function _locate(grid, pts)
 end
 
 _dh(md::FEMMetadata) = md.space.dh
-# The full dof vector of a solver state.
-_full(md::FEMMetadata, U) = md.elimination === nothing ? U : full_state(md.elimination, U)
+# `space` need not be a FEMSpace (the test problems of test/shared/heat.jl use `(; dh)`).
+_ties(md::FEMMetadata) = hasproperty(md.space, :ties) ? md.space.ties : ()
+# The full dof vector of a solver state. A periodic mirror dof reads as its master's value, so the
+# reported field satisfies the identifications whatever residual the solve left on the tie rows.
+function _full(md::FEMMetadata, U)
+    md.elimination === nothing || (U = full_state(md.elimination, U))
+    ties = _ties(md)
+    isempty(ties) && return U
+    out = copy(U)
+    foreach(((m, s),) -> out[m] = out[s], ties)
+    return out
+end
 _grid(md::FEMMetadata) = _dh(md).grid
 # Ferrite's FE values default to linear geometry, which breaks on quadratic cells.
 _geometry(md::FEMMetadata) = Ferrite.geometric_interpolation(Ferrite.getcelltype(_grid(md)))

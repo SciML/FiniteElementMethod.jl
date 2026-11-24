@@ -369,6 +369,28 @@ end
     end
 end
 
+# A mirror dof of a periodic pair carries the solve's residual for `u_mirror - u_master = 0`; the
+# field the solution reports lies on the periodic manifold, so mirrors read as their master's value.
+@testset "Periodic mirror dofs report their master's value" begin
+    grid = square_grid(4)
+    space = FiniteElementMethod.FEMSpace(grid, [:u => P1]; periodic = [(:u, :left, :right)])
+    md0, syms = heat_metadata(space.dh, (; u = P1); steady = true)
+    md = FEMMetadata(space, md0.time, md0.x̄, md0.fields, md0.pieces, nothing)
+    (; x, y, u) = syms
+    U = collect(Float64, 1:ndofs(space.dh))
+    prob = NonlinearProblem{true}(NonlinearFunction{true}((res, u, p) -> nothing), U, SciMLBase.NullParameters(), md)
+    raw = SciMLBase.build_solution(prob, nothing, U, zero(U); retcode = SciMLBase.ReturnCode.Success)
+    sol = SciMLBase.wrap_sol(raw)
+
+    masters = copy(U)
+    foreach(((m, s),) -> masters[m] = masters[s], space.ties)
+    @test !isempty(space.ties)
+    @test sol[u(x, y)] == Ferrite.evaluate_at_grid_nodes(space.dh, masters, :u)
+    for y0 in (0.3, 0.6, 0.8)
+        @test sol(1.0, y0; dv = u(x, y)) ≈ sol(0.0, y0; dv = u(x, y)) atol = 1.0e-14
+    end
+end
+
 # A fixed low facet quadrature order was exact only for straight facets up to P4.
 @testset "Facet-mean flux at high order and on curved facets" begin
     # u = x y⁴ is in P5; the inlet normal is -x, so the mean of -∂u/∂x = -y⁴ over [a, b] is -(b⁵ - a⁵) / (5 (b - a)).
