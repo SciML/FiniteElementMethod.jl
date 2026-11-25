@@ -21,7 +21,8 @@ problem with `time === nothing`, the `NonlinearProblem`), so that `solve` return
 `SciMLBase.PDETimeSeriesSolution` (or `SciMLBase.PDENoTimeSolution`) that is indexed and
 called in the variables of the `PDESystem`.
 
-  - `space`: the discrete space; only `space.dh::Ferrite.DofHandler` is used.
+  - `space`: the discrete space. The periodic ties (`mirror => master` dof pairs) are read from the
+    `FEMSpace` of a `FEMDiscretization`; of any other space only `space.dh::Ferrite.DofHandler` is used.
   - `time`: the time independent variable, or `nothing` for a steady problem.
   - `x̄`: the spatial independent variables in the order of the `(x, y) ∈ Ω` pairing;
     position `i` is coordinate component `i` of the mesh.
@@ -108,8 +109,19 @@ function _locate(grid, pts)
 end
 
 _dh(md::FEMMetadata) = md.space.dh
-# The full dof vector of a solver state.
-_full(md::FEMMetadata, U) = md.elimination === nothing ? U : full_state(md.elimination, U)
+_ties(md::FEMMetadata) = _ties(md.space)
+_ties(space::FEMSpace) = space.ties
+_ties(space) = ()
+# The full dof vector of a solver state. Every tied (non-prescribed) dof of a periodic class reads as its
+# master's value, whatever residual the solve left on the tie rows; prescribed dofs keep their Dirichlet data.
+function _full(md::FEMMetadata, U)
+    md.elimination === nothing || (U = full_state(md.elimination, U))
+    ties = _ties(md)
+    isempty(ties) && return U
+    out = collect(U)    # `copy` of a range is read-only
+    foreach(((m, s),) -> out[m] = out[s], ties)
+    return out
+end
 _grid(md::FEMMetadata) = _dh(md).grid
 # Ferrite's FE values default to linear geometry, which breaks on quadratic cells.
 _geometry(md::FEMMetadata) = Ferrite.geometric_interpolation(Ferrite.getcelltype(_grid(md)))
