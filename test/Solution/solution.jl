@@ -391,8 +391,40 @@ end
         @test sol(1.0, y0; dv = u(x, y)) ≈ sol(0.0, y0; dv = u(x, y)) atol = 1.0e-14
     end
 
-    # A transient solve leaves its own residual on the tie rows. The short final time and the constant
-    # source `v(0) = 1` give one well above the seam tolerance in the solver's raw states.
+end
+
+# Two saved states of the field (1 + t) g with known offsets on the mirror dofs, linear in between.
+@testset "Periodic seam of a saved time series" begin
+    grid = square_grid(4)
+    space = FiniteElementMethod.FEMSpace(grid, [:u => P1]; periodic = [(:u, :left, :right)])
+    md0, syms = heat_metadata(space.dh, (; u = P1))
+    md = FEMMetadata(space, md0.time, md0.x̄, md0.fields, md0.pieces, nothing)
+    (; t, x, y, u) = syms
+    g = p -> 2 + 3p[2] + abs(2p[1] - 1)
+    G = zeros(ndofs(space.dh))
+    apply_analytical!(G, space.dh, :u, g)
+    mirrors = first.(space.ties)
+    states = [copy(G), 2G]
+    states[1][mirrors] .+= 5
+    states[2][mirrors] .+= 15
+    saved = deepcopy(states)
+    ys = (0.3, 0.6, 0.8)
+    for (U, jump) in zip(states, (5, 15)), y0 in ys
+        @test direct_eval(grid, space.dh, U, :u, 1.0, y0) - direct_eval(grid, space.dh, U, :u, 0.0, y0) ≈ jump atol = 1.0e-12
+    end
+
+    prob = DAEProblem(DAEFunction{true}((res, du, v, p, t) -> nothing), zero(G), states[1], (0.0, 1.0), SciMLBase.NullParameters(), md)
+    raw = SciMLBase.build_solution(prob, DFBDF(), [0.0, 1.0], states; retcode = SciMLBase.ReturnCode.Success)
+    sol = SciMLBase.wrap_sol(raw)
+    nodes = Vec.(sol[x], sol[y])
+    @test sol[u(t, x, y)] ≈ [1, 2] .* permutedims(g.(nodes)) atol = 1.0e-12
+    for time in (0.0, 0.375, 1.0), x0 in (0.0, 1.0), y0 in ys
+        @test sol(time, x0, y0; dv = u(t, x, y)) ≈ (1 + time) * g(Vec(x0, y0)) atol = 1.0e-12
+    end
+    @test sol.original_sol.u == saved
+end
+
+@testset "Periodic seam of a DFBDF solve" begin
     t = t_nounits
     @variables x y u(..) v(..)
     Δ(w) = Differential(x)(Differential(x)(w)) + Differential(y)(Differential(y)(w))
