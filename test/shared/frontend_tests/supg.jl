@@ -12,6 +12,7 @@ using Symbolics: Symbolics, expand_derivatives
 
 @variables x y u(..) w(..)
 const Dt, Dx, Dy = Differential(t), Differential(x), Differential(y)
+Dx_(r) = Differential(r)
 sides(Ω) = boundarypiece.(Ω, (:left, :right, :bottom, :top))
 
 # u_t = εu″ − u′ on (0, 1), u(0) = 0, u(1) = 1, u(0, x) = x, marched to its steady state, the boundary layer
@@ -101,6 +102,22 @@ end
         @test norm(ops.M - M) <= 1.0e-12 * norm(M)
         @test norm(ops.K - K) <= 1.0e-12 * norm(K)
     end
+end
+
+@testset "SUPG τ(hK, b) keeps its cell-size argument when a coordinate is named hK" begin
+    # A coordinate declared as `hK` is the symbol the kernels use for the cell size, so rewriting the coordinates of
+    # τ's result must not touch the argument τ was called with: renaming the coordinate leaves both operators unchanged.
+    Ω = MeshDomain(rectangle_grid(Line, (4,)))
+    lo, hi = boundarypiece.(Ω, (:x1_lo, :x1_hi))
+    function operators_with(r)
+        eq = Dt(u(t, r)) ~ EPS * Dx_(r)(Dx_(r)(u(t, r))) - Dx_(r)(u(t, r))
+        @named pdesys = PDESystem([eq], [u(t, lo) ~ 0, u(t, hi) ~ 0, u(0, r) ~ 0], [r ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, r], [u(t, r)], [])
+        return FiniteElementMethod.operators(pdesys, FEMDiscretization(Ω, t; test_space = SUPG((h, b) -> h / 2)))
+    end
+    @variables z hK
+    renamed, collided = operators_with(z), operators_with(hK)
+    @test collided.M ≈ renamed.M atol = 1.0e-14
+    @test collided.K ≈ renamed.K atol = 1.0e-14
 end
 
 @testset verbose = true "SUPG front end" begin
