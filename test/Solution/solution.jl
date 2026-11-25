@@ -1,5 +1,6 @@
 using FiniteElementMethod, Ferrite, SciMLBase, Symbolics, Test
 using OrdinaryDiffEqBDF: DFBDF
+using ModelingToolkit: PDESystem, @named, t_nounits
 using FiniteElementMethod: FEMMetadata, piece_nodes, normal_flux, write_vtk
 
 include(joinpath(@__DIR__, "..", "shared", "heat.jl"))
@@ -389,6 +390,27 @@ end
     for y0 in (0.3, 0.6, 0.8)
         @test sol(1.0, y0; dv = u(x, y)) ≈ sol(0.0, y0; dv = u(x, y)) atol = 1.0e-14
     end
+
+    # A transient solve leaves its own residual on the tie rows. The short final time and the constant
+    # source `v(0) = 1` give one well above the seam tolerance in the solver's raw states.
+    t = t_nounits
+    @variables x y u(..) v(..)
+    Δ(w) = Differential(x)(Differential(x)(w)) + Differential(y)(Differential(y)(w))
+    Ω = MeshDomain(square_grid(6))
+    left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+    U, V = u(t, x, y), v(t, x, y)
+    eqs = [Differential(t)(U) ~ Δ(U), Differential(t)(V) ~ Δ(V) + U]
+    bcs = [
+        u(t, left) ~ u(t, right), u(t, bottom) ~ u(t, top), v(t, left) ~ v(t, right),
+        u(0, x, y) ~ sin(2pi * x) * cos(2pi * y), v(0, x, y) ~ 1,
+    ]
+    tend = 0.002
+    @named pdesys = PDESystem(eqs, bcs, [(x, y) ∈ Ω, t ∈ DomainSets.Interval(0.0, tend)], [t, x, y], [U, V], [])
+    disc = FEMDiscretization(Ω, t; spaces = Dict(u => P2, v => P1), natural = [bottom, top])
+    sol = solve(discretize(pdesys, disc), DFBDF(); abstol = 1.0e-10, reltol = 1.0e-10)
+    @test SciMLBase.successful_retcode(sol)
+    edge = collect(range(0.0, 1.0; length = 101))
+    @test maximum(abs, sol(tend, [0.0], edge; dv = U) .- sol(tend, [1.0], edge; dv = U)) <= 1.0e-12
 end
 
 # A fixed low facet quadrature order was exact only for straight facets up to P4.
