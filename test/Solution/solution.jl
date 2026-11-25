@@ -430,6 +430,22 @@ end
     @test sol(0.3, 0.6; dv = u(x, y)) ≈ g(Vec(0.3, 0.6)) atol = 1.0e-14
 end
 
+@testset "Periodic solution with read-only coefficients" begin
+    space = FiniteElementMethod.FEMSpace(square_grid(4), [:u => P1]; periodic = [(:u, :left, :right)])
+    md0, syms = heat_metadata(space.dh, (; u = P1); steady = true)
+    md = FEMMetadata(space, md0.time, md0.x̄, md0.fields, md0.pieces, nothing)
+    (; x, y, u) = syms
+    U = range(2.0, 2.0; length = ndofs(space.dh))
+    prob = NonlinearProblem{true}(NonlinearFunction{true}((res, u, p) -> nothing), U, SciMLBase.NullParameters(), md)
+    raw = SciMLBase.build_solution(prob, nothing, U, zeros(length(U)); retcode = SciMLBase.ReturnCode.Success)
+    sol = SciMLBase.wrap_sol(raw)
+    @test sol[u(x, y)] == fill(2.0, getnnodes(space.grid))
+    for x0 in (0.0, 1.0), y0 in (0.3, 0.6)
+        @test sol(x0, y0; dv = u(x, y)) ≈ 2.0 atol = 1.0e-14
+    end
+    @test sol.original_sol.u isa StepRangeLen
+end
+
 # A fixed low facet quadrature order was exact only for straight facets up to P4.
 @testset "Facet-mean flux at high order and on curved facets" begin
     # u = x y⁴ is in P5; the inlet normal is -x, so the mean of -∂u/∂x = -y⁴ over [a, b] is -(b⁵ - a⁵) / (5 (b - a)).

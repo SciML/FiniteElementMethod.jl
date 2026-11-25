@@ -118,7 +118,7 @@ function _full(md::FEMMetadata, U)
     md.elimination === nothing || (U = full_state(md.elimination, U))
     ties = _ties(md)
     isempty(ties) && return U
-    out = copy(U)
+    out = collect(U)    # `copy` of a range is read-only
     foreach(((m, s),) -> out[m] = out[s], ties)
     return out
 end
