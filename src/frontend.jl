@@ -199,9 +199,12 @@ function _slotted(space::SUPG, ctx, slots)
     ivs = ctx.t === nothing ? ctx.sivs : [ctx.sivs; ctx.t]
     to_slots = Dict(unwrap(iv) => unwrap(s) for (iv, s) in zip(ivs, ctx.t === nothing ? slots.X : [slots.X; slots.T]))
     slot(ex) = substitute(ex, to_slots)
-    # τ(hK, b) is called on fresh symbols for hK and the symbolic entries of b, so that substituting the coordinates
-    # cannot rewrite them when a coordinate is itself named like the cell-size slot or a slot of `b`.
+    # When a coordinate is itself named like the cell-size slot or a slot of `b`, substituting the coordinates into
+    # τ(hK, b) would rewrite those arguments, so τ is then called on fresh symbols for hK and the symbolic entries of
+    # `b`, which are restored afterwards. Otherwise τ sees hK and `b` as they are.
     function τ_of(hK, b)
+        coordinates = collect(keys(to_slots))
+        any(ex -> _depends(unwrap(Num(ex)), coordinates), (hK, b...)) || return slot(space.τ(hK, b))
         h = Symbolics.variable(gensym(:hK))
         fresh = [bd isa Union{Real, Complex} && !(bd isa Num) ? bd : Symbolics.variable(gensym(:b)) for bd in b]
         protected = slot(space.τ(h, fresh))
