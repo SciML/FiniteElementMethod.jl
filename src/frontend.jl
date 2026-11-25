@@ -203,9 +203,9 @@ function _slotted(space::SUPG, ctx, slots)
     # cannot rewrite them when a coordinate is itself named like the cell-size slot or a slot of `b`.
     function τ_of(hK, b)
         h = Symbolics.variable(gensym(:hK))
-        fresh = [bd isa Number ? bd : Symbolics.variable(gensym(:b)) for bd in b]
+        fresh = [bd isa Union{Real, Complex} && !(bd isa Num) ? bd : Symbolics.variable(gensym(:b)) for bd in b]
         protected = slot(space.τ(h, fresh))
-        return substitute(protected, Dict(h => hK, (unwrap(f) => bd for (f, bd) in zip(fresh, b) if !(f isa Number))...))
+        return substitute(protected, Dict(h => hK, (unwrap(f) => bd for (f, bd) in zip(fresh, b) if f isa Num)...))
     end
     τ = space.τ isa Function ? τ_of : slot(space.τ)
     return SUPG(τ, space.b === nothing ? nothing : map(slot, space.b))
