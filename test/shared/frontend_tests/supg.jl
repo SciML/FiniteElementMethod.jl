@@ -123,18 +123,21 @@ end
 @testset "SUPG τ(hK, b) keeps a symbolic b when a coordinate is named like a coordinate slot" begin
     # b = [y, 0] is mapped onto the second coordinate slot X₂; a first coordinate named X₂ must not capture it again.
     Ω = MeshDomain(rectangle_grid(Quadrilateral, (3, 3)))
-    function operators_with(r, s)
+    function operators_with(r, s, τ, b)
         U = u(t, r, s)
         eq = Dt(U) ~ EPS * (Differential(r)(Differential(r)(U)) + Differential(s)(Differential(s)(U))) - Differential(r)(U)
         bcs = [[u(t, g) ~ 0 for g in boundarypieces(Ω)]; u(0, r, s) ~ 0]
         @named pdesys = PDESystem([eq], bcs, [(r, s) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, r, s], [U], [])
-        space = SUPG((h, b) -> h * b[1]; b = [s, 0])
+        space = SUPG(τ; b = b(s))
         return FiniteElementMethod.operators(pdesys, FEMDiscretization(Ω, t; test_space = space))
     end
     X₂ = Symbolics.variable(:X, 2)
-    renamed, collided = operators_with(x, y), operators_with(X₂, y)
-    @test collided.M ≈ renamed.M atol = 1.0e-14
-    @test collided.K ≈ renamed.K atol = 1.0e-14
+    # the second τ compares the components of b, which stay equal when both read the same coordinate
+    for (τ, b) in (((h, b) -> h * b[1], s -> [s, 0]), ((h, b) -> isequal(b[1], b[2]) ? h : h / 2, s -> [s, s]))
+        renamed, collided = operators_with(x, y, τ, b), operators_with(X₂, y, τ, b)
+        @test collided.M ≈ renamed.M atol = 1.0e-14
+        @test collided.K ≈ renamed.K atol = 1.0e-14
+    end
 end
 
 @testset verbose = true "SUPG front end" begin

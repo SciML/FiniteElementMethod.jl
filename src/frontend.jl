@@ -206,7 +206,11 @@ function _slotted(space::SUPG, ctx, slots)
         coordinates = collect(keys(to_slots))
         any(ex -> _depends(unwrap(Num(ex)), coordinates), (hK, b...)) || return slot(space.τ(hK, b))
         h = Symbolics.variable(gensym(:hK))
-        fresh = [bd isa Union{Real, Complex} && !(bd isa Num) ? bd : Symbolics.variable(gensym(:b)) for bd in b]
+        placeholders = Dict{Any, Any}()
+        fresh = map(b) do bd
+            bd isa Union{Real, Complex} && !(bd isa Num) && return bd
+            return get!(() -> Symbolics.variable(gensym(:b)), placeholders, unwrap(bd))
+        end
         protected = slot(space.τ(h, fresh))
         return substitute(protected, Dict(h => hK, (unwrap(f) => bd for (f, bd) in zip(fresh, b) if f isa Num)...))
     end
