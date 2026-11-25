@@ -7,6 +7,7 @@ using FiniteElementMethod: AssemblyContext, assemble_linear
 using Ferrite: Ferrite, Vec, Triangle, RefTriangle, Lagrange, DofHandler, CellValues, FacetValues, QuadratureRule,
     FacetQuadratureRule, generate_grid, add!, close!
 using LinearAlgebra: norm
+using Random: Xoshiro
 using Symbolics
 using Test
 
@@ -326,9 +327,12 @@ end
     )
     for (name, ex) in zoo
         cse, reference = build(ex, slots, Val(false); cse = true), plain(ex)
+        # The long source cancels O(1) terms to a value of order 1e-4, so the two evaluation orders differ by up to 1e-13
+        # absolute (measured over 20 000 points), while a wrong common subexpression changes the value by 1e-3 or more.
+        rng = Xoshiro(1)
         for _ in 1:20
-            point = (0.5 + rand(), 0.5 + rand(), rand(), 0.5 + rand(), 0.5 + rand())
-            @test isapprox(cse(point...), reference(point...); rtol = 1.0e-12)
+            point = (0.5 + rand(rng), 0.5 + rand(rng), rand(rng), 0.5 + rand(rng), 0.5 + rand(rng))
+            @test isapprox(cse(point...), reference(point...); rtol = 1.0e-12, atol = 1.0e-11)
         end
     end
     # it does share: the long source evaluates fewer sin calls

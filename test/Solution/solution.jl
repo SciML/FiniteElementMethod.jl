@@ -1,5 +1,6 @@
 using FiniteElementMethod, Ferrite, SciMLBase, Symbolics, Test
 using OrdinaryDiffEqBDF: DFBDF
+using ModelingToolkit: PDESystem, @named, t_nounits
 using FiniteElementMethod: FEMMetadata, piece_nodes, normal_flux, write_vtk
 
 include(joinpath(@__DIR__, "..", "shared", "heat.jl"))
@@ -367,6 +368,114 @@ end
         # Inlet facets span y ∈ [0, 1/3], [1/3, 2/3], [2/3, 1]; -∂u/∂x is linear in y, so the facet mean is its midpoint value.
         @test normal_flux(sol, u(x, y), Γ) ≈ [-dgx(Vec(0.0, ym)) for ym in (1 / 6, 1 / 2, 5 / 6)] atol = 1.0e-12
     end
+end
+
+# A mirror dof of a periodic pair carries the solve's residual for `u_mirror - u_master = 0`; the
+# field the solution reports lies on the periodic manifold, so mirrors read as their master's value.
+@testset "Periodic mirror dofs report their master's value" begin
+    grid = square_grid(4)
+    space = FiniteElementMethod.FEMSpace(grid, [:u => P1]; periodic = [(:u, :left, :right)])
+    md0, syms = heat_metadata(space.dh, (; u = P1); steady = true)
+    md = FEMMetadata(space, md0.time, md0.x̄, md0.fields, md0.pieces, nothing)
+    (; x, y, u) = syms
+    U = collect(Float64, 1:ndofs(space.dh))
+    prob = NonlinearProblem{true}(NonlinearFunction{true}((res, u, p) -> nothing), U, SciMLBase.NullParameters(), md)
+    raw = SciMLBase.build_solution(prob, nothing, U, zero(U); retcode = SciMLBase.ReturnCode.Success)
+    sol = SciMLBase.wrap_sol(raw)
+
+    masters = copy(U)
+    foreach(((m, s),) -> masters[m] = masters[s], space.ties)
+    @test !isempty(space.ties)
+    @test sol[u(x, y)] == Ferrite.evaluate_at_grid_nodes(space.dh, masters, :u)
+    for y0 in (0.3, 0.6, 0.8)
+        @test sol(1.0, y0; dv = u(x, y)) ≈ sol(0.0, y0; dv = u(x, y)) atol = 1.0e-14
+    end
+
+end
+
+# Two saved states of the field (1 + t) g with known offsets on the mirror dofs, linear in between.
+@testset "Periodic seam of a saved time series" begin
+    grid = square_grid(4)
+    space = FiniteElementMethod.FEMSpace(grid, [:u => P1]; periodic = [(:u, :left, :right)])
+    md0, syms = heat_metadata(space.dh, (; u = P1))
+    md = FEMMetadata(space, md0.time, md0.x̄, md0.fields, md0.pieces, nothing)
+    (; t, x, y, u) = syms
+    g = p -> 2 + 3p[2] + abs(2p[1] - 1)
+    G = zeros(ndofs(space.dh))
+    apply_analytical!(G, space.dh, :u, g)
+    mirrors = first.(space.ties)
+    states = [copy(G), 2G]
+    states[1][mirrors] .+= 5
+    states[2][mirrors] .+= 15
+    saved = deepcopy(states)
+    ys = (0.3, 0.6, 0.8)
+    for (U, jump) in zip(states, (5, 15)), y0 in ys
+        @test direct_eval(grid, space.dh, U, :u, 1.0, y0) - direct_eval(grid, space.dh, U, :u, 0.0, y0) ≈ jump atol = 1.0e-12
+    end
+
+    prob = DAEProblem(DAEFunction{true}((res, du, v, p, t) -> nothing), zero(G), states[1], (0.0, 1.0), SciMLBase.NullParameters(), md)
+    raw = SciMLBase.build_solution(prob, DFBDF(), [0.0, 1.0], states; retcode = SciMLBase.ReturnCode.Success)
+    sol = SciMLBase.wrap_sol(raw)
+    nodes = Vec.(sol[x], sol[y])
+    @test sol[u(t, x, y)] ≈ [1, 2] .* permutedims(g.(nodes)) atol = 1.0e-12
+    for time in (0.0, 0.375, 1.0), x0 in (0.0, 1.0), y0 in ys
+        @test sol(time, x0, y0; dv = u(t, x, y)) ≈ (1 + time) * g(Vec(x0, y0)) atol = 1.0e-12
+    end
+    @test sol.original_sol.u == saved
+end
+
+@testset "Periodic seam of a DFBDF solve" begin
+    t = t_nounits
+    @variables x y u(..) v(..)
+    Δ(w) = Differential(x)(Differential(x)(w)) + Differential(y)(Differential(y)(w))
+    Ω = MeshDomain(square_grid(6))
+    left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+    U, V = u(t, x, y), v(t, x, y)
+    eqs = [Differential(t)(U) ~ Δ(U), Differential(t)(V) ~ Δ(V) + U]
+    bcs = [
+        u(t, left) ~ u(t, right), u(t, bottom) ~ u(t, top), v(t, left) ~ v(t, right),
+        u(0, x, y) ~ sin(2pi * x) * cos(2pi * y), v(0, x, y) ~ 1,
+    ]
+    tend = 0.002
+    @named pdesys = PDESystem(eqs, bcs, [(x, y) ∈ Ω, t ∈ DomainSets.Interval(0.0, tend)], [t, x, y], [U, V], [])
+    disc = FEMDiscretization(Ω, t; spaces = Dict(u => P2, v => P1), natural = [bottom, top])
+    sol = solve(discretize(pdesys, disc), DFBDF(); abstol = 1.0e-10, reltol = 1.0e-10)
+    @test SciMLBase.successful_retcode(sol)
+    edge = collect(range(0.0, 1.0; length = 101))
+    @test maximum(abs, sol(tend, [0.0], edge; dv = U) .- sol(tend, [1.0], edge; dv = U)) <= 1.0e-12
+end
+
+@testset "A custom space's `ties` property is not read" begin
+    dh = DofHandler(square_grid(2))
+    add!(dh, :u, P1)
+    close!(dh)
+    g = p -> 2 + 3p[2]
+    U = zeros(ndofs(dh))
+    apply_analytical!(U, dh, :u, g)
+    md0, syms = heat_metadata(dh, (; u = P1); steady = true)
+    md = FEMMetadata((; dh, ties = nothing), md0.time, md0.x̄, md0.fields, md0.pieces, nothing)
+    (; x, y, u) = syms
+    prob = NonlinearProblem{true}(NonlinearFunction{true}((res, u, p) -> nothing), U, SciMLBase.NullParameters(), md)
+    raw = SciMLBase.build_solution(prob, nothing, U, zero(U); retcode = SciMLBase.ReturnCode.Success)
+    sol = SciMLBase.wrap_sol(raw)
+    @test sol[u(x, y)] ≈ g.(Vec.(sol[x], sol[y])) atol = 1.0e-14
+    @test sol(0.3, 0.6; dv = u(x, y)) ≈ g(Vec(0.3, 0.6)) atol = 1.0e-14
+end
+
+@testset "Periodic solution with read-only coefficients" begin
+    space = FiniteElementMethod.FEMSpace(square_grid(4), [:u => P1]; periodic = [(:u, :left, :right)])
+    md0, syms = heat_metadata(space.dh, (; u = P1); steady = true)
+    md = FEMMetadata(space, md0.time, md0.x̄, md0.fields, md0.pieces, nothing)
+    (; x, y, u) = syms
+    U = range(2.0, 2.0; length = ndofs(space.dh))
+    prob = NonlinearProblem{true}(NonlinearFunction{true}((res, u, p) -> nothing), U, SciMLBase.NullParameters(), md)
+    raw = SciMLBase.build_solution(prob, nothing, U, zeros(length(U)); retcode = SciMLBase.ReturnCode.Success)
+    sol = SciMLBase.wrap_sol(raw)
+    @test sol[u(x, y)] == fill(2.0, getnnodes(space.grid))
+    for x0 in (0.0, 1.0), y0 in (0.3, 0.6)
+        @test sol(x0, y0; dv = u(x, y)) ≈ 2.0 atol = 1.0e-14
+    end
+    @test sol.original_sol.u isa StepRangeLen
 end
 
 # A fixed low facet quadrature order was exact only for straight facets up to P4.
