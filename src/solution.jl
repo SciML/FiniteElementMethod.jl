@@ -21,8 +21,8 @@ problem with `time === nothing`, the `NonlinearProblem`), so that `solve` return
 `SciMLBase.PDETimeSeriesSolution` (or `SciMLBase.PDENoTimeSolution`) that is indexed and
 called in the variables of the `PDESystem`.
 
-  - `space`: the discrete space: its `dh::Ferrite.DofHandler` and, if it has them, its periodic `ties`
-    (`mirror => master` dof pairs).
+  - `space`: the discrete space. The periodic ties (`mirror => master` dof pairs) are read from the
+    `FEMSpace` of a `FEMDiscretization`; of any other space only `space.dh::Ferrite.DofHandler` is used.
   - `time`: the time independent variable, or `nothing` for a steady problem.
   - `x̄`: the spatial independent variables in the order of the `(x, y) ∈ Ω` pairing;
     position `i` is coordinate component `i` of the mesh.
@@ -109,8 +109,9 @@ function _locate(grid, pts)
 end
 
 _dh(md::FEMMetadata) = md.space.dh
-# `space` need not be a FEMSpace (the test problems of test/shared/heat.jl use `(; dh)`).
-_ties(md::FEMMetadata) = hasproperty(md.space, :ties) ? md.space.ties : ()
+_ties(md::FEMMetadata) = _ties(md.space)
+_ties(space::FEMSpace) = space.ties
+_ties(space) = ()
 # The full dof vector of a solver state. Every tied (non-prescribed) dof of a periodic class reads as its
 # master's value, whatever residual the solve left on the tie rows; prescribed dofs keep their Dirichlet data.
 function _full(md::FEMMetadata, U)

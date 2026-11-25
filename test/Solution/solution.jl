@@ -413,6 +413,23 @@ end
     @test maximum(abs, sol(tend, [0.0], edge; dv = U) .- sol(tend, [1.0], edge; dv = U)) <= 1.0e-12
 end
 
+@testset "A custom space's `ties` property is not read" begin
+    dh = DofHandler(square_grid(2))
+    add!(dh, :u, P1)
+    close!(dh)
+    g = p -> 2 + 3p[2]
+    U = zeros(ndofs(dh))
+    apply_analytical!(U, dh, :u, g)
+    md0, syms = heat_metadata(dh, (; u = P1); steady = true)
+    md = FEMMetadata((; dh, ties = nothing), md0.time, md0.x̄, md0.fields, md0.pieces, nothing)
+    (; x, y, u) = syms
+    prob = NonlinearProblem{true}(NonlinearFunction{true}((res, u, p) -> nothing), U, SciMLBase.NullParameters(), md)
+    raw = SciMLBase.build_solution(prob, nothing, U, zero(U); retcode = SciMLBase.ReturnCode.Success)
+    sol = SciMLBase.wrap_sol(raw)
+    @test sol[u(x, y)] ≈ g.(Vec.(sol[x], sol[y])) atol = 1.0e-14
+    @test sol(0.3, 0.6; dv = u(x, y)) ≈ g(Vec(0.3, 0.6)) atol = 1.0e-14
+end
+
 # A fixed low facet quadrature order was exact only for straight facets up to P4.
 @testset "Facet-mean flux at high order and on curved facets" begin
     # u = x y⁴ is in P5; the inlet normal is -x, so the mean of -∂u/∂x = -y⁴ over [a, b] is -(b⁵ - a⁵) / (5 (b - a)).
