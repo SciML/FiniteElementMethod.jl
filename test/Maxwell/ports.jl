@@ -150,7 +150,7 @@ end
     E = field_values(sol, [Vec(WR90_A / 2, WR90_B / 2, 0.0), Vec(WR90_A / 8, WR90_B / 2, 0.0)]).E
     @test abs(E[1][2]) ≈ abs(1 + sweep.S[1, 1, 2]) rtol = 0.05  # incident plus reflected at the port face
     @test abs(E[2][2]) / abs(E[1][2]) ≈ sin(π / 8) rtol = 0.1
-    @test_throws "no wave ports" solve_sweep(MaxwellModel(generate_grid(Tetrahedron, (1, 1, 1))), [1.0])
+    @test_throws "no ports" solve_sweep(MaxwellModel(generate_grid(Tetrahedron, (1, 1, 1))), [1.0])
 end
 
 @testset "port rim must be PEC" begin
@@ -256,6 +256,13 @@ end
     @test length(model.ports) == 2
 end
 
+@testset "wave port S-parameters at zero frequency are rejected, not NaN" begin
+    model = wr90(5.0, 10.0)
+    U = zeros(ComplexF64, ndofs(model.dh), 2)
+    @test_throws "ω = 0 is not supported" FiniteElementMethod.s_parameters(model, 0.0, U)
+    @test_throws "ω = 0 is not supported" FiniteElementMethod.port_excitations(model, 0.0)
+end
+
 @testset "axial power of the incident mode: propagating ports carry it, evanescent ones do not" begin
     # Normalised guide with broad dimension a = 2, cutoff ω = π/2; the incident mode of unit amplitude is the
     # L² projection of the TE10 mode onto the discrete traces, with H = β/(ωμ) n × E.
@@ -277,7 +284,7 @@ end
     model = wr90(5.0, 10.0)
     @test_throws "positive frequencies" solve_sweep(model, [2π * 10.0e9, -2π * 10.0e9])
     @test_throws "positive frequencies" solve_sweep(model, [-2.0])
-    @test_throws "not supported for wave ports" FiniteElementMethod.port_excitations(model, -2.0)
+    @test_throws "is negative" FiniteElementMethod.port_excitations(model, -2.0)
 end
 
 @testset "the absorbing boundary of a lossless negative-permittivity material is outgoing" begin
