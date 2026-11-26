@@ -37,3 +37,41 @@ PrecompileTools.@setup_workload begin
         workload_chain()
     end
 end
+
+"""
+    workload_solution(; nel = 2)
+
+Lower a heat equation on an `nel × nel` triangle grid, wrap two hand-built saved states of it in a
+`PDETimeSeriesSolution` (a `DAESolution` of SciMLBase's own constructor, with linear interpolation, so no solver
+package is needed) and read it: a field, a projected gradient, and a scalar and a gridded point query. The precompile
+workload runs it, so that the first read of a solution does not infer the solution wrapper from scratch.
+The solution type is not the one a solver returns (no algorithm, linear interpolation), so only the reads that do not
+depend on it are fully covered; the first read of a solver's solution still specializes the rest.
+"""
+function workload_solution(; nel = 2)
+    @variables x y u(..)
+    t = ModelingToolkit.t_nounits
+    Dt, Dx, Dy = Differential(t), Differential(x), Differential(y)
+    Ω = MeshDomain(rectangle_grid(Ferrite.Triangle, (nel, nel)))
+    sides = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+    heat = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + 1
+    bcs = [[u(t, Γ) ~ 0 for Γ in sides]; u(0, x, y) ~ 0]
+    domains = [(x, y) ∈ Ω, t ∈ DomainSets.Interval(0.0, 1.0)]
+    system = ModelingToolkit.PDESystem([heat], bcs, domains, [t, x, y], [u(t, x, y)], []; name = :workload_solution)
+    prob = SciMLBase.discretize(system, FEMDiscretization(Ω, t))
+    ts = [0.0, 1.0]
+    us = [copy(prob.u0), copy(prob.u0)]
+    interp = SciMLBase.LinearInterpolation(ts, us)
+    sol = SciMLBase.build_solution(prob, nothing, ts, us; interp, dense = true, retcode = SciMLBase.ReturnCode.Success)
+    wrapped = SciMLBase.PDETimeSeriesSolution(sol, prob.problem_type)
+    field = u(t, x, y)
+    wrapped[field]
+    wrapped[Dx(field)]
+    wrapped(0.5, 0.3, 0.4; dv = field)
+    wrapped(ts, [0.3, 0.4], [0.2]; dv = field)
+    return nothing
+end
+
+PrecompileTools.@compile_workload begin
+    workload_solution()
+end
