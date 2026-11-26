@@ -1,0 +1,337 @@
+# Boundary terms of a MaxwellModel: tangential facet mass blocks, the first-order absorbing boundary and
+# rectangular-waveguide TE10 wave ports.
+
+"""
+    WavePort(facetset; a_direction, e_direction = nothing, deembed = 0.0)
+
+A TE10 wave port of a rectangular waveguide on the planar boundary facet set `facetset` of a
+[`MaxwellModel`](@ref). The port face must be the full guide cross-section, a rectangle with PEC on its rim,
+filled with one ordinary passive material: positive real permittivity (`real(eps_r) > 0`, no imaginary part), positive
+permeability (`mu_r > 0`) and zero conductivity. A complex `eps_r` (a lossy dielectric), a nonzero conductivity and a
+non-positive `eps_r` or `mu_r` (a negative-index or double-negative filling, whose outward power does not follow
+`β/μr`) are rejected.
+
+`a_direction` is a vector along the broad wall (the side of length `a`); the mode is
+`e = ê sin(π ξ / a)`, with `ξ` the distance from the edge of the rectangle along `a_direction` and `ê` the
+in-plane unit vector perpendicular to it. By default `ê` is `n × â` with its sign chosen so that its largest
+Cartesian component is positive, which gives both ends of a straight guide the same polarisation; pass
+`e_direction` to fix it explicitly. `deembed` moves the reference plane of the port a distance (in mesh units)
+from the port face into the device.
+
+The port is a single-mode termination: the outgoing TE10 admittance acts on the TE10 amplitude of the trace only,
+through the rank-one term `p pᵀ / norm` (see [`FiniteElementMethod.WavePortData`](@ref)), which couples all the dofs of
+the port face. The rest of the trace, the evanescent higher modes, sees the natural (magnetic-wall) boundary at the port
+plane: it is reflected, not absorbed, so a lossless single-mode structure conserves power. A discontinuity near the
+port then excites evanescent modes that the port does not terminate, and `S` depends on the lead length unless at
+least about one decay length of uniform guide, `1 / sqrt(kc² - k²)` for the first evanescent mode (`kc = 2π/a` for TE20,
+`π/b` for TE01, `k = ω sqrt(μ0 ε0 εr μr)`), separates the discontinuity from the port.
+
+Above cutoff the wave coefficients are power waves: the incident mode carries real axial power, and a lossless
+structure with only propagating ports has a unitary `S`. Below cutoff (`β = -iα`) the mode is evanescent and
+carries no real axial power, so the coefficients are generalized traveling-wave coefficients, normalised the same
+way and supported, but without an individual incident or outgoing power; `S` is then not power conserving.
+"""
+struct WavePort
+    facetset::String
+    a_direction::Ferrite.Vec{3, Float64}
+    e_direction::Union{Nothing, Ferrite.Vec{3, Float64}}
+    deembed::Float64
+end
+function WavePort(facetset; a_direction, e_direction = nothing, deembed::Real = 0.0)
+    e = e_direction === nothing ? nothing : Ferrite.Vec{3, Float64}(Tuple(e_direction))
+    return WavePort(String(facetset), Ferrite.Vec{3, Float64}(Tuple(a_direction)), e, float(deembed))
+end
+
+"""
+    WavePortData
+
+A [`WavePort`](@ref) assembled on a [`MaxwellModel`](@ref), in `model.ports`. Fields: `port`, `block` (the
+tangential mass `∮ (n × Nᵢ)⋅(n × Nⱼ) dS` of the port face), `profile` (`pᵢ = ∮ e⋅Nᵢ dS`), `norm`
+(`pᵀ B⁻¹ p` over the unconstrained edge dofs of the face: `∮ e_h⋅e_h dS` of the L² projection `e_h` of the
+mode onto the discrete tangential traces, so that a port-face field `c e_h` gives exactly `pᵀu / norm = c`),
+`coupling` (the rank-one `p pᵀ / norm` on the face dofs, the port's boundary term: it acts on the TE10 amplitude
+`pᵀu / norm` only), `normal` (outward), `a`, `b` (mesh units), `kc` (`π / (a L)`, rad/m),
+`eps_r` and `mu_r` of the port material (lossless: complex `eps_r` is rejected).
+"""
+struct WavePortData
+    port::WavePort
+    block::SparseMatrixCSC{Float64, Int}
+    coupling::SparseMatrixCSC{Float64, Int}
+    profile::Vector{Float64}
+    norm::Float64
+    normal::Ferrite.Vec{3, Float64}
+    a::Float64
+    b::Float64
+    kc::Float64
+    eps_r::ComplexF64
+    mu_r::Float64
+end
+
+function _check_facetset(grid, name)
+    return haskey(grid.facetsets, name) ||
+        throw(ArgumentError("no facet set $(repr(name)) in the grid; it has $(sort!(collect(keys(grid.facetsets))))"))
+end
+
+_facet_values() = Ferrite.FacetValues(Ferrite.FacetQuadratureRule{RefTetrahedron}(2), _NEDELEC)
+
+# ∮ w (n × Nᵢ)⋅(n × Nⱼ) dS over the named facet sets, with a real weight per cell, on the pattern of `pattern`.
+# Every edge dof of a facet belongs to the facet's cell, so the cell-based pattern holds every entry.
+function _tangential_mass(dh, pattern, names, weight)
+    block = copy(pattern)
+    asm = Ferrite.start_assemble(block)
+    fv = _facet_values()
+    n = Ferrite.getnbasefunctions(fv)
+    Be = zeros(n, n)
+    for name in names, fc in Ferrite.FacetIterator(dh, Ferrite.getfacetset(dh.grid, name))
+        Ferrite.reinit!(fv, fc)
+        fill!(Be, 0.0)
+        for q in 1:Ferrite.getnquadpoints(fv)
+            nq = Ferrite.getnormal(fv, q)
+            dS = Ferrite.getdetJdV(fv, q)
+            for i in 1:n, j in 1:n
+                Ni, Nj = Ferrite.shape_value(fv, q, i), Ferrite.shape_value(fv, q, j)
+                Be[i, j] += (dot(Ni, Nj) - dot(nq, Ni) * dot(nq, Nj)) * dS
+            end
+        end
+        Ferrite.assemble!(asm, Ferrite.celldofs(fc), weight(Ferrite.cellid(fc)) .* Be)
+    end
+    return block
+end
+
+"""
+    tangential_mass(model::MaxwellModel, facetsets; weight = cell -> 1.0)
+
+The real block `∮ w (n × Nᵢ)⋅(n × Nⱼ) dS` over the named facet sets of `model.grid` (in mesh units), with the
+weight `w = weight(cellid)` of the cell each facet belongs to, on the sparsity pattern of `model.blocks`, ready
+for [`FiniteElementMethod.add_term!`](@ref).
+"""
+function tangential_mass(model, facetsets; weight = Returns(1.0))
+    names = String.(collect(facetsets))
+    foreach(name -> _check_facetset(model.grid, name), names)
+    return _tangential_mass(model.dh, model.blocks.curlcurl, names, weight)
+end
+
+# y = sqrt(εc / μr), the admittance of the outgoing wave of the exterior medium, which is passive: Re y ≥ 0. That is
+# the principal root, except when εc / μr is a negative real (no loss), where the root is the limit of the lossy
+# side. A loss -iε'' in εc, -iμ'' in μr (their signs flip with ω) moves εc / μr off the axis by
+# -i sign(ω) (ε'' μr - εc μ'') / μr², whose sign is -sign(ω) sign(μr) when εc and μr have opposite signs. So
+# y = -i sign(ω) sign(μr) sqrt(|εc / μr|) there, which makes the exterior field decay, the term continuous in the loss
+# and A(-ω) = conj(A(ω)).
+function _admittance(εc, μr, ω)
+    z = εc / μr
+    return imag(z) == 0 && real(z) < 0 ? -im * sign(ω) * sign(real(μr)) * sqrt(-real(z)) : sqrt(z)
+end
+
+# First-order absorbing boundary n × (μr⁻¹ ∇ × E) = -i k0 ηr⁻¹ n × (n × E), with ηr⁻¹ = sqrt(εc / μr) and
+# εc = εr - iσ/(ωε0) of the adjacent cell: the term +i k0 L ηr⁻¹ ∮ (n × E)⋅(n × v) dS, one block per material.
+function _absorbing_terms(dh, pattern, names, cell_materials, mu0, eps0, L)
+    materials = unique(cell_materials[facet[1]] for name in names for facet in Ferrite.getfacetset(dh.grid, name))
+    return map(materials) do m
+        block = _tangential_mass(dh, pattern, names, cell -> Float64(cell_materials[cell] == m))
+        # The coefficient is ω √εc with εc ~ 1/ω for a conductor, so it tends to 0 as ω → 0.
+        MaxwellTerm(
+            block,
+            ω -> iszero(ω) ? 0.0im : im * ω * sqrt(mu0 * eps0) * L * _admittance(m.eps_r - im * m.sigma / (ω * eps0), m.mu_r, ω)
+        )
+    end
+end
+
+function _port_frame(port, normal)
+    a_dir = port.a_direction
+    abs(dot(a_dir, normal)) <= 1.0e-8 * norm(a_dir) ||
+        throw(ArgumentError("a_direction of port $(repr(port.facetset)) is not in the port plane"))
+    â = a_dir / norm(a_dir)
+    if port.e_direction === nothing
+        ê = cross(normal, â)
+        ê = ê[argmax(abs.(Tuple(ê)))] < 0 ? -ê : ê
+    else
+        ê = port.e_direction / norm(port.e_direction)
+        abs(dot(ê, normal)) + abs(dot(ê, â)) <= 1.0e-8 ||
+            throw(ArgumentError("e_direction of port $(repr(port.facetset)) must be in the port plane and normal to a_direction"))
+    end
+    return â, ê
+end
+
+function _wave_port(port::WavePort, dh, pattern, cell_materials, length_scale, constrained)
+    grid = dh.grid
+    _check_facetset(grid, port.facetset)
+    facets = Ferrite.getfacetset(grid, port.facetset)
+    isempty(facets) && throw(ArgumentError("port facet set $(repr(port.facetset)) is empty"))
+    fv = _facet_values()
+    # Geometry: one outward normal, the facet nodes and the area.
+    normal = nothing
+    nodes = Ferrite.Vec{3, Float64}[]
+    area = 0.0
+    for fc in Ferrite.FacetIterator(dh, facets)
+        Ferrite.reinit!(fv, fc)
+        nq = Ferrite.getnormal(fv, 1)
+        normal === nothing && (normal = nq)
+        norm(nq - normal) <= 1.0e-8 || throw(ArgumentError("port facet set $(repr(port.facetset)) is not planar"))
+        area += sum(q -> Ferrite.getdetJdV(fv, q), 1:Ferrite.getnquadpoints(fv))
+    end
+    for (cell, local_facet) in facets
+        x = Ferrite.getcoordinates(grid, cell)
+        append!(nodes, x[i] for i in _TET_FACET_NODES[local_facet])
+    end
+    â, ê = _port_frame(port, normal)
+    ξ, η, ζ = [dot(x, â) for x in nodes], [dot(x, ê) for x in nodes], [dot(x, normal) for x in nodes]
+    (ξ0, ξ1), (η0, η1) = extrema(ξ), extrema(η)
+    a, b = ξ1 - ξ0, η1 - η0
+    if maximum(ζ) - minimum(ζ) > 1.0e-8 * a || abs(area - a * b) > 1.0e-6 * a * b
+        throw(ArgumentError("port facet set $(repr(port.facetset)) is not a planar rectangle with a side along a_direction"))
+    end
+    materials = unique(cell_materials[f[1]] for f in facets)
+    length(materials) == 1 || throw(ArgumentError("port $(repr(port.facetset)) touches more than one material"))
+    material = only(materials)
+    iszero(material.sigma) || throw(ArgumentError("port $(repr(port.facetset)) is in a conducting material"))
+    iszero(imag(material.eps_r)) ||
+        throw(ArgumentError("port $(repr(port.facetset)) is in a lossy material (complex eps_r); the S-parameter power normalisation of a wave port assumes a lossless one"))
+    real(material.eps_r) > 0 && material.mu_r > 0 || throw(
+        ArgumentError("port $(repr(port.facetset)) is in a material with eps_r = $(material.eps_r) and mu_r = $(material.mu_r); a wave port needs a positive real permittivity and a positive permeability")
+    )
+
+    e(x) = ê * sin(π * (dot(x, â) - ξ0) / a)
+    profile = zeros(Ferrite.ndofs(dh))
+    n = Ferrite.getnbasefunctions(fv)
+    pe = zeros(n)
+    for fc in Ferrite.FacetIterator(dh, facets)
+        Ferrite.reinit!(fv, fc)
+        x = Ferrite.getcoordinates(fc)
+        fill!(pe, 0.0)
+        for q in 1:Ferrite.getnquadpoints(fv)
+            eq = e(Ferrite.spatial_coordinate(fv, q, x))
+            dS = Ferrite.getdetJdV(fv, q)
+            for i in 1:n
+                pe[i] += dot(eq, Ferrite.shape_value(fv, q, i)) * dS
+            end
+        end
+        Ferrite.assemble!(profile, Ferrite.celldofs(fc), pe)
+    end
+    block = _tangential_mass(dh, pattern, [port.facetset], Returns(1.0))
+    # The TE10 mode needs a PEC rim: every edge dof on just one port facet must be constrained.
+    count = Dict{Int, Int}()
+    for (cell, local_facet) in facets
+        cell_dofs = Ferrite.celldofs(dh, cell)
+        for i in _TET_FACET_EDGE_DOFS[local_facet]
+            count[cell_dofs[i]] = get(count, cell_dofs[i], 0) + 1
+        end
+    end
+    all(dof -> count[dof] > 1 || dof in constrained, keys(count)) ||
+        throw(ArgumentError("the rim of port $(repr(port.facetset)) is not PEC; name the guide walls in `pec`"))
+    free = setdiff(_pec_dofs(dh, grid, [port.facetset]), constrained)
+    isempty(free) && throw(ArgumentError("every edge dof of port $(repr(port.facetset)) is PEC-constrained; a port face cannot also be in `pec`"))
+    # An interior edge of the face in `pec` blocks part of the aperture, which the full-rectangle TE10 mode ignores.
+    any(dof -> count[dof] > 1 && dof in constrained, keys(count)) && throw(
+        ArgumentError("part of the face of port $(repr(port.facetset)) is in `pec`; only its rim may be PEC")
+    )
+    face = _wave_port_dofs(port, dh)
+    keep = falses(length(profile))
+    keep[face] .= true
+    profile[.!keep] .= 0  # the traces of the other edge functions vanish on the face, up to roundoff
+    norm_h = dot(profile[free], block[free, free] \ profile[free])
+    norm_h > 0 || throw(ArgumentError("the TE10 mode of port $(repr(port.facetset)) has no projection onto its free edge dofs"))
+    coupling = copy(pattern)
+    fill!(nonzeros(coupling), 0.0)
+    for j in face, k in nzrange(coupling, j)
+        i = rowvals(coupling)[k]
+        keep[i] && (nonzeros(coupling)[k] = profile[i] * profile[j] / norm_h)
+    end
+    return WavePortData(port, block, coupling, profile, norm_h, normal, a, b, π / (a * length_scale), material.eps_r, material.mu_r)
+end
+
+# The edge dofs of the facets of the port.
+function _wave_port_dofs(port, dh)
+    dofs = Set{Int}()
+    for (cell, local_facet) in Ferrite.getfacetset(dh.grid, port.facetset), i in _TET_FACET_EDGE_DOFS[local_facet]
+        push!(dofs, Ferrite.celldofs(dh, cell)[i])
+    end
+    return sort!(collect(dofs))
+end
+
+# β = sqrt(k² - kc²) on the branch Im β ≤ 0, so that the outgoing exp(-iβζ) decays below cutoff.
+function _propagation_constant(data::WavePortData, mu0eps0, ω)
+    β = sqrt(complex(ω^2 * mu0eps0 * data.eps_r * data.mu_r - data.kc^2))
+    return imag(β) > 0 ? -β : β
+end
+
+"""
+    propagation_constant(model::MaxwellModel, port, ω)
+
+The TE10 propagation constant `β` (rad/m) of wave port number `port` of `model` at angular frequency `ω`.
+Below cutoff `β = -iα` with `α > 0`, so the mode `exp(-iβζ)` decays away from the port.
+"""
+propagation_constant(model, port::Integer, ω::Real) =
+    _propagation_constant(model.ports[port], model.mu0 * model.eps0, float(ω))
+
+"""
+    cutoff_frequency(model::MaxwellModel, port)
+
+The TE10 cutoff frequency in Hz, `kc / (2π sqrt(μ0 ε0 Re(εr) μr))`, of wave port number `port` of `model`.
+"""
+function cutoff_frequency(model, port::Integer)
+    data = model.ports[port]
+    return data.kc / (2π * sqrt(model.mu0 * model.eps0 * real(data.eps_r) * data.mu_r))
+end
+
+# For the outgoing exp(-iβζ) convention the port adds +(iβ/μr) c e - 2(iβ/μr) E0 e to the boundary residual, with
+# c = pᵀu / norm the TE10 amplitude of the trace, e the mode and E0 = 1 the incident amplitude: +(iβ/μr) L p pᵀ / norm
+# on the operator and +2(iβ/μr) L E0 p on the load. Only the TE10 amplitude sees the port: the rest of the trace, which
+# is evanescent, has the natural boundary condition and absorbs no power.
+function _port_term(data::WavePortData, mu0eps0, L)
+    return MaxwellTerm(data.coupling, ω -> im * _propagation_constant(data, mu0eps0, _nonnegative_frequency(ω)) * L / data.mu_r)
+end
+# β depends on ω², so it is the outgoing condition for ω ≥ 0 only; the operator is finite at ω = 0 (the S-parameter
+# normalisation is not, and the sweeps reject it).
+_nonnegative_frequency(ω) = ω >= 0 ? ω : throw(ArgumentError("wave ports are not defined for negative frequencies (ω = $ω): their propagation constant depends on ω² and is the outgoing condition for ω ≥ 0 only"))
+
+# The propagation constants of all ports at ω. At exact cutoff β = 0, the wave impedance ωμ/β is infinite and the
+# power-wave scale of the S-parameters is 0/0, so it is an error rather than a NaN matrix.
+function _port_betas(model, ω)
+    ω > 0 || throw(
+        ArgumentError("ω = $ω is not supported for wave ports: the propagation constant and the S-parameter normalisation are defined for positive frequencies only, and a real system has S(-ω) = conj(S(ω))")
+    )
+    β = [_propagation_constant(data, model.mu0 * model.eps0, float(ω)) for data in model.ports]
+    j = findfirst(iszero, β)
+    j === nothing || throw(
+        ArgumentError("ω = $ω is exactly the TE10 cutoff of wave port $j, where its wave impedance is infinite and its S-parameters are undefined; use a nearby frequency")
+    )
+    return β
+end
+
+"""
+    port_excitations(model::MaxwellModel, ω)
+
+The load vectors of the wave ports of `model` at `ω`, one column per port: the TE10 mode of unit amplitude
+incident on that port, without the PEC constraints.
+"""
+function port_excitations(model, ω::Real)
+    B = zeros(ComplexF64, Ferrite.ndofs(model.dh), length(model.ports))
+    β = _port_betas(model, ω)
+    for (j, data) in pairs(model.ports)
+        B[:, j] .= (2im * β[j] * model.length_scale / data.mu_r) .* data.profile
+    end
+    return B
+end
+
+"""
+    s_parameters(model::MaxwellModel, ω, U)
+
+The scattering matrix from the solutions `U[:, j]` with port `j` driven by [`port_excitations`](@ref):
+`Sᵢⱼ = (pᵢᵀ uⱼ / Pᵢ - δᵢⱼ) sqrt(Pᵢ Zⱼ / (Pⱼ Zᵢ)) exp(iβᵢdᵢ + iβⱼdⱼ)`, with `Pᵢ = ∮ e⋅e dS`, the TE10 wave
+impedance `Zᵢ = ωμ0μr / βᵢ` and the de-embedding distances `dᵢ`. At exactly a port's cutoff `βᵢ = 0`, `Zᵢ` is
+infinite and the S-parameters are undefined, so this throws an `ArgumentError`. The wave coefficients are power
+waves for propagating ports only; below cutoff they are generalized traveling-wave coefficients (see [`WavePort`](@ref)).
+"""
+function s_parameters(model, ω::Real, U::AbstractMatrix)
+    ports = model.ports
+    β = _port_betas(model, ω)
+    # Wave scale |a|² P / Z, with Z ∝ μr / β: a power for a propagating port, a generalized coefficient below cutoff.
+    w = [sqrt(data.norm * β[i] / data.mu_r) for (i, data) in pairs(ports)]
+    shift = [exp(im * β[i] * data.port.deembed * model.length_scale) for (i, data) in pairs(ports)]
+    np = length(ports)
+    S = zeros(ComplexF64, np, np)
+    for j in 1:np, i in 1:np
+        S[i, j] = (dot(ports[i].profile, view(U, :, j)) / ports[i].norm - (i == j)) * w[i] / w[j] * shift[i] * shift[j]
+    end
+    return S
+end
