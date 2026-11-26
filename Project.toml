@@ -1,6 +1,6 @@
 name = "FiniteElementMethod"
 uuid = "e08948db-0ae8-498a-9b98-73fc7f237ce3"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Alex Jones <alex.w.jones1994@gmail.com>"]
 
 [deps]
