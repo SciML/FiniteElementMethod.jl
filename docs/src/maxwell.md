@@ -94,6 +94,44 @@ Z = FiniteElementMethod.z_parameters(model, S)
 The port couples all its edge dofs to each other, which widens the sparsity pattern, so keep the sheet a
 few elements across.
 
+## Far field, radiated power and directivity
+
+[`far_field`](@ref) transforms the solution on a closed facet set inside the mesh, the Huygens surface, into
+the far field: Love's equivalent currents `J = n × H` and `M = -n × E` on its outward normal radiate into
+vacuum, and with `exp(+iωt)` the result is the pair `E_θ, E_φ` of `r e^{ikr} E` as `r → ∞`. The surface must
+enclose every source, port and conductor, lie in vacuum, touch no PEC facet and be star-shaped about its
+`center` (default: its centroid), which decides the outward side; a sphere or box between the antenna and an
+absorbing boundary is the usual choice, and Gmsh physical groups name it. `H = (i/ωμ0) ∇ × E` is averaged
+over the cells on both sides of each facet. [`radiated_power`](@ref) integrates the Poynting flux through the
+surface (`method = :flux`) or the radiation intensity over the sphere (`method = :far_field`), and
+[`directivity`](@ref) is `4πU/P` with the far-field power, so it does not depend on the overall amplitude.
+
+The far field contains only the outgoing wave, while the flux and the port impedance also feel the wave the
+first-order absorbing sphere reflects back, about `1/(kR)²` in amplitude for a dipole field at radius `R`
+(5 % at `R = 0.75λ`): directivity and pattern are accurate on coarse meshes, the impedance needs the boundary
+a wavelength or more away.
+
+```julia
+using FiniteElementMethod, Ferrite
+# `grid` from Gmsh (FerriteGmsh.togrid) with facet sets "outer", "huygens", "strip" and "gap" (in metres).
+model = MaxwellModel(grid; pec = ["strip"], absorbing = ["outer"], ports = [LumpedPort("gap"; direction = (0, 0, 1))])
+sweep = solve_sweep(model, [2π * 3.0e8]; fields = true)
+Zin = only(FiniteElementMethod.z_parameters(model, sweep.S[:, :, 1]))
+sol = MaxwellSolution(model, 2π * 3.0e8, sweep.fields[1][:, 1])
+θs = range(0, π; length = 91)
+ff = far_field(sol, "huygens", [Vec(sin(θ), 0.0, cos(θ)) for θ in θs])  # E-plane cut
+D = directivity(sol, "huygens", [Vec(1.0, 0.0, 0.0)])
+```
+
+`examples/dipole` builds this model for a strip dipole (Gmsh OCC: an absorbing sphere, a Huygens sphere and a
+zero-thickness strip with a centre gap, graded towards the strip) and finds its resonance, impedance,
+directivity and beamwidth; `test/Maxwell/dipole.jl` runs a coarse version, and the full-size one with
+`FEM_MAXWELL_DIPOLE=1`. On the full mesh (1.4e5 edge dofs, a strip of equivalent radius 0.005λ, the absorbing
+sphere at 1λ) the dipole resonates at a length of 0.456λ with `R = 69.6 Ω`; at resonance `D = 1.636`
+(2.14 dBi, against 1.641 for the thin half-wave dipole), the half-power beamwidth is 78.5° (78.1°) and the
+E-plane pattern is within 0.06 dB of `cos(π/2 cos θ)/sin θ` over 30°–150°. The resonant length is still
+rising with refinement near the strip (0.437λ, 0.451λ, 0.456λ as the element size there halves).
+
 ```@docs
 MaxwellModel
 MaxwellMaterial
@@ -118,6 +156,9 @@ MaxwellSweep
 FiniteElementMethod.umfpack_solver
 FiniteElementMethod.tangential_mass
 FiniteElementMethod.port_excitations
+far_field
+radiated_power
+directivity
 FiniteElementMethod.s_parameters
 FiniteElementMethod.propagation_constant
 FiniteElementMethod.cutoff_frequency
