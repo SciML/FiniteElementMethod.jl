@@ -146,14 +146,15 @@ end
     @test_throws "dirichlet = :eliminate does not support periodic conditions" lower([u(t, left) ~ u(t, right); dirichlet; ic]; dirichlet = :eliminate)
 end
 
-# BCs:    a periodic pair for a field whose space is not a scalar Lagrange space (an edge element)
-# Shows:  the unsupported combination is refused with an error naming the space, rather than giving a wrong answer.
+# BCs:    a periodic pair for a field whose space is not a nodal Lagrange space (here a discontinuous one)
+# Shows:  the unsupported combination is refused with an error naming the space, rather than giving a wrong answer. (A
+#         Nédélec space belongs to the frequency-domain Maxwell path, which refuses periodic pairs itself.)
 @testset "periodic conditions on a non-Lagrange space are rejected" begin
     Ω = unit_square(Triangle, 4)
     left, right, bottom, top = sides(Ω)
     bcs = [u(t, left) ~ u(t, right), u(t, bottom) ~ 0, u(t, top) ~ 0, u(0, x, y) ~ 0]
     @named pdesys = PDESystem([heat], bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], [])
-    disc = FEMDiscretization(Ω, t; spaces = Dict(u => Ferrite.Nedelec{RefTriangle, 1}()))
+    disc = FEMDiscretization(Ω, t; spaces = Dict(u => Ferrite.DiscontinuousLagrange{RefTriangle, 1}()))
     @test_throws "is not a nodal Lagrange space" discretize(pdesys, disc)
 end
 

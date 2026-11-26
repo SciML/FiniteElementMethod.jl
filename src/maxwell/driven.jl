@@ -61,6 +61,23 @@ function driven_problem(model::MaxwellModel, ω::Real, J)
 end
 
 """
+    driven_problem(model::MaxwellModel, ω; load)
+
+The `LinearProblem` `A(ω) u = load` as for `driven_problem(model, ω, J)`, with the load vector given
+directly instead of from a current density: `load` is indexed by the dofs of `model.dh`, holds
+`∫ f ⋅ Nᵢ` for a source `f` of the equation divided through as in [`MaxwellModel`](@ref), and is
+copied before the PEC constraints are applied.
+"""
+function driven_problem(model::MaxwellModel, ω::Real; load::AbstractVector{<:Number})
+    length(load) == Ferrite.ndofs(model.dh) ||
+        throw(ArgumentError("load has $(length(load)) entries but the model has $(Ferrite.ndofs(model.dh)) dofs"))
+    A = maxwell_operator(model, float(ω))
+    b = Vector{ComplexF64}(load)
+    Ferrite.apply!(A, b, model.ch)
+    return SciMLBase.LinearProblem(A, b)
+end
+
+"""
     MaxwellSolution(model, omega, u)
 
 The electric field of a [`MaxwellModel`](@ref) at angular frequency `omega`: `u` is the complex vector of
