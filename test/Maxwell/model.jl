@@ -206,6 +206,24 @@ end
     @test b_ab ≈ FiniteElementMethod.maxwell_rhs(model, 2.0, summed)
 end
 
+@testset "point evaluation on a 1e-11 and a metre-scale tetrahedron" begin
+    # a + b × x/h is in the lowest-order edge space, so its L2 projection reproduces it and its curl 2b/h exactly.
+    a, b = ComplexF64[1 + 0.2im, -2 + 0.3im, 3 - 0.4im], ComplexF64[0.5, -1 + 0.1im, 2]
+    for h in (1.0e-11, 1.0)
+        x2, x3, x4 = Vec(h, 0.1h, 0.0), Vec(0.2h, h, 0.0), Vec(0.1h, 0.3h, h)
+        grid = Grid([Tetrahedron((1, 2, 3, 4))], Node.([Vec(0.0, 0.0, 0.0), x2, x3, x4]))
+        model = MaxwellModel(grid; eps0 = 1.0, mu0 = 1.0)
+        E(x) = a .+ cross(b, collect(x) ./ h)
+        u = Matrix(model.blocks.eps_real) \ FiniteElementMethod.maxwell_rhs(model, 1.0, x -> im .* E(x))
+        inside = 0.2 * x2 + 0.3 * x3 + 0.1 * x4
+        outside = 0.5 * (x2 + x3 + x4)    # reference coordinates (0.5, 0.5, 0.5)
+        vals = field_values(MaxwellSolution(model, 1.0, u), [inside, outside])
+        @test collect(vals.E[1]) ≈ E(inside) rtol = 1.0e-10
+        @test collect(vals.curlE[1]) ≈ 2 .* b ./ h rtol = 1.0e-10
+        @test all(isnan, vals.E[2]) && all(isnan, vals.curlE[2])
+    end
+end
+
 @testset "point evaluation finds points the nearest-node search misses" begin
     nodes = Node.([(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (0.35, 0.35, 0.35), (0.36, 0.35, 0.35), (0.35, 0.36, 0.35), (0.35, 0.35, 0.36)])
     grid = Grid(Tetrahedron.([(1, 2, 3, 4), (5, 6, 7, 8)]), nodes)
