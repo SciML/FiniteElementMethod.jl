@@ -12,9 +12,10 @@ function _piece_dofs(dh, field, grid, set)
 end
 
 # Points are matched in coordinates scaled by a per-axis tolerance, so a match is a distance of at most 1, on a grid of
-# cells of side 1 looking in the neighbouring cells too. The scaled coordinates are relative to the corner of the mesh and
-# at most about 1e6 in size, so the integer keys cannot overflow.
-_cell_key(point) = Tuple(floor.(Int, point))
+# cells of side 1 looking in the neighbouring cells too. The scaled coordinates are relative to the corner of the dofs' own
+# bounding box, from whose extent the tolerance comes, so they are at most about 1e6 in size; the clamp keeps any other point
+# (a facet point of a degenerate mesh) from overflowing the integer keys, and such a point matches nothing.
+_cell_key(point) = Tuple(floor.(Int, clamp.(point, -1.0e15, 1.0e15)))
 
 # Nearest points of `to` to `from[d] + shift` (in scaled coordinates), as `from_dof => to_dof`, and the `from` dofs with no
 # point of `to` within distance 1.
@@ -63,16 +64,16 @@ function _matching_problem(coords, scaled, da, db, matched, unmatched, shift, ss
     return nothing
 end
 
-# The points of each facet of the set at a quadrature rule of the mesh geometry, scaled by `tolerance`. The rule is exact to
-# twice the geometric order with positive weights, so two facets whose maps agree at its points are the same facet, and it is
-# symmetric, so the set of points does not depend on the orientation of the facet in its cell.
-function _facet_points(grid, set, tolerance)
+# The points of each facet of the set at a quadrature rule of the mesh geometry, relative to `lo` and scaled by `tolerance`.
+# The rule is exact to twice the geometric order with positive weights, so two facets whose maps agree at its points are the
+# same facet, and it is symmetric, so the set of points does not depend on the orientation of the facet in its cell.
+function _facet_points(grid, set, lo, tolerance)
     ip = Ferrite.geometric_interpolation(Ferrite.getcelltype(grid))
     fv = Ferrite.FacetValues(Ferrite.FacetQuadratureRule{Ferrite.getrefshape(ip)}(2 * _order(ip)), ip, ip)
     return map(collect(Ferrite.getfacetset(grid, String(set)))) do (cell, facet)
         x = Ferrite.getcoordinates(grid, cell)
         Ferrite.reinit!(fv, Ferrite.getcells(grid, cell), x, facet)
-        [Vector(Ferrite.spatial_coordinate(fv, q, x)) ./ tolerance for q in 1:Ferrite.getnquadpoints(fv)]
+        [(Vector(Ferrite.spatial_coordinate(fv, q, x)) - lo) ./ tolerance for q in 1:Ferrite.getnquadpoints(fv)]
     end
 end
 
@@ -117,8 +118,8 @@ function periodic_ties(grid, dh, nodes, relative, periodic, prescribed; dirichle
     hi = reduce((a, b) -> max.(a, b), relative)
     # One tolerance per axis, a fraction of the extent of the mesh along it, so a thin mesh keeps its translations.
     tolerance = max.(1.0e-6 .* (hi - lo), floatmin(Float64))
-    scaled = [c ./ tolerance for c in relative]
-    corner = coords[1] - relative[1]
+    scaled = [(c - lo) ./ tolerance for c in relative]
+    origin = coords[1] - relative[1] + lo
     parent = collect(1:Ferrite.ndofs(dh))
     root(d) = parent[d] == d ? d : (parent[d] = root(parent[d]))
     for (field, a, b) in periodic
@@ -130,7 +131,7 @@ function periodic_ties(grid, dh, nodes, relative, periodic, prescribed; dirichle
         norm(sshift) <= 1 && throw(ArgumentError("periodic pieces $names coincide: their centroids are the same point, so there is no translation between them"))
         matched, unmatched = _match_translate(scaled, da, db, sshift)
         problem = _matching_problem(coords, scaled, da, db, matched, unmatched, shift, sshift, a, b)
-        problem === nothing && (problem = _facet_problem(_facet_points(grid, a, tolerance), _facet_points(grid, b, tolerance), sshift, corner, tolerance, a, b))
+        problem === nothing && (problem = _facet_problem(_facet_points(grid, a, lo, tolerance), _facet_points(grid, b, lo, tolerance), sshift, origin, tolerance, a, b))
         problem === nothing || throw(
             ArgumentError(
                 "periodic pieces $names do not match under a translation: $problem; the translation between their centroids is " *

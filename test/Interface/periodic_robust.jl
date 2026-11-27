@@ -123,6 +123,14 @@ const MISMATCH = "periodic pieces Γ_left and Γ_right of u do not match under a
     q2ties(grid) = FEMSpace(grid, [:u => Lagrange{RefQuadrilateral, 2}()]; periodic = [(:u, "left", "right")]).ties
     @test length(q2ties(slanted(0.0))) == 3
     @test q2ties(slanted(x0)) == q2ties(slanted(0.0))
+    # A field restricted to a cell 1e-14 wide at x = 1, in a mesh that reaches x = 0: positions are measured from the corner of
+    # the field's dofs, whose extent gives the tolerance, not from the corner of the mesh.
+    d = 1.0e-14
+    narrow = Grid(
+        [Quadrilateral((1, 2, 5, 4)), Quadrilateral((2, 3, 6, 5))], Node.([Vec(0.0, 0.0), Vec(1.0, 0.0), Vec(1.0 + d, 0.0), Vec(0.0, 1.0), Vec(1.0, 1.0), Vec(1.0 + d, 1.0)]);
+        cellsets = Dict("narrow" => Set([2])), facetsets = Dict("bottom" => [Ferrite.FacetIndex(2, 1)], "top" => [Ferrite.FacetIndex(2, 3)])
+    )
+    @test length(FEMSpace(narrow, [:u => Lagrange{RefQuadrilateral, 1}()]; periodic = [(:u, "bottom", "top")], regions = Dict(:u => "narrow")).ties) == 2
 end
 
 # BCs:    left and right periodic on one nine-node quadrilateral, with the default Q1 field
