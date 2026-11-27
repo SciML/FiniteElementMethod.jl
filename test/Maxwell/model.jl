@@ -55,13 +55,16 @@ end
         FiniteElementMethod.maxwell_rhs(model, 1.0e10, x -> [1.0, 0.0, 0.0])
     @test solve_driven(model, 10_000_000_000, x -> [1.0, 0.0, 0.0]).u ==
         solve_driven(model, 1.0e10, x -> [1.0, 0.0, 0.0]).u
-    # A further term with a general coefficient function, as boundary blocks are added.
+    # A further term with a general coefficient function, as boundary blocks are added; an asymmetric block
+    # keeps its asymmetric part.
     extra = copy(model.blocks.sigma)
-    nonzeros(extra) .= rand(nnz(extra))
+    nonzeros(extra) .= 1:nnz(extra)
+    @test !issymmetric(extra)
     c(ω) = im * sqrt(ω) - 2.0
     A0 = maxwell_operator(model, 5.0)
     FiniteElementMethod.add_term!(model, extra, c)
     @test maxwell_operator(model, 5.0) ≈ A0 + c(5.0) * extra
+    @test maxwell_operator(model, 5.0) - transpose(maxwell_operator(model, 5.0)) ≈ c(5.0) * (extra - transpose(extra))
     @test_throws "sparsity pattern" FiniteElementMethod.add_term!(model, sprand(size(extra)..., 0.01), c)
 end
 
@@ -139,6 +142,68 @@ end
     m = MaxwellModel(unit_cube(2); length_scale = 0.5)
     @test FiniteElementMethod.maxwell_rhs(m, 3.0, J) ≈
         -im * 3.0 * FiniteElementMethod.MU0 * 0.25 .* FiniteElementMethod.maxwell_rhs(MaxwellModel(unit_cube(2); mu0 = 1.0), 1.0, x -> im .* J(x))
+end
+
+@testset "a current callback may assemble on the same model" begin
+    model = MaxwellModel(unit_cube(2); eps0 = 1.0, mu0 = 1.0)
+    J(x) = [1.0 + x[2], x[3], x[1] * x[2]]
+    nested_calls = Ref(0)
+    function nested(x)
+        nested_calls[] += 1
+        nested_calls[] == 1 && driven_problem(model, 2.0, J)
+        return J(x)
+    end
+    prob = driven_problem(model, 2.0, nested)
+    @test nested_calls[] > 1
+    @test prob.b == driven_problem(model, 2.0, J).b
+end
+
+@testset "point evaluation takes the side of a normal jump that contains the point" begin
+    # Constant per half, normal to the interface x = 0.5: the edge space holds it exactly.
+    model = MaxwellModel(unit_cube(2); eps0 = 1.0, mu0 = 1.0)
+    E_jump(x) = x[1] < 0.5 ? [1.0, 0.0, 0.0] : [-2.0, 0.0, 0.0]
+    sol = solve_driven(model, 2.0, x -> -2im .* E_jump(x))
+    for δ in (1.0e-3, 1.0e-7)
+        vals = field_values(sol, [Vec(0.5 - δ, 0.3, 0.6), Vec(0.5 + δ, 0.3, 0.6), Vec(1 + δ, 0.3, 0.6)])
+        @test collect(vals.E[1]) ≈ [1, 0, 0] atol = 1.0e-10
+        @test collect(vals.E[2]) ≈ [-2, 0, 0] atol = 1.0e-10
+        @test all(isnan, vals.E[3]) && all(isnan, vals.curlE[3])
+    end
+end
+
+@testset "real input types" begin
+    grid = unit_cube(2)
+    reference = MaxwellModel(grid; length_scale = 0.125, eps0 = 1.0, mu0 = 1.0)
+    for kw in ((; length_scale = 0.125f0), (; eps0 = 1.0f0), (; mu0 = 1.0f0))
+        model = MaxwellModel(grid; length_scale = 0.125, eps0 = 1.0, mu0 = 1.0, kw...)
+        @test maxwell_operator(model, 3.0) == maxwell_operator(reference, 3.0)
+        @test FiniteElementMethod.maxwell_rhs(model, 3.0, x -> [1.0, 0.0, 0.0]) ==
+            FiniteElementMethod.maxwell_rhs(reference, 3.0, x -> [1.0, 0.0, 0.0])
+    end
+    si = MaxwellModel(grid)
+    A16 = maxwell_operator(si, Float16(1000))
+    @test all(isfinite, nonzeros(A16)) && A16 == maxwell_operator(si, 1000.0)
+    @test maxwell_operator(si, Complex{Float16}(1000)) == maxwell_operator(si, 1000.0 + 0.0im)
+    @test FiniteElementMethod.maxwell_rhs(si, Float16(1000), x -> [1.0, 0.0, 0.0]) ==
+        FiniteElementMethod.maxwell_rhs(si, 1000.0, x -> [1.0, 0.0, 0.0])
+    @test driven_problem(si, Float16(1000), x -> [1.0, 0.0, 0.0]).b == driven_problem(si, 1000.0, x -> [1.0, 0.0, 0.0]).b
+    for L in (0.0, -1.0, Inf, NaN)
+        @test_throws "length_scale" MaxwellModel(grid; length_scale = L)
+    end
+end
+
+@testset "overlapping named currents superpose" begin
+    model = MaxwellModel(unit_cube(2); eps0 = 1.0, mu0 = 1.0)
+    addcellset!(model.grid, "a", x -> x[1] <= 0.5)
+    addcellset!(model.grid, "b", x -> x[2] <= 0.5)
+    Ja, Jb = [1.0, 0.0, 0.0], [0.5, 2.0, 0.0]
+    summed(x) = (x[1] < 0.5 ? Ja : zeros(3)) .+ (x[2] < 0.5 ? Jb : zeros(3))
+    ab = Base.ImmutableDict("a" => Ja, "b" => Jb)
+    ba = Base.ImmutableDict("b" => Jb, "a" => Ja)
+    @test collect(keys(ab)) == reverse(collect(keys(ba)))
+    b_ab, b_ba = (FiniteElementMethod.maxwell_rhs(model, 2.0, J) for J in (ab, ba))
+    @test b_ab == b_ba
+    @test b_ab ≈ FiniteElementMethod.maxwell_rhs(model, 2.0, summed)
 end
 
 @testset "point evaluation finds points the nearest-node search misses" begin

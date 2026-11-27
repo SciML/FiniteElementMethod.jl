@@ -56,7 +56,8 @@ rest of the boundary.
 
 `materials` maps cell set names of `grid` (as `FerriteGmsh.togrid` makes from Gmsh physical groups) to
 [`MaxwellMaterial`](@ref)s; cells in no named set are vacuum, and a cell in two named sets is an error.
-Mesh coordinates are in units of `length_scale` metres. `eps0` and `mu0` default to their SI values;
+Mesh coordinates are in units of `length_scale` metres, which must be finite and positive. `length_scale`, `eps0`
+and `mu0` are stored as `Float64`; `eps0` and `mu0` default to their SI values;
 `eps0 = mu0 = 1` with `length_scale = 1` gives normalised units with `c = 1`.
 
 Galerkin discretisation divided through by `length_scale` (`L`) gives `A(ω) u = b`, where `A` is a sum of real
@@ -65,7 +66,8 @@ sparse blocks on one sparsity pattern, each with a complex coefficient that is a
     A(ω) = Kc - ω² μ0 ε0 L² (Mε' + i Mε'') + iω μ0 L² Mσ,
 
 `Kc = ∫ μr⁻¹ ∇×Nᵢ ⋅ ∇×Nⱼ`, `Mε' = ∫ Re(εr) Nᵢ⋅Nⱼ`, `Mε'' = ∫ Im(εr) Nᵢ⋅Nⱼ` and `Mσ = ∫ σ Nᵢ⋅Nⱼ` over the
-mesh (so `Im(εr) = -ε''` gives the `+iω²μ0ε0L² ε''` loss term). `A` is complex symmetric, not Hermitian.
+mesh (so `Im(εr) = -ε''` gives the `+iω²μ0ε0L² ε''` loss term). The volume operator is complex symmetric, not
+Hermitian; additional terms preserve symmetry when their blocks are symmetric.
 
 Fields: `grid`, `dh`, `ch` (zero `AffineConstraint`s on the PEC edge dofs), `cellvalues`, `materials` (one
 per cell), `pec`, `eps0`, `mu0`, `length_scale`, `blocks` (the volume blocks `curlcurl`, `eps_real`,
@@ -92,6 +94,9 @@ function MaxwellModel(
     )
     Ferrite.getcelltype(grid) === Ferrite.Tetrahedron ||
         throw(ArgumentError("MaxwellModel needs a grid of Tetrahedron cells, got $(Ferrite.getcelltype(grid))"))
+    isfinite(length_scale) && length_scale > 0 ||
+        throw(ArgumentError("length_scale must be finite and positive, got $length_scale"))
+    length_scale, eps0, mu0 = Float64(length_scale), Float64(eps0), Float64(mu0)
     pec = String.(collect(pec))
     for name in pec
         haskey(grid.facetsets, name) ||
@@ -193,13 +198,19 @@ function _assemble_blocks(dh, cv, cell_materials)
     return mats
 end
 
+# The angular frequency in at least Float64, real or complex: ω^2 overflows above ~3e9 rad/s for an integer and
+# above 255 rad/s for a Float16.
+_frequency(ω::Number) = convert(promote_type(typeof(float(ω)), Float64), ω)
+
 _same_pattern(A, B) = A.colptr == B.colptr && rowvals(A) == rowvals(B)
 
 """
     add_term!(model::MaxwellModel, block, coefficient)
 
 Append the term `coefficient(ω) * block` to the system matrix of `model`. `block` must have the sparsity
-pattern of `model.blocks`, as every matrix from `Ferrite.allocate_matrix(model.dh)` does.
+pattern of `model.blocks`, as every matrix from `Ferrite.allocate_matrix(model.dh)` does; it need not be
+symmetric, and the system matrix stays complex symmetric only if it is. `coefficient` receives `ω` promoted to
+at least `Float64`.
 """
 function add_term!(model::MaxwellModel, block::SparseMatrixCSC{Float64, Int}, coefficient)
     _same_pattern(block, model.blocks.curlcurl) ||
@@ -217,7 +228,7 @@ Overwrite the nonzero values of the complex sparse matrix `A`, which must have t
 function maxwell_operator!(A::SparseMatrixCSC{<:Complex}, model::MaxwellModel, ω::Number)
     _same_pattern(A, model.blocks.curlcurl) ||
         throw(ArgumentError("A must have the sparsity pattern of the model's blocks"))
-    ω = float(ω)  # an integer ω^2 overflows above ~3e9 rad/s
+    ω = _frequency(ω)
     nz = nonzeros(A)
     fill!(nz, 0)
     for term in model.terms
@@ -229,8 +240,9 @@ end
 """
     maxwell_operator(model::MaxwellModel, ω)
 
-The complex symmetric system matrix `A(ω)` of [`MaxwellModel`](@ref), without the PEC constraints, as a new
-`SparseMatrixCSC{ComplexF64}` on the pattern of `model.blocks`.
+The system matrix `A(ω)` of [`MaxwellModel`](@ref), without the PEC constraints, as a new
+`SparseMatrixCSC{ComplexF64}` on the pattern of `model.blocks`. The volume operator is complex symmetric.
+Additional terms preserve symmetry when their blocks are symmetric.
 """
 function maxwell_operator(model::MaxwellModel, ω::Number)
     pattern = model.blocks.curlcurl
