@@ -78,6 +78,61 @@ end
     @test_throws "periodic pieces Γ_diagonal_a and Γ_diagonal_b of u coincide" FEMSpace(square, [:u => Lagrange{RefQuadrilateral, 1}()]; periodic = [(:u, "diagonal_a", "diagonal_b")])
 end
 
+# The steady problem (`discretize`) and the transient `operators` of a left-right periodic pair with u = 0 on the bottom and
+# top.
+function periodic_pair(grid)
+    Ω = MeshDomain(grid)
+    left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+    @named steady = PDESystem([Dx(Dx(u(x, y))) + Dy(Dy(u(x, y))) ~ 0], [u(left) ~ u(right), u(bottom) ~ 0, u(top) ~ 0], [(x, y) ∈ Ω], [x, y], [u(x, y)], [])
+    @named heat = PDESystem(
+        [Differential(t)(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y)))],
+        [u(t, left) ~ u(t, right), u(t, bottom) ~ 0, u(t, top) ~ 0, u(0, x, y) ~ 0], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], []
+    )
+    return () -> discretize(steady, FEMDiscretization(Ω)), () -> FiniteElementMethod.operators(heat, FEMDiscretization(Ω, t))
+end
+
+const SIDES = Dict("bottom" => [Ferrite.FacetIndex(1, 1)], "right" => [Ferrite.FacetIndex(1, 2)], "top" => [Ferrite.FacetIndex(1, 3)], "left" => [Ferrite.FacetIndex(1, 4)])
+
+# One Q1 cell of height 1 with its left side at x0 and its right vertices at x0 + bottom and x0 + top.
+quadrilateral(x0, bottom, top) = Grid([Quadrilateral((1, 2, 3, 4))], Node.([Vec(x0, 0.0), Vec(x0 + bottom, 0.0), Vec(x0 + top, 1.0), Vec(x0, 1.0)]); facetsets = SIDES)
+
+const MISMATCH = "periodic pieces Γ_left and Γ_right of u do not match under a translation"
+
+# BCs:    left and right periodic on one Q1 cell at x0 = 1e12, a few units in the last place wide
+# Shows:  the tolerance follows the extent of the mesh, not the size of its coordinates: a cell four ulps wide whose sides are
+#         exact translates is identified like the same cell at the origin, and a cell whose right side is skewed by two ulps is
+#         refused, through `discretize` and through `operators`.
+@testset "periodic matching of a mesh a few ulps wide far from the origin" begin
+    x0 = 1.0e12
+    w = 4 * eps(x0)
+    ties(grid) = FEMSpace(grid, [:u => Lagrange{RefQuadrilateral, 1}()]; periodic = [(:u, "left", "right")]).ties
+    @test length(ties(quadrilateral(0.0, w, w))) == 2
+    @test ties(quadrilateral(x0, w, w)) == ties(quadrilateral(0.0, w, w))
+    for corner in (0.0, x0)
+        steady, ops = periodic_pair(quadrilateral(corner, w, w))
+        @test steady() isa SciMLBase.NonlinearProblem
+        @test size(ops().P) == (4, 2)
+    end
+    steady, ops = periodic_pair(quadrilateral(x0, 2w, 3w))
+    @test_throws MISMATCH steady()
+    @test_throws MISMATCH ops()
+end
+
+# BCs:    left and right periodic on one nine-node quadrilateral, with the default Q1 field
+# Shows:  the geometry of the pieces is matched, not only the field's dofs: with straight sides the pair is accepted, and with
+#         the left midside node moved inwards (a bowed side, invisible to the Q1 dofs) it is refused, through `discretize` and
+#         `operators`.
+@testset "periodic pieces must be translates in the mesh geometry, not only at the field's dofs" begin
+    straight = generate_grid(Ferrite.QuadraticQuadrilateral, (1, 1), Vec(0.0, 0.0), Vec(1.0, 1.0))
+    nodes = map(n -> n.x == Vec(0.0, 0.5) ? Node(Vec(0.15, 0.5)) : n, straight.nodes)
+    steady, ops = periodic_pair(straight)
+    @test steady() isa SciMLBase.NonlinearProblem
+    @test size(ops().P) == (4, 2)
+    steady, ops = periodic_pair(Grid(straight.cells, nodes; facetsets = straight.facetsets))
+    @test_throws "$MISMATCH: the facet of Γ_left" steady()
+    @test_throws "$MISMATCH: the facet of Γ_left" ops()
+end
+
 # Shows:  the scatter of a mirror row of the nonlinear Jacobian into its master row is inferred and allocates nothing, though
 #         `FEMNonlinear` stores its ties untyped.
 @testset "the periodic Jacobian scatter is type-stable and allocation-free" begin

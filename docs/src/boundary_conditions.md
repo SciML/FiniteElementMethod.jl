@@ -144,8 +144,13 @@ An equation between the traces of one field on two pieces, `u(t, Γ_left) ~ u(t,
 `u(Γ_left) ~ u(Γ_right)` for a steady problem), makes the field take equal values on the two
 pieces. The pieces must be translates of each other: the translation is the difference of their
 centroids, and every node of one piece (every dof of the field, for a higher-order space) must
-have a node of the other at the translated place. Otherwise `discretize` throws an `ArgumentError`
-that names both pieces and the mismatch. The pairs are per field, so one field may be periodic
+have a node of the other at the translated place. The mesh geometry is compared too: every facet
+of one piece, translated, must be a facet of the other with the same shape, so pieces triangulated
+along different diagonals, or a side curved by its midside nodes where the field's nodes cannot see
+it, are refused. On a mismatch `discretize` throws an `ArgumentError` that names both pieces and
+the mismatch. Positions are compared to `1e-6` times the extent of the mesh along each axis,
+measured from the corner of the mesh, so the distance of the mesh from the origin does not
+matter. The pairs are per field, so one field may be periodic
 where another carries Dirichlet pieces, and they work with any element space, including the
 Taylor–Hood pair of a Navier–Stokes system, in the time-dependent and steady paths and with
 `SUPG` test spaces.

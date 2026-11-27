@@ -63,38 +63,37 @@ function _matching_problem(coords, scaled, da, db, matched, unmatched, shift, ss
     return nothing
 end
 
-# The dofs of `field` on each facet of the set, as a sorted tuple per facet. The mesh's own connectivity decides which
-# nodes a facet joins, so two pieces whose nodes match can still be triangulated differently. (`dirichlet_facetdof_indices`
-# is not public Ferrite API, like its use in `piece_nodes`.)
-function _facet_dofs(dh, grid, field, set)
-    result = Vector{Vector{Int}}()
-    sdh_of = Dict(c => sdh for sdh in dh.subdofhandlers for c in sdh.cellset)
-    for (cell, facet) in Ferrite.getfacetset(grid, String(set))
-        haskey(sdh_of, cell) || continue
-        sdh = sdh_of[cell]
-        field in sdh.field_names || continue
-        range = Ferrite.dof_range(sdh, field)
-        cdofs = Ferrite.celldofs(dh, cell)[range]
-        ip = sdh.field_interpolations[findfirst(==(field), sdh.field_names)]
-        push!(result, sort!(cdofs[collect(Ferrite.dirichlet_facetdof_indices(ip)[facet])]))
+# The points of each facet of the set at a quadrature rule of the mesh geometry, relative to `origin` and scaled by `tolerance`.
+# The rule is exact to twice the geometric order with positive weights, so two facets whose maps agree at its points are the
+# same facet, and it is symmetric, so the set of points does not depend on the orientation of the facet in its cell. The cell
+# coordinates are made relative before the geometry is evaluated, so a mesh far from the origin keeps its precision.
+function _facet_points(grid, set, origin, tolerance)
+    ip = Ferrite.geometric_interpolation(Ferrite.getcelltype(grid))
+    fv = Ferrite.FacetValues(Ferrite.FacetQuadratureRule{Ferrite.getrefshape(ip)}(2 * _order(ip)), ip, ip)
+    return map(collect(Ferrite.getfacetset(grid, String(set)))) do (cell, facet)
+        x = Ferrite.getcoordinates(grid, cell) .- Ref(origin)
+        Ferrite.reinit!(fv, Ferrite.getcells(grid, cell), x, facet)
+        [Vector(Ferrite.spatial_coordinate(fv, q, x)) ./ tolerance for q in 1:Ferrite.getnquadpoints(fv)]
     end
-    return result
 end
 
-# `nothing` if every facet of Γ_a, with its dofs mapped through `partner`, is exactly one facet of Γ_b and the other way
-# round, else the first facet of Γ_a that maps onto no facet of Γ_b.
-function _facet_problem(fa, fb, partner, coords, a, b)
-    targets = Dict{Vector{Int}, Int}(sort(f) => 0 for f in fb)
-    for f in fa
-        mapped = sort!([partner[d] for d in f])
-        haskey(targets, mapped) || return "the facet of Γ_$a with nodes at $(join(_tuple_str.(coords[f]), ", ")) has no facet of Γ_$b with the " *
-            "translated nodes: the two pieces are triangulated differently"
-        targets[mapped] += 1
+# `nothing` if the facets of Γ_a (the scaled points `pa` of each), translated by `sshift`, are the facets of Γ_b one to one,
+# else why not. Facets are paired by their mean points, and a pair must agree at every point.
+function _facet_problem(pa, pb, sshift, origin, tolerance, a, b)
+    centres = [sum(p) / length(p) for p in [pa; pb]]
+    place(f) = _tuple_str(origin + centres[f] .* tolerance)
+    na = length(pa)
+    matched, unmatched = _match_translate(centres, 1:na, na .+ eachindex(pb), sshift)
+    isempty(unmatched) || return "the facet of Γ_$a centred at $(place(first(unmatched))) has no facet of Γ_$b at the translated place: " *
+        "the two pieces are triangulated differently, or a facet is curved differently"
+    hits = zeros(Int, length(pb))
+    for (f, g) in matched
+        hits[g - na] += 1
+        all(p -> any(q -> norm(p + sshift - q) <= 1, pb[g - na]), pa[f]) || return "the facet of Γ_$a centred at $(place(f)) and the facet of " *
+            "Γ_$b centred at $(place(g)) differ in shape: the two pieces are curved differently"
     end
-    for (f, count) in targets
-        count == 1 && continue
-        return "the facet of Γ_$b with nodes at $(join(_tuple_str.(coords[f]), ", ")) is the image of $count facets of Γ_$a: the two pieces are triangulated differently"
-    end
+    g = findfirst(!=(1), hits)
+    g === nothing || return "the facet of Γ_$b centred at $(place(na + g)) is the image of $(hits[g]) facets of Γ_$a: the two pieces are triangulated differently"
     return nothing
 end
 
@@ -113,22 +112,25 @@ function periodic_ties(grid, dh, nodes, periodic, prescribed; dirichlet = Dict{I
     coords = [collect(Float64, Tuple(x)) for x in nodes]
     lo = reduce((a, b) -> min.(a, b), coords)
     hi = reduce((a, b) -> max.(a, b), coords)
-    # One tolerance per axis: a fraction of the extent of the mesh along it, but not below a few units in the last place of
-    # its coordinates, so thin and far-from-origin meshes keep their translations.
-    tolerance = max.(1.0e-6 .* (hi - lo), 4 .* eps.(max.(abs.(lo), abs.(hi))), floatmin(Float64))
-    scaled = [(c - lo) ./ tolerance for c in coords]
+    # One tolerance per axis, a fraction of the extent of the mesh along it, so a thin mesh keeps its translations. Positions
+    # are taken relative to the corner of the mesh, so its distance from the origin changes neither the tolerance nor the
+    # rounding of the centroids.
+    tolerance = max.(1.0e-6 .* (hi - lo), floatmin(Float64))
+    relative = [c - lo for c in coords]
+    scaled = [c ./ tolerance for c in relative]
+    origin = Ferrite.Vec(lo...)
     parent = collect(1:Ferrite.ndofs(dh))
     root(d) = parent[d] == d ? d : (parent[d] = root(parent[d]))
     for (field, a, b) in periodic
         da, db = _piece_dofs(dh, field, grid, a), _piece_dofs(dh, field, grid, b)
-        mean_coord(ds) = sum(coords[d] for d in ds) / length(ds)
+        mean_coord(ds) = sum(relative[d] for d in ds) / length(ds)
         shift = mean_coord(db) - mean_coord(da)
         sshift = shift ./ tolerance
         names = "Γ_$a and Γ_$b of $field"
         norm(sshift) <= 1 && throw(ArgumentError("periodic pieces $names coincide: their centroids are the same point, so there is no translation between them"))
         matched, unmatched = _match_translate(scaled, da, db, sshift)
         problem = _matching_problem(coords, scaled, da, db, matched, unmatched, shift, sshift, a, b)
-        problem === nothing && (problem = _facet_problem(_facet_dofs(dh, grid, field, a), _facet_dofs(dh, grid, field, b), Dict(matched), coords, a, b))
+        problem === nothing && (problem = _facet_problem(_facet_points(grid, a, origin, tolerance), _facet_points(grid, b, origin, tolerance), sshift, lo, tolerance, a, b))
         problem === nothing || throw(
             ArgumentError(
                 "periodic pieces $names do not match under a translation: $problem; the translation between their centroids is " *
