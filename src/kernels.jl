@@ -177,11 +177,17 @@ function compile_coeffs(kind, ex, s, test; expression = Val(false))
         exs = [checked_derivative(d, si) for si in trial for d in first_order]
         linear = sum(exs .* [si * wi for si in trial for wi in w])
     end
-    # A source is affine in `w` once the check below passes (its coefficients are free of `w`), so `ex(w = 0) == 0`
-    # means it is linear; this settles the long sources whose residue `expand` cannot cancel. A function of `w`
-    # such as `sign` can have a zero derivative without being affine, hence the arithmetic-only walk.
+    # `expand` leaves floating-point residue (`0.05 * 0.25` against its derivative) and cannot cancel a quotient. Once
+    # the check below passes (the coefficients are free of the trial and test slots), `ex` is `c * trial * w` plus
+    # parts free of the trial slots or of `w`, so it is linear when it vanishes with either set zeroed (a source has
+    # no trial slots). A function of the slots such as `sign` can have a zero derivative without being affine,
+    # hence the arithmetic-only walk.
+    zeroed = kind === :source ? [w] : [w, trial]
     linear_in_w = isequal(Symbolics.expand(ex - linear), 0) ||
-        (kind === :source && arithmetic_in(ex, w) && isequal(Symbolics.substitute(ex, Dict(wi => 0 for wi in w)), 0))
+        (
+        arithmetic_in(ex, reduce(vcat, zeroed)) &&
+            all(syms -> isequal(Symbolics.substitute(ex, Dict(x => 0 for x in syms)), 0), zeroed)
+    )
     linear_in_w || return nothing
     any(e -> depends(e, [s.U; s.G; s.Ud; H; w]), exs) && return nothing
     cse = kind === :source && !has_ifelse(ex)
