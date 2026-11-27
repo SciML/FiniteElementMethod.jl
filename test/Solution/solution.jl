@@ -615,6 +615,17 @@ end
     @test @allocated(FiniteElementMethod._nodal_gradients(md, f, 1, complex_states)) <= @allocated(per_state(complex_states)) + 4096
     mixed = AbstractVector[iseven(k) ? complex_states[k] : states[k] for k in eachindex(states)]
     @test FiniteElementMethod._nodal_gradients(md, f, 1, mixed) == [FiniteElementMethod._nodal_gradient(md, f, 1, U, projector) for U in mixed]
+    reads = Ref(0)
+    lazy(vs) = (
+        begin
+            reads[] += 1; copy(U)
+        end for U in vs
+    )
+    for series in (states, complex_states, mixed)
+        reads[] = 0
+        @test FiniteElementMethod._nodal_gradients(md, f, 1, lazy(series)) == [FiniteElementMethod._nodal_gradient(md, f, 1, U, projector) for U in series]
+        @test reads[] == length(series)
+    end
     @test_throws BoundsError FiniteElementMethod._nodal_gradients(md, f, 1, [states[1:2]; [states[3][1:(end - 1)]]; states[4:end]])
 
     sol, (; t, x, y) = gradient_case(Triangle, 2; region = true)

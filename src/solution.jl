@@ -449,19 +449,19 @@ function _tabulated_gradient!(qpvals, tables, U::AbstractVector{Float64}, projec
     return _project_at_nodes(projector.proj, qpvals, projector.qr)
 end
 
-# `_nodal_gradient` of every state, tabulating the state-independent basis gradients once when there is more than one
-# state of `Float64`s.
+# `_nodal_gradient` of every state, tabulating the state-independent basis gradients once, at the first `Float64` state,
+# when there is more than one state. `states` may be lazy: each is read once.
 function _nodal_gradients(md, f::FieldInfo, d, states; max_bytes = GRADIENT_TABLE_MAX_BYTES)
     projector = _gradient_projector(md, f)
     cv = projector.cv
     cells = _field_cells(_dh(md), f.name)
     nbasis, nq = Ferrite.getnbasefunctions(cv), Ferrite.getnquadpoints(cv)
-    (length(states) < 2 || 8 * nbasis * (nq + 1) * length(cells) > max_bytes || !any(U -> U isa AbstractVector{Float64}, states)) &&
-        return [_nodal_gradient(md, f, d, U, projector) for U in states]
-    tables = _gradient_tables(md, f, d, cv, cells)
-    qpvals = [zeros(nq) for _ in 1:Ferrite.getncells(_grid(md))]
+    tabulate = length(states) > 1 && 8 * nbasis * (nq + 1) * length(cells) <= max_bytes
+    buffers = nothing
     return map(states) do U
-        U isa AbstractVector{Float64} ? _tabulated_gradient!(qpvals, tables, U, projector) : _nodal_gradient(md, f, d, U, projector)
+        (tabulate && U isa AbstractVector{Float64}) || return _nodal_gradient(md, f, d, U, projector)
+        buffers === nothing && (buffers = (_gradient_tables(md, f, d, cv, cells), [zeros(nq) for _ in 1:Ferrite.getncells(_grid(md))]))
+        return _tabulated_gradient!(buffers[2], buffers[1], U, projector)
     end
 end
 
