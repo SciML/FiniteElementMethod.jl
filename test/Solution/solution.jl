@@ -534,3 +534,7 @@ end
         @test normal_flux(sol, syms.u(syms.x, syms.y), syms.Γ) ≈ reference rtol = 1.0e-10
     end
 end
+
+@testset "The solution precompile workload runs" begin
+    @test FiniteElementMethod.workload_solution() === nothing
+end

@@ -277,22 +277,27 @@ end
     @test first_linear ≤ 60.0 && first_residual ≤ 60.0      # loose: catches a codegen blow-up, not drift
 end
 
-# Time to first assembly in a fresh process, after `using FiniteElementMethod`, for kernels the precompile
-# workload did not generate (`workload_chain` with another `k` on another grid). Both modes set PrecompileTools'
+# Runs `script` in a fresh process and returns the number it prints. Both modes set PrecompileTools'
 # `precompile_workload` preference explicitly in a temporary environment placed FIRST on the load path: preferences
 # from earlier environments take precedence, so a value in the active project's LocalPreferences.toml cannot
-# override either mode. The two values precompile separate caches.
-function time_to_first_assembly(; workload::Bool)
-    script = """
-    using FiniteElementMethod
-    print(@elapsed FiniteElementMethod.workload_chain(3.7; nel = 4))
-    """
+# override either mode. The two values precompile separate caches, which the first run of each builds while loading.
+function time_in_fresh_process(script; workload::Bool)
     return mktempdir() do dir
         write(joinpath(dir, "Project.toml"), "[extras]\nFiniteElementMethod = \"e08948db-0ae8-498a-9b98-73fc7f237ce3\"\n")
         write(joinpath(dir, "LocalPreferences.toml"), "[FiniteElementMethod]\nprecompile_workload = $workload\n")
         cmd = `$(Base.julia_cmd()) --startup-file=no --project=$(Base.active_project()) -e $script`
         return parse(Float64, readchomp(addenv(cmd, "JULIA_LOAD_PATH" => "$dir:@:@stdlib")))
     end
+end
+
+# Time to first assembly in a fresh process, after `using FiniteElementMethod`, for kernels the precompile
+# workload did not generate (`workload_chain` with another `k` on another grid).
+function time_to_first_assembly(; workload::Bool)
+    script = """
+    using FiniteElementMethod
+    print(@elapsed FiniteElementMethod.workload_chain(3.7; nel = 4))
+    """
+    return time_in_fresh_process(script; workload)
 end
 
 @testset "cold latency: time to first assembly with and without the precompile workload" begin
@@ -302,4 +307,47 @@ end
     # and 18 s against 23 s on 1.10, but 0.6 s against 6 to 13 s uninstrumented on both.
     @test with ≤ 0.5 * without skip = INSTRUMENTED        # measured 0.51 s against 14.4 s (0.04); slack for a busy box
     @test with ≤ 10.0 skip = INSTRUMENTED
+end
+
+# Time of the first projected-gradient read of a DFBDF solution in a fresh process, for the heat solution
+# u = x + 2y + 3t, which P1 holds exactly. The saved field is read first, so the time is that of the projection path
+# alone; the script throws, and so does the testset, if a read disagrees with u.
+const FIRST_GRADIENT_SCRIPT = """
+using FiniteElementMethod, ModelingToolkit, DomainSets, Test
+using Ferrite: Triangle, Vec, generate_grid
+using ModelingToolkit: PDESystem, @named, t_nounits as t
+using OrdinaryDiffEqBDF: DFBDF
+using SciMLBase: discretize, solve
+
+@variables x y u(..)
+Dt, Dx, Dy = Differential(t), Differential(x), Differential(y)
+Ω = MeshDomain(generate_grid(Triangle, (4, 4), Vec(0.0, 0.0), Vec(1.0, 1.0)))
+sides = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+exact(t, x, y) = x + 2y + 3t
+U = u(t, x, y)
+@named heat = PDESystem(
+    [Dt(U) ~ Dx(Dx(U)) + Dy(Dy(U)) + 3], [[u(t, Γ) ~ exact(t, x, y) for Γ in sides]; u(0, x, y) ~ exact(0, x, y)],
+    [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [U], []
+)
+sol = solve(discretize(heat, FEMDiscretization(Ω, t)), DFBDF(); abstol = 1.0e-10, reltol = 1.0e-10)
+
+@test maximum(abs, sol[U] .- exact.(sol.t, sol[x]', sol[y]')) ≤ 1.0e-6
+∂ₓU = Dx(U)
+seconds = @elapsed ∂ₓu = sol[∂ₓU]
+@test maximum(abs, ∂ₓu .- 1) ≤ 1.0e-6
+s = (sol.t[end - 1] + sol.t[end]) / 2
+@test sol(s, 0.3, 0.6; dv = U) ≈ exact(s, 0.3, 0.6) atol = 1.0e-6
+ss, xs, ys = [0.25, 0.8], [0.1, 0.55, 0.9], [0.2, 0.7]
+@test sol(ss, xs, ys; dv = U) ≈ [exact(a, b, c) for a in ss, b in xs, c in ys] atol = 1.0e-6
+print(seconds)
+"""
+
+@testset "cold latency: first projected gradient of a DFBDF solution" begin
+    nprocs = INSTRUMENTED ? 1 : 3     # instrumented, only the reads are checked
+    first_read(workload) = minimum(time_in_fresh_process(FIRST_GRADIENT_SCRIPT; workload) for _ in 1:nprocs)
+    with, without = first_read(true), first_read(false)
+    @info "first projected gradient of a DFBDF solution in a fresh process (s)" with without ratio = with / without
+    # Measured 0.048 to 0.090 s against 0.89 to 1.11 s (ratio about 0.05); without `workload_solution()` in the
+    # precompile workload, 0.83 to 0.99 s (ratio about 1).
+    @test with ≤ 0.35 * without skip = INSTRUMENTED
 end
