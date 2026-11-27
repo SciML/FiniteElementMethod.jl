@@ -563,8 +563,8 @@ function gradient_case(shape, order; periodic = false, second_field = false, reg
     disc = FEMDiscretization(Ω, t; spaces, regions = region ? Dict(v => Region(Ω, :left_half)) : Dict())
     prob = discretize(pdesys, disc)
     n = length(prob.u0)
-    ts = [0.0, 0.25, 0.5, 1.0]
-    states = [prob.u0 .+ 0.3 * sin.(k .* (1:n)) for k in 1:4]
+    ts = collect(range(0.0, 1.0; length = 16))
+    states = [prob.u0 .+ 0.3 * sin.(k .* (1:n)) for k in 1:16]
     raw = SciMLBase.build_solution(prob, DFBDF(), ts, states; retcode = SciMLBase.ReturnCode.Success)
     return SciMLBase.wrap_sol(raw), (; t, x, y)
 end
@@ -608,7 +608,7 @@ end
         @test FiniteElementMethod._nodal_gradients(md, f, 1, states; plan_of = (args...) -> nothing) == reference
     end
     @testset "falls back when the plan does not reproduce the Ferrite.project route" begin
-        wrong(args...) = (p = FiniteElementMethod._gradient_plan(args...); p === nothing ? nothing : FiniteElementMethod.GradientPlan(p.proj, p.dofs, 2 .* p.dφ, p.proj_dofs, p.proj_cell, p.weights, p.rhs))
+        wrong(args...) = (p = FiniteElementMethod._gradient_plan(args...); p === nothing ? nothing : FiniteElementMethod.GradientPlan(p.proj, p.dofs, 2 .* p.dφ, p.proj_dofs, p.proj_cell, p.weights, p.rhs, p.required))
         @test FiniteElementMethod._planned_gradients(md, f, 1, states, projector; plan_of = wrong) === nothing
         @test FiniteElementMethod._nodal_gradients(md, f, 1, states; plan_of = wrong) == reference
     end
@@ -619,7 +619,10 @@ end
         @test FiniteElementMethod._planned_gradients(md, f, 1, states, projector; plan_of = small_plan) === nothing
         @test FiniteElementMethod._nodal_gradients(md, f, 1, states; plan_of = small_plan) == reference
     end
-    @testset "falls back for fewer than three states" begin
+    @testset "falls back for fewer states than the plan pays for" begin
+        few = FiniteElementMethod.PLAN_MIN_STATES - 1
+        @test FiniteElementMethod._planned_gradients(md, f, 1, states[1:few], projector) === nothing
+        @test FiniteElementMethod._nodal_gradients(md, f, 1, states[1:few]) == reference[1:few]
         @test FiniteElementMethod._planned_gradients(md, f, 1, states[1:2], projector) === nothing
         @test FiniteElementMethod._nodal_gradients(md, f, 1, states[1:2]) == reference[1:2]
         @test FiniteElementMethod._nodal_gradients(md, f, 1, states[1:1]) == reference[1:1]
@@ -629,9 +632,14 @@ end
         slow = [FiniteElementMethod._nodal_gradient(md, f, 1, U, projector) for U in complex_states]
         @test FiniteElementMethod._planned_gradients(md, f, 1, complex_states, projector) === nothing
         @test FiniteElementMethod._nodal_gradients(md, f, 1, complex_states) == slow
-        mixed = AbstractVector[states[1], complex_states[2], states[3], complex_states[4]]
+        mixed = AbstractVector[iseven(k) ? complex_states[k] : states[k] for k in eachindex(states)]
         @test FiniteElementMethod._planned_gradients(md, f, 1, mixed, projector) === nothing
         @test FiniteElementMethod._nodal_gradients(md, f, 1, mixed) == [FiniteElementMethod._nodal_gradient(md, f, 1, U, projector) for U in mixed]
+    end
+    @testset "falls back, and throws what it always threw, for a state too short for the field" begin
+        short = [states[1:2]; [states[3][1:(end - 1)]]; states[4:end]]
+        @test FiniteElementMethod._planned_gradients(md, f, 1, short, projector) === nothing
+        @test_throws BoundsError FiniteElementMethod._nodal_gradients(md, f, 1, short)
     end
     @testset "falls back for a field on a region" begin
         sol, (; t, x, y) = gradient_case(Triangle, 2; region = true)

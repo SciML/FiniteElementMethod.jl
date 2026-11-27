@@ -430,6 +430,7 @@ struct GradientPlan{P}
     proj_cell::Vector{Int}     # position in the field cells of each cell of the projector
     weights::Array{Float64, 3} # basis × quadrature point × cell of the projector: φ dΩ
     rhs::Vector{Float64}
+    required::Int              # the largest dof of the field: states shorter than this are not read through the plan
 end
 
 # The tables of a plan, for the cells of the field and of the projector, are held for the whole call: above this many
@@ -469,14 +470,14 @@ function _gradient_plan(md, f::FieldInfo, d, projector; max_bytes = PLAN_MAX_BYT
             end
         end
         any(iszero, proj_cell) && return nothing
-        return GradientPlan(proj, dofs, dφ, proj_dofs, proj_cell, weights, zeros(Ferrite.ndofs(proj.dh)))
+        return GradientPlan(proj, dofs, dφ, proj_dofs, proj_cell, weights, zeros(Ferrite.ndofs(proj.dh)), maximum(dofs; init = 0))
     catch
         return nothing
     end
 end
 
 # `_nodal_gradient` for the state `U` through the plan.
-function _planned_gradient(plan::GradientPlan, U::AbstractVector{Float64})
+function _planned_gradient(plan::GradientPlan, U::Vector{Float64})
     (; proj, dofs, dφ, proj_dofs, proj_cell, weights, rhs) = plan
     fill!(rhs, 0)
     nbasis, nq, pbasis = size(dofs, 1), size(dφ, 2), size(proj_dofs, 1)
@@ -495,19 +496,24 @@ function _planned_gradient(plan::GradientPlan, U::AbstractVector{Float64})
     return Ferrite.evaluate_at_grid_nodes(proj, proj.M_cholesky \ rhs)
 end
 
+# Building a plan costs 5 to 8 states of the per-state route, which a planned state then undercuts by 5 to 6 times
+# (P1 and P2 triangles from 25 to 20,000 dofs), so it pays from 5 to 8 states on; 16 leaves a margin.
+const PLAN_MIN_STATES = 16
+
 # The projected nodal gradients of every state through a plan, or `nothing` when the plan does not pay or does not
-# apply: fewer than three states (the plan costs about as much as two), a layout or field the plan does not cover
-# (`plan_of` returns `nothing`; it is also a seam for the tests), a state that is not a `Vector{Float64}` (the first is
-# checked before the plan's tables are allocated), tables over `PLAN_MAX_BYTES`, or a plan that
+# apply: fewer than `PLAN_MIN_STATES` states, a layout or field the plan does not cover
+# (`plan_of` returns `nothing`; it is also a seam for the tests), a state that is not a `Vector{Float64}` or is too
+# short for the field (the first is checked before the plan's tables are allocated; the per-state route then throws
+# what it always threw), tables over `PLAN_MAX_BYTES`, or a plan that
 # does not reproduce `_nodal_gradient` on the first state to 1e-8 of its largest value.
 function _planned_gradients(md, f::FieldInfo, d, states, projector; plan_of = _gradient_plan)
-    length(states) < 3 && return nothing
-    first(states) isa AbstractVector{Float64} || return nothing
+    length(states) < PLAN_MIN_STATES && return nothing
+    first(states) isa Vector{Float64} || return nothing
     plan = plan_of(md, f, d, projector)
     plan === nothing && return nothing
     rows = nothing
     for U in states
-        U isa AbstractVector{Float64} || return nothing
+        (U isa Vector{Float64} && length(U) >= plan.required) || return nothing
         fast = _planned_gradient(plan, U)
         if rows === nothing
             slow = _nodal_gradient(md, f, d, U, projector)
