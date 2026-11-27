@@ -3,11 +3,12 @@
 # (The DFG cylinder benchmark, ~149k unknowns, is the NavierStokes test group, not this one.)
 using FiniteElementMethod, ModelingToolkit, DomainSets, NonlinearSolveFirstOrder, Test
 using Ferrite: generate_grid, Triangle, Vec
+using LinearAlgebra: ⋅
 include(joinpath(@__DIR__, "..", "shared", "interface_helpers.jl"))
 
 @variables x y u(..) v(..) p(..)
-Dx, Dy = Differential(x), Differential(y)
-Δ(f) = Dx(Dx(f)) + Dy(Dy(f))
+grad = Grad([x, y])
+Δ = Laplacian([x, y])
 
 const ν = 1 / 20
 const λ = 1 / (2ν) - sqrt(1 / (4ν^2) + 4pi^2)
@@ -22,10 +23,10 @@ kovasznay_p(x_, y_) = (1 - exp(2λ * x_)) / 2
 # Shows:  a steady nonlinear saddle-point problem: `pairing` tests the continuity equation with p, Newton finds the flow, and
 #         the velocity converges at rate 3 and the pressure at rate 2.
 @testset "steady Navier-Stokes with Taylor-Hood elements reproduces Kovasznay's flow at rates 3 and 2" begin
-    continuity = 0 ~ Dx(u(x, y)) + Dy(v(x, y))
+    continuity = 0 ~ grad ⋅ [u(x, y), v(x, y)]
     eqs = [
-        ν * Δ(u(x, y)) - u(x, y) * Dx(u(x, y)) - v(x, y) * Dy(u(x, y)) - Dx(p(x, y)) ~ 0,
-        ν * Δ(v(x, y)) - u(x, y) * Dx(v(x, y)) - v(x, y) * Dy(v(x, y)) - Dy(p(x, y)) ~ 0,
+        ν * Δ(u(x, y)) - ([u(x, y), v(x, y)] ⋅ grad)(u(x, y)) - grad(p(x, y))[1] ~ 0,
+        ν * Δ(v(x, y)) - ([u(x, y), v(x, y)] ⋅ grad)(v(x, y)) - grad(p(x, y))[2] ~ 0,
         continuity,
     ]
     exact_u, exact_v = 1 - exp(λ * x) * cos(2pi * y), λ / 2pi * exp(λ * x) * sin(2pi * y)

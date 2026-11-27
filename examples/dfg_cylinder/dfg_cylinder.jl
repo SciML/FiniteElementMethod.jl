@@ -27,6 +27,7 @@
 #     final time with the time-derivative term of the force functional included.
 using FiniteElementMethod, ModelingToolkit, DomainSets, OrdinaryDiffEqBDF
 using OrdinaryDiffEqBDF: NLNewton
+using LinearAlgebra: ⋅
 using LinearSolve: UMFPACKFactorization
 using ModelingToolkit: t_nounits as t
 using SciMLBase: SciMLBase, CheckInit, init, solve!
@@ -42,7 +43,8 @@ const DFG_2D1_BANDS = (cD = (5.57, 5.59), cL = (0.0104, 0.011), Δp = (0.1172, 0
 
 @parameters ν Umax
 @variables x y u(..) v(..) p(..)
-const Dt, Dx, Dy = Differential(t), Differential(x), Differential(y)
+const Dt = Differential(t)
+const grad = Grad([x, y])
 
 """
     dfg_problem(grid; tend = 30.0, ν_ = 1e-3, Umax_ = 0.3, ramp = 1 - exp(-t^2), kwargs...)
@@ -55,9 +57,9 @@ function dfg_problem(grid; tend = 30.0, ν_ = 1.0e-3, Umax_ = 0.3, ramp = 1 - ex
     Γin, Γout, Γwall, Γcyl = boundarypiece.(Ω, (:inlet, :outlet, :walls, :cylinder))
     U, V, P = u(t, x, y), v(t, x, y), p(t, x, y)
     eqs = [
-        Dt(U) ~ Dx(ν * Dx(U)) + Dy(ν * Dy(U)) - U * Dx(U) - V * Dy(U) - Dx(P),
-        Dt(V) ~ Dx(ν * Dx(V)) + Dy(ν * Dy(V)) - U * Dx(V) - V * Dy(V) - Dy(P),
-        0 ~ Dx(U) + Dy(V),
+        Dt(U) ~ grad ⋅ (ν * grad(U)) - ([U, V] ⋅ grad)(U) - grad(P)[1],
+        Dt(V) ~ grad ⋅ (ν * grad(V)) - ([U, V] ⋅ grad)(V) - grad(P)[2],
+        0 ~ grad ⋅ [U, V],
     ]
     inflow = ramp * 4Umax * y * (0.41 - y) / 0.41^2
     bcs = [
