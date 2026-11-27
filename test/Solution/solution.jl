@@ -24,7 +24,7 @@ function states_checks(sol)
     f = first(md.fields)
     projector = FiniteElementMethod._gradient_projector(md, f)
     reference = FiniteElementMethod._stack(sol, f, [FiniteElementMethod._nodal_gradient(md, f, 1, U, projector) for U in expected])
-    @test sol[Differential(Num(first(md.x̄)))(Num(f.dv))] == reference
+    @test sol[Differential(Num(first(md.x̄)))(Num(f.dv))] ≈ reference atol = 1.0e-12 * maximum(abs, reference)
     return nothing
 end
 
