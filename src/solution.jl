@@ -197,7 +197,10 @@ function Base.lastindex(::FEMSolution, ::Integer)
 end
 
 # Lazy for a time series, so that a periodic solution (whose `_full` copies) holds one folded vector at a time, not every saved one.
-_states(A::FEMTimeSolution) = (_full(A.disc_data, U) for U in A.original_sol.u)
+_states(A::FEMTimeSolution) = _states(A.disc_data, A.original_sol.u)
+# A method of its own, so that the generator captures `md` and not the solution: its type, and with it the code of every
+# read that consumes it, then does not depend on the solver's solution type, and the precompile workload covers it.
+_states(md::FEMMetadata, saved) = (_full(md, U) for U in saved)
 _states(A::FEMSteadySolution) = [_full(A.disc_data, A.original_sol.u)]
 # `rows` holds one row per saved time.
 _stack(A::FEMTimeSolution, f, rows) = _time_last(A.disc_data, f) ? reduce(hcat, rows) : permutedims(reduce(hcat, rows))
