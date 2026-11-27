@@ -84,7 +84,7 @@ function workload_solution(; nel = 2)
     us = [copy(prob.u0), copy(prob.u0)]
     interp = SciMLBase.LinearInterpolation(ts, us)
     sol = SciMLBase.build_solution(prob, nothing, ts, us; interp, dense = true, retcode = SciMLBase.ReturnCode.Success)
-    wrapped = SciMLBase.PDETimeSeriesSolution(sol, prob.problem_type)
+    wrapped = SciMLBase.PDETimeSeriesSolution(sol, SciMLBase.problem_type(prob))
     field = u(t, x, y)
     wrapped[field]
     wrapped[Dx(field)]

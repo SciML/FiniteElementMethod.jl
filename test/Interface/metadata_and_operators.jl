@@ -2,6 +2,7 @@
 # `cell_dofs` read the index data of a problem's `FEMMetadata` (its `problem_type`), and `FiniteElementMethod.operators`
 # returns the assembled mass and stiffness matrices and the load vector as plain data.
 using FiniteElementMethod, ModelingToolkit, DomainSets, OrdinaryDiffEqBDF, Test
+using SciMLBase: SciMLBase
 using Ferrite: generate_grid, Triangle, Vec
 using LinearAlgebra: norm
 using ModelingToolkit: t_nounits as t
@@ -28,7 +29,8 @@ end
 @testset "facet_dofs, dof_coordinates and cell_dofs describe where the dofs of a field sit" for (order, nleft, ntop, nnodes) in ((1, 4, 5, 20), (2, 7, 9, 63))
     pdesys, Ω, (left, _, _, top) = heat_system(0)
     disc = FEMDiscretization(Ω, t; spaces = Dict(u => Lagrange{RefTriangle, order}()))
-    md = discretize(pdesys, disc).problem_type
+    md = SciMLBase.problem_type(discretize(pdesys, disc))
+    @test md isa FEMMetadata
     X = dof_coordinates(md)
     @test size(X) == (2, nnodes)
     dofs = facet_dofs(md, left, u)
