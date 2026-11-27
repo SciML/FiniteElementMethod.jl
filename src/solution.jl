@@ -196,7 +196,8 @@ function Base.lastindex(::FEMSolution, ::Integer)
     throw(ArgumentError("`end` cannot be resolved in `sol[dv, inds...]`; index the field instead: `sol[dv][end, :]`."))
 end
 
-_states(A::FEMTimeSolution) = [_full(A.disc_data, U) for U in A.original_sol.u]
+# Lazy for a time series, so that a periodic solution (whose `_full` copies) holds one folded vector at a time, not every saved one.
+_states(A::FEMTimeSolution) = (_full(A.disc_data, U) for U in A.original_sol.u)
 _states(A::FEMSteadySolution) = [_full(A.disc_data, A.original_sol.u)]
 # `rows` holds one row per saved time.
 _stack(A::FEMTimeSolution, f, rows) = _time_last(A.disc_data, f) ? reduce(hcat, rows) : permutedims(reduce(hcat, rows))

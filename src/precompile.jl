@@ -37,3 +37,28 @@ PrecompileTools.@setup_workload begin
         workload_chain()
     end
 end
+
+"""
+    workload_discretize(; nel = 2)
+
+Lower a heat equation on the unit square, `PDESystem` to `DAEProblem`, on an `nel × nel` triangle grid.
+The precompile workload runs it, so that the first `discretize` of a session does not infer the front end, the
+strong-form analysis and the `System` construction from scratch.
+"""
+function workload_discretize(; nel = 2)
+    @variables x y u(..)
+    t = ModelingToolkit.t_nounits
+    Dt, Dx, Dy = Differential(t), Differential(x), Differential(y)
+    Ω = MeshDomain(rectangle_grid(Ferrite.Triangle, (nel, nel)))
+    sides = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+    heat = Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y))) + 1
+    heat_bcs = [[u(t, Γ) ~ 0 for Γ in sides]; u(0, x, y) ~ 0]
+    heat_domains = [(x, y) ∈ Ω, t ∈ DomainSets.Interval(0.0, 1.0)]
+    heat_system = ModelingToolkit.PDESystem([heat], heat_bcs, heat_domains, [t, x, y], [u(t, x, y)], []; name = :heat_system)
+    SciMLBase.discretize(heat_system, FEMDiscretization(Ω, t))
+    return nothing
+end
+
+PrecompileTools.@compile_workload begin
+    workload_discretize()
+end
