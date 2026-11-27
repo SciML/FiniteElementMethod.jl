@@ -415,6 +415,117 @@ function _nodal_gradient(md, f::FieldInfo, d, U, projector)
     return _project_at_nodes(proj, qpvals, qr)
 end
 
+# The state-independent part of the projected nodal gradient of field `f`, direction `d`: the gradient of every basis
+# function at the quadrature points of each cell of the field and the weights `φ dΩ` of the projector's cells, so that
+# one state costs a quadrature loop, one right-hand side and one solve with the projector's factorisation, not a
+# `Ferrite.project` call. It reads the L2Projector's `dh`, `ch` and `M_cholesky`, which Ferrite does not document
+# (Ferrite 1.7.0): `nothing` when the projector does not have that layout or the field is outside what it covers
+# (several subdomains, constraints), so that the caller falls back to `_nodal_gradient`.
+struct GradientPlan{P}
+    proj::P
+    dofs::Matrix{Int}          # basis × field cells: dofs of the field in the cell of the solution's dof handler
+    dφ::Array{Float64, 3}      # basis × quadrature point × field cell: ∂φ/∂x_d
+    proj_dofs::Matrix{Int}     # basis × cells of the projector
+    proj_cell::Vector{Int}     # position in the field cells of each cell of the projector
+    weights::Array{Float64, 3} # basis × quadrature point × cell of the projector: φ dΩ
+    rhs::Vector{Float64}
+end
+
+# The tables of a plan, for the cells of the field and of the projector, are held for the whole call: above this many
+# bytes the plan is not built and the per-state route (one quadrature array at a time) is used.
+const PLAN_MAX_BYTES = 2^28
+
+function _gradient_plan(md, f::FieldInfo, d, projector; max_bytes = PLAN_MAX_BYTES)
+    dh = _dh(md)
+    try
+        (; proj, qr, cv) = projector
+        (hasproperty(proj, :M_cholesky) && hasproperty(proj, :dh) && hasproperty(proj, :ch)) || return nothing
+        (proj.ch === nothing && length(proj.dh.subdofhandlers) == 1 && length(dh.subdofhandlers) == 1) || return nothing
+        cells = _field_cells(dh, f.name)
+        nbasis, nq = Ferrite.getnbasefunctions(cv), Ferrite.getnquadpoints(cv)
+        ncells = length(cells)
+        8 * (nbasis * (nq + 1) * ncells + (nbasis * (nq + 1) + 1) * length(only(proj.dh.subdofhandlers).cellset)) > max_bytes && return nothing
+        dofs, dφ, position = zeros(Int, nbasis, length(cells)), zeros(nbasis, nq, length(cells)), zeros(Int, Ferrite.getncells(_grid(md)))
+        for (k, cell) in enumerate(Ferrite.CellIterator(dh, cells))
+            Ferrite.reinit!(cv, cell)
+            position[Ferrite.cellid(cell)] = k
+            dofs[:, k] .= Ferrite.celldofs(cell)[_cell_range(dh, Ferrite.cellid(cell), f.name)]
+            for q in 1:nq, j in 1:nbasis
+                dφ[j, q, k] = Ferrite.shape_gradient(cv, q, j)[d]
+            end
+        end
+        sdh = only(proj.dh.subdofhandlers)
+        pcv = Ferrite.CellValues(qr, only(sdh.field_interpolations), Ferrite.geometric_interpolation(Ferrite.getcelltype(sdh)); update_gradients = false)
+        pbasis = Ferrite.getnbasefunctions(pcv)
+        proj_dofs, proj_cell = zeros(Int, pbasis, length(sdh.cellset)), zeros(Int, length(sdh.cellset))
+        weights = zeros(pbasis, nq, length(sdh.cellset))
+        for (m, cell) in enumerate(Ferrite.CellIterator(sdh))
+            Ferrite.reinit!(pcv, cell)
+            proj_dofs[:, m] .= Ferrite.celldofs(cell)
+            proj_cell[m] = position[Ferrite.cellid(cell)]
+            for q in 1:nq, i in 1:pbasis
+                weights[i, q, m] = Ferrite.shape_value(pcv, q, i) * Ferrite.getdetJdV(pcv, q)
+            end
+        end
+        any(iszero, proj_cell) && return nothing
+        return GradientPlan(proj, dofs, dφ, proj_dofs, proj_cell, weights, zeros(Ferrite.ndofs(proj.dh)))
+    catch
+        return nothing
+    end
+end
+
+# `_nodal_gradient` for the state `U` through the plan.
+function _planned_gradient(plan::GradientPlan, U::AbstractVector{Float64})
+    (; proj, dofs, dφ, proj_dofs, proj_cell, weights, rhs) = plan
+    fill!(rhs, 0)
+    nbasis, nq, pbasis = size(dofs, 1), size(dφ, 2), size(proj_dofs, 1)
+    @inbounds for m in axes(proj_dofs, 2)
+        k = proj_cell[m]
+        for q in 1:nq
+            slope = 0.0
+            for j in 1:nbasis
+                slope += dφ[j, q, k] * U[dofs[j, k]]
+            end
+            for i in 1:pbasis
+                rhs[proj_dofs[i, m]] += weights[i, q, m] * slope
+            end
+        end
+    end
+    return Ferrite.evaluate_at_grid_nodes(proj, proj.M_cholesky \ rhs)
+end
+
+# The projected nodal gradients of every state through a plan, or `nothing` when the plan does not pay or does not
+# apply: fewer than three states (the plan costs about as much as two), a layout or field the plan does not cover
+# (`plan_of` returns `nothing`; it is also a seam for the tests), a state that is not a `Vector{Float64}` (the first is
+# checked before the plan's tables are allocated), tables over `PLAN_MAX_BYTES`, or a plan that
+# does not reproduce `_nodal_gradient` on the first state to 1e-8 of its largest value.
+function _planned_gradients(md, f::FieldInfo, d, states, projector; plan_of = _gradient_plan)
+    length(states) < 3 && return nothing
+    first(states) isa AbstractVector{Float64} || return nothing
+    plan = plan_of(md, f, d, projector)
+    plan === nothing && return nothing
+    rows = nothing
+    for U in states
+        U isa AbstractVector{Float64} || return nothing
+        fast = _planned_gradient(plan, U)
+        if rows === nothing
+            slow = _nodal_gradient(md, f, d, U, projector)
+            isapprox(fast, slow; rtol = 1.0e-8, atol = 1.0e-8 * maximum(abs, slow; init = 1.0)) || return nothing
+            rows = typeof(fast)[]
+        end
+        push!(rows, fast)
+    end
+    return rows
+end
+
+# `_nodal_gradient` of every state. The planned route and `Ferrite.project` agree to rounding (about 5e-16 relative):
+# the sums are taken in a different order.
+function _nodal_gradients(md, f::FieldInfo, d, states; plan_of = _gradient_plan)
+    projector = _gradient_projector(md, f)
+    rows = _planned_gradients(md, f, d, states, projector; plan_of)
+    return rows === nothing ? [_nodal_gradient(md, f, d, U, projector) for U in states] : rows
+end
+
 _project_at_nodes(proj, qpvals, qr) = Ferrite.evaluate_at_grid_nodes(proj, Ferrite.project(proj, qpvals, qr))
 # Ferrite's projection assembles into real buffers, so complex data is projected part by part.
 function _project_at_nodes(proj, qpvals::Vector{<:Vector{<:Complex}}, qr)
@@ -457,8 +568,7 @@ function Base.getindex(A::FEMSolution, sym::Num)
     _reject_fixed(md, s)
     g = _gradkey(md, s)
     if g !== nothing
-        projector = _gradient_projector(md, g[1])
-        return _stack(A, g[1], [_nodal_gradient(md, g..., U, projector) for U in _states(A)])
+        return _stack(A, g[1], _nodal_gradients(md, g..., _states(A)))
     end
     if SymbolicUtils.iscall(s) && _is_normal_derivative(SymbolicUtils.operation(s))
         trace = Symbolics.unwrap(only(SymbolicUtils.arguments(s)))

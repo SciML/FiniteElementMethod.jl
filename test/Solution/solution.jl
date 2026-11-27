@@ -102,7 +102,8 @@ inside(grid, px, py) = PointEvalHandler(grid, [Vec(px, py)]; warn = false).cells
     @test size(sol[Dx(U)]) == (nt, nv)
     field = only(sol.disc_data.fields)
     projector = FiniteElementMethod._gradient_projector(sol.disc_data, field)
-    @test sol[Dx(U)] == _stack_rows([FiniteElementMethod._nodal_gradient(sol.disc_data, field, 1, V, projector) for V in sol.original_sol.u])
+    reference = _stack_rows([FiniteElementMethod._nodal_gradient(sol.disc_data, field, 1, V, projector) for V in sol.original_sol.u])
+    @test sol[Dx(U)] ≈ reference atol = 1.0e-12 * maximum(abs, reference)
     sol[Dx(U)]
     build_bytes = @allocated FiniteElementMethod._gradient_projector(sol.disc_data, field)
     @test @allocated(sol[Dx(U)]) < 3 * build_bytes + nt * @allocated(FiniteElementMethod._nodal_gradient(sol.disc_data, field, 1, sol.original_sol.u[1], projector))
@@ -512,5 +513,117 @@ end
             end / sum(i -> getdetJdV(fv, i), q)
         end
         @test normal_flux(sol, syms.u(syms.x, syms.y), syms.Γ) ≈ reference rtol = 1.0e-10
+    end
+end
+
+# The projected gradient reads each state through a plan built once per field (state-independent quadrature data and the
+# projector's factorisation) and falls back to the per-state `Ferrite.project` route (`_nodal_gradient`) outside what
+# the plan covers. The two agree to rounding, not bit for bit: the sums are taken in a different order.
+function gradient_case(shape, order; periodic = false, second_field = false, region = false, nel = 6)
+    t = t_nounits
+    @variables x y u(..) v(..)
+    Δ(w) = Differential(x)(Differential(x)(w)) + Differential(y)(Differential(y)(w))
+    grid = generate_grid(shape, (nel, nel), Vec(0.0, 0.0), Vec(1.0, 1.0))
+    region && addcellset!(grid, "left_half", p -> p[1] <= 0.5 + 1.0e-12)
+    Ω = MeshDomain(grid)
+    left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+    U, V = u(t, x, y), v(t, x, y)
+    eqs = [Differential(t)(U) ~ Δ(U)]
+    bcs = periodic ? [u(t, left) ~ u(t, right), u(t, bottom) ~ u(t, top)] : [u(t, Γ) ~ 0 for Γ in (left, right, bottom, top)]
+    bcs = [bcs; u(0, x, y) ~ sin(2pi * x) * cos(pi * y)]
+    dvs, spaces = [U], Dict{Any, Any}(u => Lagrange{shape === Triangle ? RefTriangle : RefQuadrilateral, order}())
+    if second_field || region
+        push!(eqs, Differential(t)(V) ~ Δ(V) + U)
+        push!(dvs, V)
+        append!(bcs, [v(t, Γ) ~ 0 for Γ in (region ? (left,) : (left, right, bottom, top))])
+        push!(bcs, v(0, x, y) ~ 1)
+        spaces[v] = Lagrange{shape === Triangle ? RefTriangle : RefQuadrilateral, 1}()
+    end
+    @named pdesys = PDESystem(eqs, bcs, [(x, y) ∈ Ω, t ∈ DomainSets.Interval(0.0, 1.0)], [t, x, y], dvs, [])
+    disc = FEMDiscretization(Ω, t; spaces, regions = region ? Dict(v => Region(Ω, :left_half)) : Dict())
+    prob = discretize(pdesys, disc)
+    n = length(prob.u0)
+    ts = [0.0, 0.25, 0.5, 1.0]
+    states = [prob.u0 .+ 0.3 * sin.(k .* (1:n)) for k in 1:4]
+    raw = SciMLBase.build_solution(prob, DFBDF(), ts, states; retcode = SciMLBase.ReturnCode.Success)
+    return SciMLBase.wrap_sol(raw), (; t, x, y)
+end
+
+@testset "Projected gradients: the planned path matches the Ferrite.project route" begin
+    cases = (
+        ("P1 triangles", Triangle, 1, (;)), ("P2 triangles", Triangle, 2, (;)),
+        ("Q1 quadrilaterals", Quadrilateral, 1, (;)), ("Q2 quadrilaterals", Quadrilateral, 2, (;)),
+        ("periodic P1", Triangle, 1, (; periodic = true)), ("periodic P2 quadrilaterals", Quadrilateral, 2, (; periodic = true)),
+        ("two fields (P2, P1)", Triangle, 2, (; second_field = true)),
+    )
+    @testset "$name" for (name, shape, order, options) in cases
+        sol, (; t, x, y) = gradient_case(shape, order; options...)
+        md = sol.disc_data
+        states = [FiniteElementMethod._full(md, U) for U in sol.original_sol.u]
+        for f in md.fields, (d, coordinate) in enumerate((x, y))
+            projector = FiniteElementMethod._gradient_projector(md, f)
+            rows = [FiniteElementMethod._nodal_gradient(md, f, d, U, projector) for U in states]
+            planned_rows = FiniteElementMethod._planned_gradients(md, f, d, states, projector)
+            @test planned_rows !== nothing   # the planned route is the one taken
+            @test all(isapprox.(planned_rows, rows; atol = 1.0e-12 * maximum(maximum.(abs, rows))))
+            reference = FiniteElementMethod._stack(sol, f, rows)
+            planned = sol[Differential(coordinate)(Num(f.dv))]
+            @test planned ≈ reference atol = 1.0e-12 * maximum(abs, reference)
+            @test size(planned) == size(reference)
+        end
+    end
+
+    sol, (; t, x, y) = gradient_case(Triangle, 2)
+    md = sol.disc_data
+    f = first(md.fields)
+    projector = FiniteElementMethod._gradient_projector(md, f)
+    states = [FiniteElementMethod._full(md, U) for U in sol.original_sol.u]
+    reference = [FiniteElementMethod._nodal_gradient(md, f, 1, U, projector) for U in states]
+
+    @testset "falls back when the projector's layout is not the expected one" begin
+        for odd in ((; dh = nothing), (; M_cholesky = nothing, ch = nothing), (; M_cholesky = nothing, dh = nothing))
+            @test FiniteElementMethod._gradient_plan(md, f, 1, (; proj = odd, qr = projector.qr, cv = projector.cv)) === nothing
+        end
+        @test FiniteElementMethod._planned_gradients(md, f, 1, states, projector; plan_of = (args...) -> nothing) === nothing
+        @test FiniteElementMethod._nodal_gradients(md, f, 1, states; plan_of = (args...) -> nothing) == reference
+    end
+    @testset "falls back when the plan does not reproduce the Ferrite.project route" begin
+        wrong(args...) = (p = FiniteElementMethod._gradient_plan(args...); p === nothing ? nothing : FiniteElementMethod.GradientPlan(p.proj, p.dofs, 2 .* p.dφ, p.proj_dofs, p.proj_cell, p.weights, p.rhs))
+        @test FiniteElementMethod._planned_gradients(md, f, 1, states, projector; plan_of = wrong) === nothing
+        @test FiniteElementMethod._nodal_gradients(md, f, 1, states; plan_of = wrong) == reference
+    end
+    @testset "falls back when the plan's tables would be large" begin
+        @test FiniteElementMethod._gradient_plan(md, f, 1, projector; max_bytes = 0) === nothing
+        @test FiniteElementMethod._gradient_plan(md, f, 1, projector) !== nothing
+        small_plan(args...) = FiniteElementMethod._gradient_plan(args...; max_bytes = 1000)
+        @test FiniteElementMethod._planned_gradients(md, f, 1, states, projector; plan_of = small_plan) === nothing
+        @test FiniteElementMethod._nodal_gradients(md, f, 1, states; plan_of = small_plan) == reference
+    end
+    @testset "falls back for fewer than three states" begin
+        @test FiniteElementMethod._planned_gradients(md, f, 1, states[1:2], projector) === nothing
+        @test FiniteElementMethod._nodal_gradients(md, f, 1, states[1:2]) == reference[1:2]
+        @test FiniteElementMethod._nodal_gradients(md, f, 1, states[1:1]) == reference[1:1]
+    end
+    @testset "falls back for complex states, also after a real first state" begin
+        complex_states = [U .+ im .* reverse(U) for U in states]
+        slow = [FiniteElementMethod._nodal_gradient(md, f, 1, U, projector) for U in complex_states]
+        @test FiniteElementMethod._planned_gradients(md, f, 1, complex_states, projector) === nothing
+        @test FiniteElementMethod._nodal_gradients(md, f, 1, complex_states) == slow
+        mixed = AbstractVector[states[1], complex_states[2], states[3], complex_states[4]]
+        @test FiniteElementMethod._planned_gradients(md, f, 1, mixed, projector) === nothing
+        @test FiniteElementMethod._nodal_gradients(md, f, 1, mixed) == [FiniteElementMethod._nodal_gradient(md, f, 1, U, projector) for U in mixed]
+    end
+    @testset "falls back for a field on a region" begin
+        sol, (; t, x, y) = gradient_case(Triangle, 2; region = true)
+        md = sol.disc_data
+        @test length(md.space.dh.subdofhandlers) > 1
+        for f in md.fields
+            projector = FiniteElementMethod._gradient_projector(md, f)
+            @test FiniteElementMethod._gradient_plan(md, f, 1, projector) === nothing
+            states = [FiniteElementMethod._full(md, U) for U in sol.original_sol.u]
+            @test FiniteElementMethod._planned_gradients(md, f, 1, states, projector) === nothing
+            reference = FiniteElementMethod._stack(sol, f, [FiniteElementMethod._nodal_gradient(md, f, 1, U, projector) for U in states])
+            @test isequal(sol[Differential(x)(Num(f.dv))], reference)
+        end
     end
 end
