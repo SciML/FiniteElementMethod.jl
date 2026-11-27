@@ -94,9 +94,9 @@ function MaxwellModel(
     )
     Ferrite.getcelltype(grid) === Ferrite.Tetrahedron ||
         throw(ArgumentError("MaxwellModel needs a grid of Tetrahedron cells, got $(Ferrite.getcelltype(grid))"))
-    isfinite(length_scale) && length_scale > 0 ||
-        throw(ArgumentError("length_scale must be finite and positive, got $length_scale"))
-    length_scale, eps0, mu0 = Float64(length_scale), Float64(eps0), Float64(mu0)
+    L = Float64(length_scale)
+    isfinite(L) && L > 0 || throw(ArgumentError("length_scale must be finite and positive as a Float64, got $length_scale"))
+    length_scale, eps0, mu0 = L, Float64(eps0), Float64(mu0)
     pec = String.(collect(pec))
     for name in pec
         haskey(grid.facetsets, name) ||

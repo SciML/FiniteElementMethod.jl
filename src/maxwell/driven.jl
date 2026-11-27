@@ -52,7 +52,8 @@ end
 
 The SciMLBase `LinearProblem` `A(ω) u = b` of [`MaxwellModel`](@ref) at angular frequency `ω` (rad/s) with
 current density `J` (as for [`FiniteElementMethod.maxwell_rhs`](@ref)) and the PEC constraints applied by
-Ferrite's `apply!`: the constrained rows and columns are zeroed with a nonzero diagonal. PEC elimination
+Ferrite's `apply!`: the constrained rows and columns are zeroed with a nonzero diagonal (Ferrite's mean
+absolute diagonal, or one where that is zero). PEC elimination
 preserves symmetry when the input operator is symmetric. Its solution `u` are the edge dofs of `E`; wrap them with
 `MaxwellSolution(model, ω, u)` to evaluate the field.
 """
@@ -61,6 +62,9 @@ function driven_problem(model::MaxwellModel, ω::Real, J)
     A = maxwell_operator(model, ω)
     b = maxwell_rhs(model, ω, J)
     Ferrite.apply!(A, b, model.ch)
+    for d in model.ch.prescribed_dofs
+        iszero(A[d, d]) && (A[d, d] = 1)
+    end
     return SciMLBase.LinearProblem(A, b)
 end
 
@@ -92,7 +96,7 @@ end
 
 `(; E, curlE)` at the mesh-coordinate `points` (`Vec{3}`s): vectors of `Vec{3, ComplexF64}`, with `curlE` in
 SI units (per metre, not per mesh unit). Each point is evaluated in a tetrahedron that contains it, up to a
-barycentric roundoff of `1e-12`; points outside the mesh get `NaN`s. A point on a facet shared by two cells takes
+barycentric roundoff of `max(1e-12, 64 eps(T))` for coordinates of type `T`; points outside the mesh get `NaN`s. A point on a facet shared by two cells takes
 the trace of one of them, so a normal component that jumps there has either one-sided value.
 """
 function field_values(sol::MaxwellSolution, points::AbstractVector{<:Ferrite.Vec{3}})
@@ -104,7 +108,7 @@ function field_values(sol::MaxwellSolution, points::AbstractVector{<:Ferrite.Vec
         p = points[k]
         if cell !== nothing
             ξ = _tet_coords(grid, cell, p)
-            _barycentric_min(ξ) >= -_TET_ROUNDOFF && (ph.local_coords[k] = ξ; continue)
+            _barycentric_min(ξ) >= -_tet_roundoff(ξ) && (ph.local_coords[k] = ξ; continue)
         end
         ph.cells[k], ph.local_coords[k] = _in_box(box, p) ? _containing_tet(grid, p) : (nothing, zero(p))
     end
@@ -124,8 +128,9 @@ end
 
 # Ferrite's point search accepts a cell that misses the point by up to its own tolerance (an absolute residual, so on
 # a small cell even its initial guess), which picks the wrong side of a normal jump near a facet or a cell beside the
-# point. The Maxwell point evaluation computes the reference coordinates of its linear tetrahedra exactly instead.
-const _TET_ROUNDOFF = 1.0e-12
+# point. The Maxwell point evaluation computes the reference coordinates of its linear tetrahedra exactly instead,
+# accepting a barycentric coordinate down to minus this roundoff of their number type.
+_tet_roundoff(ξ) = max(1.0e-12, 64 * eps(eltype(ξ)))
 
 # The least barycentric coordinate of the reference point `ξ` of a tetrahedron: negative outside.
 _barycentric_min(ξ) = min(1 - sum(ξ), minimum(ξ))
@@ -147,7 +152,7 @@ function _grid_box(grid)
         x = Tuple(Ferrite.get_node_coordinate(node))
         lo, hi = min.(lo, x), max.(hi, x)
     end
-    slack = _TET_ROUNDOFF * maximum(hi .- lo)
+    slack = _tet_roundoff(lo) * maximum(hi .- lo)
     return lo .- slack, hi .+ slack
 end
 _in_box((lo, hi), p) = all(lo .<= Tuple(p) .<= hi)
@@ -161,6 +166,6 @@ function _containing_tet(grid, p)
         λ = _barycentric_min(ξ)
         λ > best_λ && ((best, best_ξ, best_λ) = (cell, ξ, λ))
     end
-    best_λ >= -_TET_ROUNDOFF || return nothing, zero(p)
+    best_λ >= -_tet_roundoff(best_ξ) || return nothing, zero(p)
     return best, best_ξ
 end

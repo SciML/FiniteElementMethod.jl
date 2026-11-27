@@ -187,7 +187,7 @@ end
     @test FiniteElementMethod.maxwell_rhs(si, Float16(1000), x -> [1.0, 0.0, 0.0]) ==
         FiniteElementMethod.maxwell_rhs(si, 1000.0, x -> [1.0, 0.0, 0.0])
     @test driven_problem(si, Float16(1000), x -> [1.0, 0.0, 0.0]).b == driven_problem(si, 1000.0, x -> [1.0, 0.0, 0.0]).b
-    for L in (0.0, -1.0, Inf, NaN)
+    for L in (0.0, -1.0, Inf, NaN, big"1e400", big"1e-400")
         @test_throws "length_scale" MaxwellModel(grid; length_scale = L)
     end
 end
@@ -222,6 +222,37 @@ end
         @test collect(vals.curlE[1]) ≈ 2 .* b ./ h rtol = 1.0e-10
         @test all(isnan, vals.E[2]) && all(isnan, vals.curlE[2])
     end
+end
+
+@testset "point evaluation on a facet of a Float32 tetrahedron" begin
+    x2, x3, x4 = Vec{3, Float32}.(((-867, -407, -176), (-15, -389, 698), (136, 930, 870))) ./ 1024
+    grid = Grid([Tetrahedron((1, 2, 3, 4))], Node.([zero(x2), x2, x3, x4]))
+    model = MaxwellModel(grid; eps0 = 1.0, mu0 = 1.0)
+    a, b = ComplexF64[1 + 0.2im, -2 + 0.3im, 3 - 0.4im], ComplexF64[0.5, -1 + 0.1im, 2]
+    E(x) = a .+ cross(b, collect(x))
+    u = Matrix(model.blocks.eps_real) \ FiniteElementMethod.maxwell_rhs(model, 1.0, x -> im .* E(x))
+    on_facet = x2 / 2 + x3 / 4 + x4 / 4    # reference coordinates (0.5, 0.25, 0.25), summing to 1 + eps(Float32)
+    vals = field_values(MaxwellSolution(model, 1.0, u), [on_facet])
+    @test collect(vals.E[1]) ≈ E(on_facet) rtol = 1.0e-5
+end
+
+@testset "PEC elimination keeps a nonzero diagonal when every diagonal entry of A(ω) is zero" begin
+    model = MaxwellModel(generate_grid(Tetrahedron, (1, 1, 1)); pec = ["left"], eps0 = 1.0, mu0 = 1.0)
+    A0 = maxwell_operator(model, 2.0)
+    minus_diagonal = copy(model.blocks.curlcurl)
+    nonzeros(minus_diagonal) .= 0
+    foreach(i -> minus_diagonal[i, i] = -real(A0[i, i]), axes(A0, 1))
+    FiniteElementMethod.add_term!(model, minus_diagonal, Returns(1.0 + 0.0im))
+    A = maxwell_operator(model, 2.0)
+    @test all(iszero, diag(A))
+    J(x) = [1.0, x[1], x[2]]
+    prob = driven_problem(model, 2.0, J)
+    pec = model.ch.prescribed_dofs
+    free = setdiff(axes(A, 1), pec)
+    @test rank(Matrix(A[free, free])) == length(free)
+    u = prob.A \ prob.b
+    @test all(iszero, u[pec])
+    @test A[free, free] * u[free] ≈ FiniteElementMethod.maxwell_rhs(model, 2.0, J)[free]
 end
 
 @testset "point evaluation finds points the nearest-node search misses" begin
