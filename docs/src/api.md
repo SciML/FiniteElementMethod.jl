@@ -93,4 +93,5 @@ FiniteElementMethod.update!
 
 ```@docs
 FiniteElementMethod.workload_chain
+FiniteElementMethod.workload_discretize
 ```
