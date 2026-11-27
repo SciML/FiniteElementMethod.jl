@@ -116,6 +116,13 @@ const MISMATCH = "periodic pieces Γ_left and Γ_right of u do not match under a
     steady, ops = periodic_pair(quadrilateral(x0, 2w, 3w))
     @test_throws MISMATCH steady()
     @test_throws MISMATCH ops()
+    # A slanted cell with a Q2 field: the midside dofs are interpolated from the vertices, which far from the origin would round
+    # them to whole ulps and break the exact translation of 5 ulps.
+    e = eps(x0)
+    slanted(x) = Grid([Quadrilateral((1, 2, 3, 4))], Node.([Vec(x, 0.0), Vec(x + 5e, 0.0), Vec(x + 6e, 100.0), Vec(x + e, 100.0)]); facetsets = SIDES)
+    q2ties(grid) = FEMSpace(grid, [:u => Lagrange{RefQuadrilateral, 2}()]; periodic = [(:u, "left", "right")]).ties
+    @test length(q2ties(slanted(0.0))) == 3
+    @test q2ties(slanted(x0)) == q2ties(slanted(0.0))
 end
 
 # BCs:    left and right periodic on one nine-node quadrilateral, with the default Q1 field

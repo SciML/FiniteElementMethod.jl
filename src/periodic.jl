@@ -63,15 +63,14 @@ function _matching_problem(coords, scaled, da, db, matched, unmatched, shift, ss
     return nothing
 end
 
-# The points of each facet of the set at a quadrature rule of the mesh geometry, relative to `origin` and scaled by `tolerance`.
-# The rule is exact to twice the geometric order with positive weights, so two facets whose maps agree at its points are the
-# same facet, and it is symmetric, so the set of points does not depend on the orientation of the facet in its cell. The cell
-# coordinates are made relative before the geometry is evaluated, so a mesh far from the origin keeps its precision.
-function _facet_points(grid, set, origin, tolerance)
+# The points of each facet of the set at a quadrature rule of the mesh geometry, scaled by `tolerance`. The rule is exact to
+# twice the geometric order with positive weights, so two facets whose maps agree at its points are the same facet, and it is
+# symmetric, so the set of points does not depend on the orientation of the facet in its cell.
+function _facet_points(grid, set, tolerance)
     ip = Ferrite.geometric_interpolation(Ferrite.getcelltype(grid))
     fv = Ferrite.FacetValues(Ferrite.FacetQuadratureRule{Ferrite.getrefshape(ip)}(2 * _order(ip)), ip, ip)
     return map(collect(Ferrite.getfacetset(grid, String(set)))) do (cell, facet)
-        x = Ferrite.getcoordinates(grid, cell) .- Ref(origin)
+        x = Ferrite.getcoordinates(grid, cell)
         Ferrite.reinit!(fv, Ferrite.getcells(grid, cell), x, facet)
         [Vector(Ferrite.spatial_coordinate(fv, q, x)) ./ tolerance for q in 1:Ferrite.getnquadpoints(fv)]
     end
@@ -101,24 +100,25 @@ function _tuple_str(x)
     return "(" * join(round.(x; sigdigits = 6), ", ") * ")"
 end
 
-#     periodic_ties(grid, dh, coords, periodic, prescribed) -> Vector{Pair{Int, Int}}
+#     periodic_ties(moved, dh, nodes, relative, periodic, prescribed) -> (ties, classes)
 #
+# `moved` is the mesh translated so that its lower corner is the origin, `nodes` the dof coordinates and `relative` the dof
+# coordinates interpolated on `moved`, which the matching uses so that the distance of the mesh from the origin does not round
+# them; `nodes` are used for the Dirichlet data and the messages.
 # `(ties, classes)`: `mirror => master` dof pairs (and the prescribed dofs of each class, for `check_agreement`) that make the dofs matched by `periodic`, a collection of
 # `(field, set_a, set_b)`, equal. The pieces of a pair must be translates of each other: the translation is the
 # difference of their centroids and each node of one must have a node of the other at the translated place, or
 # an `ArgumentError` names both pieces. A master is a `prescribed` (Dirichlet) dof of its class if it has one, else
 # its lowest dof; prescribed dofs are never mirrors.
-function periodic_ties(grid, dh, nodes, periodic, prescribed; dirichlet = Dict{Int, Any}(), times = (0.0,))
+function periodic_ties(grid, dh, nodes, relative, periodic, prescribed; dirichlet = Dict{Int, Any}(), times = (0.0,))
     coords = [collect(Float64, Tuple(x)) for x in nodes]
-    lo = reduce((a, b) -> min.(a, b), coords)
-    hi = reduce((a, b) -> max.(a, b), coords)
-    # One tolerance per axis, a fraction of the extent of the mesh along it, so a thin mesh keeps its translations. Positions
-    # are taken relative to the corner of the mesh, so its distance from the origin changes neither the tolerance nor the
-    # rounding of the centroids.
+    relative = [collect(Float64, Tuple(x)) for x in relative]
+    lo = reduce((a, b) -> min.(a, b), relative)
+    hi = reduce((a, b) -> max.(a, b), relative)
+    # One tolerance per axis, a fraction of the extent of the mesh along it, so a thin mesh keeps its translations.
     tolerance = max.(1.0e-6 .* (hi - lo), floatmin(Float64))
-    relative = [c - lo for c in coords]
     scaled = [c ./ tolerance for c in relative]
-    origin = Ferrite.Vec(lo...)
+    corner = coords[1] - relative[1]
     parent = collect(1:Ferrite.ndofs(dh))
     root(d) = parent[d] == d ? d : (parent[d] = root(parent[d]))
     for (field, a, b) in periodic
@@ -130,7 +130,7 @@ function periodic_ties(grid, dh, nodes, periodic, prescribed; dirichlet = Dict{I
         norm(sshift) <= 1 && throw(ArgumentError("periodic pieces $names coincide: their centroids are the same point, so there is no translation between them"))
         matched, unmatched = _match_translate(scaled, da, db, sshift)
         problem = _matching_problem(coords, scaled, da, db, matched, unmatched, shift, sshift, a, b)
-        problem === nothing && (problem = _facet_problem(_facet_points(grid, a, origin, tolerance), _facet_points(grid, b, origin, tolerance), sshift, lo, tolerance, a, b))
+        problem === nothing && (problem = _facet_problem(_facet_points(grid, a, tolerance), _facet_points(grid, b, tolerance), sshift, corner, tolerance, a, b))
         problem === nothing || throw(
             ArgumentError(
                 "periodic pieces $names do not match under a translation: $problem; the translation between their centroids is " *

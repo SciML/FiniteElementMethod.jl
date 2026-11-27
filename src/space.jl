@@ -57,9 +57,7 @@ function FEMSpace(
         check_facetsets(grid, [Symbol(a), Symbol(b)])
     end
 
-    dh = _dofhandler(grid, names, ips, regions)
-    # With regions, Ferrite lists the fields in sub-handler order, not declaration order; block k is field k.
-    Ferrite.renumber!(dh, Ferrite.DofOrder.FieldWise([findfirst(==(f), names) for f in dh.field_names]))
+    dh = _numbered_dofhandler(grid, names, ips, regions)
 
     # `close!(ch)` calls `update!(ch, 0.0)` itself; until it returns, time-dependent data are evaluated at
     # `t0` instead. Time-independent `g(x)` is passed through for Ferrite's own arity detection.
@@ -90,13 +88,32 @@ function FEMSpace(
         owner[d] = (set, g)
     end
     times = range(t0, tend; length = 17)
+    # Periodic matching compares positions to a fraction of the mesh extent, so it uses dof coordinates interpolated on the
+    # mesh moved to the origin: interpolated in place, far from the origin, a midside dof is rounded to an ulp of its coordinates.
+    moved = isempty(periodic) ? grid : _moved_to_origin(grid)
     ties, classes = isempty(periodic) ? (Pair{Int, Int}[], DirichletClasses(Vector{Int}[], Dict{Int, Vector{Float64}}(), Dict{Int, String}(), Any[])) :
         periodic_ties(
-            grid, dh, _dof_coordinates(grid, dh, names), [(Symbol(f), a, b) for (f, a, b) in periodic], ch.prescribed_dofs;
+            moved, dh, _dof_coordinates(grid, dh, names), _dof_coordinates(moved, _numbered_dofhandler(moved, names, ips, regions), names),
+            [(Symbol(f), a, b) for (f, a, b) in periodic], ch.prescribed_dofs;
             dirichlet = owner, times
         )
     pattern = extend_pattern(Ferrite.allocate_matrix(dh, ch), ties, ch.prescribed_dofs)
     return FEMSpace(grid, dh, ch, names, cellvalues, facetvalues, ranges, pieces, pattern, zeros(Ferrite.ndofs(dh)), ties, classes)
+end
+
+# The DofHandler of the fields, numbered field by field. With regions, Ferrite lists the fields in sub-handler order, not
+# declaration order; block k is field k.
+function _numbered_dofhandler(grid, names, ips, regions)
+    dh = _dofhandler(grid, names, ips, regions)
+    Ferrite.renumber!(dh, Ferrite.DofOrder.FieldWise([findfirst(==(f), names) for f in dh.field_names]))
+    return dh
+end
+
+# `grid` translated so that the lower corner of its bounding box is the origin, with the same cells and sets.
+function _moved_to_origin(grid)
+    x = Ferrite.get_node_coordinate.(Ferrite.getnodes(grid))
+    corner = Ferrite.Vec(ntuple(d -> minimum(p -> p[d], x), length(first(x))))
+    return Ferrite.Grid(Ferrite.getcells(grid), [Ferrite.Node(p - corner) for p in x]; cellsets = grid.cellsets, facetsets = grid.facetsets)
 end
 
 # One DofHandler for all fields, or, with regions, one SubDofHandler per distinct set of fields present on a cell;
