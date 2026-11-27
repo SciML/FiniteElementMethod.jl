@@ -11,6 +11,23 @@ const P2 = Lagrange{RefTriangle, 2}()
 
 direct_eval(grid, dh, U, field, px, py) = evaluate_at_points(PointEvalHandler(grid, [Vec(px, py)]), dh, U, field)[1]
 
+# The saved states are read lazily and one at a time: the elements are `_full` of each saved vector, in order, the
+# solution's own vectors are untouched, and the consumers give what a stack of per-state reads gives.
+function states_checks(sol)
+    md = sol.disc_data
+    saved = deepcopy(sol.original_sol.u)
+    expected = [FiniteElementMethod._full(md, U) for U in saved]
+    @test collect(FiniteElementMethod._states(sol)) == expected
+    @test sol.original_sol.u == saved
+    first(FiniteElementMethod._states(sol))
+    @test @allocated(first(FiniteElementMethod._states(sol))) < 4 * sizeof(first(saved))
+    f = first(md.fields)
+    projector = FiniteElementMethod._gradient_projector(md, f)
+    reference = FiniteElementMethod._stack(sol, f, [FiniteElementMethod._nodal_gradient(md, f, 1, U, projector) for U in expected])
+    @test sol[Differential(Num(first(md.x̄)))(Num(f.dv))] == reference
+    return nothing
+end
+
 # Wrapper checks shared by the square, the L-shape and the two-field case.
 function wrapper_checks(grid, sol, syms)
     (; t, x, y, u, Γ, dh) = syms
@@ -37,6 +54,7 @@ function wrapper_checks(grid, sol, syms)
         @test count(endswith(".vtu"), readdir(dir)) == nt
         @test count("<DataSet", read(pvd, String)) == nt
     end
+    states_checks(sol)
     return nothing
 end
 
@@ -422,6 +440,7 @@ end
         @test sol(time, x0, y0; dv = u(t, x, y)) ≈ (1 + time) * g(Vec(x0, y0)) atol = 1.0e-12
     end
     @test sol.original_sol.u == saved
+    states_checks(sol)
 end
 
 @testset "Periodic seam of a DFBDF solve" begin
@@ -443,6 +462,7 @@ end
     @test SciMLBase.successful_retcode(sol)
     edge = collect(range(0.0, 1.0; length = 101))
     @test maximum(abs, sol(tend, [0.0], edge; dv = U) .- sol(tend, [1.0], edge; dv = U)) <= 1.0e-12
+    states_checks(sol)
 end
 
 @testset "A custom space's `ties` property is not read" begin
