@@ -456,7 +456,7 @@ function _nodal_gradients(md, f::FieldInfo, d, states; max_bytes = GRADIENT_TABL
     cv = projector.cv
     cells = _field_cells(_dh(md), f.name)
     nbasis, nq = Ferrite.getnbasefunctions(cv), Ferrite.getnquadpoints(cv)
-    (length(states) < 2 || 8 * nbasis * (nq + 1) * length(cells) > max_bytes) &&
+    (length(states) < 2 || 8 * nbasis * (nq + 1) * length(cells) > max_bytes || !any(U -> U isa AbstractVector{Float64}, states)) &&
         return [_nodal_gradient(md, f, d, U, projector) for U in states]
     tables = _gradient_tables(md, f, d, cv, cells)
     qpvals = [zeros(nq) for _ in 1:Ferrite.getncells(_grid(md))]

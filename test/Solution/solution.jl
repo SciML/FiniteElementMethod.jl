@@ -609,6 +609,10 @@ end
     @test FiniteElementMethod._nodal_gradients(md, f, 1, states[1:1]) == reference[1:1]
     complex_states = [U .+ im .* reverse(U) for U in states]
     @test FiniteElementMethod._nodal_gradients(md, f, 1, complex_states) == [FiniteElementMethod._nodal_gradient(md, f, 1, U, projector) for U in complex_states]
+    per_state(states) = FiniteElementMethod._nodal_gradients(md, f, 1, states; max_bytes = 0)
+    per_state(complex_states)
+    # No tables for states that cannot use them: these would add about 43 kB; the slack covers a few hundred bytes of jitter.
+    @test @allocated(FiniteElementMethod._nodal_gradients(md, f, 1, complex_states)) <= @allocated(per_state(complex_states)) + 4096
     mixed = AbstractVector[iseven(k) ? complex_states[k] : states[k] for k in eachindex(states)]
     @test FiniteElementMethod._nodal_gradients(md, f, 1, mixed) == [FiniteElementMethod._nodal_gradient(md, f, 1, U, projector) for U in mixed]
     @test_throws BoundsError FiniteElementMethod._nodal_gradients(md, f, 1, [states[1:2]; [states[3][1:(end - 1)]]; states[4:end]])
