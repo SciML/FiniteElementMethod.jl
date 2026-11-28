@@ -4,7 +4,7 @@
 # converted to trace conditions on the named pieces of a 1D mesh of the same interval (the inverse
 # of PDEBase.to_box_bcs, which must take the trace form back to the library's conditions exactly).
 # Exact solutions come from the symbolic `sys.analytic`, never `analytic_func` (L1). Library
-# defects (spec §11.2, L1–L7) are `@test_broken` with their identifier, never worked around.
+# defects (spec §11.2, L1–L7) are marked with their identifier, never worked around.
 using Test
 using FiniteElementMethod: FiniteElementMethod, rectangle_grid
 using PDESystemLibrary: PDESystemLibrary
@@ -78,7 +78,7 @@ end
 
 # convdiff: k f'' + v f' = 0 with f(0) = 0, f(L) = 1, reached to below 1e-8 by t = 30 (slowest
 # decay rates 0.645 for convdiff2, 4.55 for convdiff4), used because the library's reference is
-# NaN everywhere (L2).
+# NaN everywhere in PDESystemLibrary 0.1.12 (L2).
 convdiff_steady(k, v, L) = (_, z) -> (1 - exp(-v * z / k)) / (1 - exp(-v * L / k))
 
 const CASES = [
@@ -131,8 +131,17 @@ end
         # ModelingToolkitBase 1.78; the exact solutions still come from
         # sys.analytic as spec §10.5 requires.
         @test analytic_func_evaluates(librarysystem(:heat_1d1), 0.05, 0.3)
-        # L2: the convdiff references are NaN everywhere.
-        @test_broken analytic_func_evaluates(librarysystem(:convdiff2), 30.0, 2.5)
-        @test_broken analytic_func_evaluates(librarysystem(:convdiff4), 30.0, 5.0)
+        # L2: the convdiff references are NaN everywhere in PDESystemLibrary 0.1.12 and
+        # fixed by SciML/PDESystemLibrary.jl#96. Either all NaN or the steady state; nothing else.
+        @testset "L2 $(case.name)" for case in filter(c -> haskey(c, :exact), CASES)
+            sys = librarysystem(case.name)
+            I = spatial_interval(sys, sys.ivs[2])
+            zs = range(DomainSets.infimum(I), DomainSets.supremum(I), 65)
+            ps = Float64[last(p) for p in params(sys)]
+            ref = only(values(sys.analytic_func)).(Ref(ps), case.tend, zs)
+            err = maximum(abs, ref .- case.exact.(case.tend, zs))
+            @info "Library: $(case.name) reference" nans = count(isnan, ref) points = length(ref) err
+            @test all(isnan, ref) || err <= 1.0e-7
+        end
     end
 end
