@@ -87,10 +87,13 @@ function check_facetsets(grid::Ferrite.Grid, names; disjoint::Bool = true)
             )
         )
     end
-    isempty(used) && return nothing
-    twice = _shared_facets(grid, [fi for name in used for fi in Ferrite.getfacetset(grid, String(name))])
+    (isempty(used) || _none_shared(grid, used)) && return nothing
+    topology = Ferrite.ExclusiveTopology(grid)
     for name in used
-        interior = sort!([fi for fi in Ferrite.getfacetset(grid, String(name)) if fi in twice]; by = _facet_key)
+        interior = sort!(
+            [fi for fi in Ferrite.getfacetset(grid, String(name)) if !isempty(Ferrite.getneighborhood(topology, grid, fi))];
+            by = _facet_key
+        )
         isempty(interior) || throw(
             ArgumentError(
                 "facet set $(repr(name)) is not on the boundary: it contains $(length(interior)) interior facets " *
@@ -101,64 +104,71 @@ function check_facetsets(grid::Ferrite.Grid, names; disjoint::Bool = true)
     return nothing
 end
 
-# Sorted corner-node ids, padded to 4: the identity of a facet of a conforming mesh, whatever the cell order and
-# orientation. A tuple, so that a pass over all facets does not allocate.
+# Ferrite's own cell types whose facets have at most three corners, by the dimension of the mesh they fill.
+const _ONE_PASS_CELLS = (
+    (Ferrite.Line, Ferrite.QuadraticLine),
+    (
+        Ferrite.Triangle, Ferrite.QuadraticTriangle, Ferrite.Quadrilateral, Ferrite.QuadraticQuadrilateral,
+        Ferrite.SerendipityQuadraticQuadrilateral,
+    ),
+    (Ferrite.Tetrahedron, Ferrite.QuadraticTetrahedron),
+)
+
+# Sorted corner-node ids of a facet with at most three corners, padded to three.
 function _corner_key(ids::Tuple)
-    a, b, c, d = ntuple(i -> i <= length(ids) ? ids[i] : typemax(Int), Val(4))
+    a, b, c = ntuple(i -> i <= length(ids) ? ids[i] : typemax(Int), Val(3))
     a, b = minmax(a, b)
-    c, d = minmax(c, d)
-    a, c = minmax(a, c)
-    b, d = minmax(b, d)
     b, c = minmax(b, c)
-    return (a, b, c, d)
+    a, b = minmax(a, b)
+    return (a, b, c)
 end
 
-# The key of each local facet of `cell`.
-function _facet_corners(cell)
+# The key of each local facet of `cell`, one of `_ONE_PASS_CELLS`.
+function _corner_keys(cell)
     vertices = Ferrite.vertices(cell)
     return map(facet -> _corner_key(map(i -> vertices[i], facet)), Ferrite.reference_facets(cell))
 end
 
-const _SHARED_FACET = Ferrite.FacetIndex(0, 0)
-
-# Every facet of `grid`, keyed by its corner nodes: its owner, or `_SHARED_FACET` if two or more cells have it.
-function _facet_owners(grid::Ferrite.Grid)
-    owners = Dict{NTuple{4, Int}, Ferrite.FacetIndex}()
-    for (c, cell) in enumerate(Ferrite.getcells(grid)), (lf, key) in enumerate(_facet_corners(cell))
-        owners[key] = haskey(owners, key) ? _SHARED_FACET : Ferrite.FacetIndex(c, lf)
-    end
-    return owners
-end
-
-_boundary_facets(grid::Ferrite.Grid) = Set(fi for fi in values(_facet_owners(grid)) if fi != _SHARED_FACET)
-
-# Those of `facets` that another cell shares, as `Ferrite.ExclusiveTopology` counts them.
-function _shared_facets(grid::Ferrite.Grid, facets)
-    _none_shared(grid, facets) && return Set{Ferrite.FacetIndex}()
-    topology = Ferrite.ExclusiveTopology(grid)
-    return Set(fi for fi in facets if !isempty(Ferrite.getneighborhood(topology, grid, fi)))
-end
-
-# Proves in one pass that no facet of `facets` is shared; `false` leaves the answer to `ExclusiveTopology`. With at
-# most three corners per face, its neighbours always have equal corner keys, so a key counted once is unshared (it
-# matches quadrilateral faces on three corners). A higher count decides nothing, e.g. for duplicated cells.
-function _none_shared(grid::Ferrite.Grid{dim}, facets) where {dim}
-    CT = Ferrite.getcelltype(grid)
-    isconcretetype(CT) && Ferrite.getrefdim(CT) == dim &&
-        all(facet -> length(facet) <= 3, Ferrite.reference_facets(Ferrite.getrefshape(CT))) || return false
+# Proves in one pass that no facet of the sets `names` is shared, so `ExclusiveTopology` is not needed; `false`
+# leaves the answer, and any error, to it. Neighbouring facets of these cell types have equal corner keys, so a key
+# counted once is unshared. A higher count decides nothing, e.g. for duplicated cells.
+function _none_shared(grid::Ferrite.Grid{dim}, names) where {dim}
+    # Before anything that asks a cell type for its metadata: other types need not define it.
+    Ferrite.getcelltype(grid) in get(_ONE_PASS_CELLS, dim, ()) || return false
     cells = Ferrite.getcells(grid)
     # `ExclusiveTopology` throws on a grid without cells or with a vertex that is not a node.
     nodes = 1:Ferrite.getnnodes(grid)
     !isempty(cells) && all(cell -> all(in(nodes), Ferrite.vertices(cell)), cells) || return false
-    # Only the keys of `facets` are stored, not those of the whole mesh.
-    count = Dict(_facet_corners(cells[fi[1]])[fi[2]] => 0 for fi in facets)
+    # Only the keys of the named facets are stored, not those of the whole mesh.
+    count = Dict{NTuple{3, Int}, Int}()
+    for name in names, fi in Ferrite.getfacetset(grid, String(name))
+        checkbounds(Bool, cells, fi[1]) || return false
+        facet_keys = _corner_keys(cells[fi[1]])
+        fi[2] in eachindex(facet_keys) || return false
+        count[facet_keys[fi[2]]] = 0
+    end
     # Skips hashing most facets: a key starts with its lowest node.
     lowest = BitSet(first(key) for key in keys(count))
-    for cell in cells, key in _facet_corners(cell)
+    for cell in cells, key in _corner_keys(cell)
         first(key) in lowest && haskey(count, key) && (count[key] += 1)
     end
     return all(==(1), values(count))
 end
+
+# Sorted corner-node ids of local facet `lf` of `cell`: the identity of a facet of a conforming mesh, whatever the
+# cell order and orientation.
+_facet_corners(cell, lf) = sort!([Ferrite.vertices(cell)[i] for i in Ferrite.reference_facets(cell)[lf]])
+
+# Every facet of `grid`, keyed by its corner nodes: a boundary facet has one owner, an interior facet two.
+function _facet_owners(grid::Ferrite.Grid)
+    owners = Dict{Vector{Int}, Vector{Ferrite.FacetIndex}}()
+    for (c, cell) in enumerate(Ferrite.getcells(grid)), lf in 1:Ferrite.nfacets(cell)
+        push!(get!(owners, _facet_corners(cell, lf), Ferrite.FacetIndex[]), Ferrite.FacetIndex(c, lf))
+    end
+    return owners
+end
+
+_boundary_facets(grid::Ferrite.Grid) = Set(only(fs) for fs in values(_facet_owners(grid)) if length(fs) == 1)
 
 # Map each node of `sub` to the parent node within `atol` of it (the nearest one), through a hash of `atol`-wide
 # buckets, so that a point's candidates lie in the 3^dim buckets around its own.
@@ -210,10 +220,10 @@ function _submesh_facets(grid::Ferrite.Grid{dim}, name, sub::Ferrite.Grid, atol,
     facets = valtype(grid.facetsets)()
     missing_cells, interior_cells = Int[], Int[]
     for (k, cell) in enumerate(cells)
-        found = get(owners, _corner_key(map(i -> parent[i], Ferrite.vertices(cell))), nothing)
+        found = get(owners, sort!([parent[i] for i in Ferrite.vertices(cell)]), nothing)
         found === nothing && (push!(missing_cells, k); continue)
-        found == _SHARED_FACET && (push!(interior_cells, k); continue)
-        push!(facets, found)
+        length(found) == 1 || (push!(interior_cells, k); continue)
+        push!(facets, only(found))
     end
     centre(k) = Tuple(sum(Ferrite.get_node_coordinate(sub, i) for i in Ferrite.vertices(cells[k])) / length(Ferrite.vertices(cells[k])))
     isempty(missing_cells) || throw(

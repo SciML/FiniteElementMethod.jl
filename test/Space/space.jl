@@ -1,6 +1,6 @@
 using FiniteElementMethod
 using FiniteElementMethod: FEMSpace, rectangle_grid, field_range, prescribed_dofs, dirichlet_values!,
-    check_facetsets, _meshdim, _facetset_names, _cellset_names, _contains_point, _boundary_facets, _shared_facets
+    check_facetsets, _meshdim, _facetset_names, _cellset_names, _contains_point, _none_shared
 using Ferrite
 using PDEBase: PDEBase
 using Test
@@ -15,6 +15,28 @@ catch e
 end
 
 facet_coordinates(grid, fi) = [get_node_coordinate(grid, n) for n in Ferrite.facets(getcells(grid, fi[1]))[fi[2]]]
+
+# A triangle on its own reference shape that gives its edges and facets per cell, with no `reference_edges`.
+struct RefCustomTriangle <: Ferrite.AbstractRefShape{2} end
+struct CustomTriangle <: Ferrite.AbstractCell{RefCustomTriangle}
+    nodes::NTuple{3, Int}
+end
+Ferrite.vertices(c::CustomTriangle) = c.nodes
+Ferrite.edges(c::CustomTriangle) = ((c.nodes[1], c.nodes[2]), (c.nodes[2], c.nodes[3]), (c.nodes[3], c.nodes[1]))
+Ferrite.faces(c::CustomTriangle) = (c.nodes,)
+Ferrite.reference_facets(::CustomTriangle) = ((1, 2), (2, 3), (3, 1))
+
+# A cell with one pentagonal facet, and a pentagonal submesh cell.
+struct PentagonParent <: Ferrite.AbstractCell{RefPyramid}
+    nodes::NTuple{5, Int}
+end
+Ferrite.vertices(c::PentagonParent) = c.nodes
+Ferrite.reference_facets(::PentagonParent) = ((4, 3, 2, 1, 5),)
+Ferrite.nfacets(::PentagonParent) = 1
+struct Pentagon <: Ferrite.AbstractCell{RefQuadrilateral}
+    nodes::NTuple{5, Int}
+end
+Ferrite.vertices(c::Pentagon) = c.nodes
 
 const P1 = Lagrange{RefTriangle, 1}()
 const P2 = Lagrange{RefTriangle, 2}()
@@ -226,51 +248,71 @@ end
     @test_logs check_facetsets(grid, [:left, :top])
 end
 
-@testset "boundary and shared facets agree with ExclusiveTopology" begin
+@testset "interior facets are those of ExclusiveTopology" begin
     box(CT, dim) = generate_grid(CT, ntuple(Returns(2), dim))
     nodes = [Node(x) for x in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (2.0, 0.0), (2.0, 1.0)]]
-    grids = [
-        box(Line, 1), box(QuadraticLine, 1), box(Triangle, 2), box(QuadraticTriangle, 2), box(Quadrilateral, 2),
-        box(QuadraticQuadrilateral, 2), box(Tetrahedron, 3), box(Hexahedron, 3), box(Wedge, 3), box(Pyramid, 3),
-        # mixed cell types of one dimension, and of two dimensions (lines on an interior and a boundary edge)
-        Grid(Ferrite.AbstractCell[Triangle((1, 2, 3)), Triangle((1, 3, 4)), Quadrilateral((2, 5, 6, 3))], nodes),
-        Grid(Ferrite.AbstractCell[Triangle((1, 2, 3)), Triangle((1, 3, 4)), Line((1, 3)), Line((1, 2))], nodes),
-    ]
-    for grid in grids
+    allfacets(grid) = [FacetIndex(c, f) for c in 1:getncells(grid) for f in 1:nfacets(getcells(grid, c))]
+    # Whether `check_facetsets` accepts each facet on its own, against the neighbours that `ExclusiveTopology` finds.
+    function agrees(grid)
         topology = ExclusiveTopology(grid)
-        facets = [FacetIndex(c, f) for c in 1:getncells(grid) for f in 1:nfacets(getcells(grid, c))]
-        interior = Set(fi for fi in facets if !isempty(getneighborhood(topology, grid, fi)))
-        @test _shared_facets(grid, facets) == interior
-        @test all(fi -> _shared_facets(grid, [fi]) == intersect(interior, [fi]), facets)
-        # `_boundary_facets` is only used on grids of one dimension.
-        all(c -> Ferrite.getrefdim(c) == Ferrite.getrefdim(getcells(grid, 1)), getcells(grid)) &&
-            @test _boundary_facets(grid) == setdiff(Set(facets), interior)
+        return all(allfacets(grid)) do fi
+            addfacetset!(grid, "one", [fi])
+            msg = errmsg(() -> check_facetsets(grid, [:one]))
+            delete!(grid.facetsets, "one")
+            isempty(getneighborhood(topology, grid, fi)) ? msg == "" : occursin("not on the boundary", msg)
+        end
+    end
+    function onepass(grid, facets)
+        addfacetset!(grid, "probe", facets)
+        proved = _none_shared(grid, [:probe])
+        delete!(grid.facetsets, "probe")
+        return proved
     end
 
-    # Three cells at one node: it is not on the boundary.
-    branched = Grid([Line((1, 2)), Line((2, 3)), Line((2, 5))], nodes)
-    @test _boundary_facets(branched) == Set([FacetIndex(1, 1), FacetIndex(2, 2), FacetIndex(3, 2)])
+    # Cell types whose boundary facets are proved unshared in one pass.
+    for (CT, dim) in (
+            (Line, 1), (QuadraticLine, 1), (Triangle, 2), (QuadraticTriangle, 2), (Quadrilateral, 2),
+            (QuadraticQuadrilateral, 2), (Ferrite.SerendipityQuadraticQuadrilateral, 2), (Tetrahedron, 3),
+        )
+        grid = CT === Ferrite.SerendipityQuadraticQuadrilateral ?
+            Grid([CT((1, 2, 3, 4, 5, 6, 7, 8))], [Node((0.0, 0.0)) for _ in 1:8]) : box(CT, dim)
+        @test agrees(grid)
+        topology = ExclusiveTopology(grid)
+        boundary = filter(fi -> isempty(getneighborhood(topology, grid, fi)), allfacets(grid))
+        @test onepass(grid, boundary)
+    end
+    # Every other cell type is left to `ExclusiveTopology`.
+    for grid in (
+            box(Hexahedron, 3), box(Wedge, 3), box(Pyramid, 3),
+            Grid(Ferrite.AbstractCell[Triangle((1, 2, 3)), Triangle((1, 3, 4)), Quadrilateral((2, 5, 6, 3))], nodes),
+            Grid(Ferrite.AbstractCell[Triangle((1, 2, 3)), Triangle((1, 3, 4)), Line((1, 3)), Line((1, 2))], nodes),
+        )
+        @test agrees(grid)
+        @test !onepass(grid, [FacetIndex(1, 1)])
+    end
 
     grid = box(Tetrahedron, 3)
-    grid.facetsets["inside"] = typeof(grid.facetsets["left"])([FacetIndex(1, 3)])
+    addfacetset!(grid, "inside", [FacetIndex(1, 3)])
     @test errmsg(() -> check_facetsets(grid, [:left, :inside])) ==
         "ArgumentError: facet set :inside is not on the boundary: it contains 1 interior facets " *
         "(shared by two cells; first: cell 1, local facet 3)"
+    # An invalid facet in a later set does not hide the interior facet of an earlier one.
+    addfacetset!(grid, "invalid", [FacetIndex(getncells(grid) + 1, 1)])
+    @test_throws "not on the boundary" check_facetsets(grid, [:inside, :invalid])
+    @test_throws BoundsError check_facetsets(grid, [:left, :invalid])
 
     # A tetrahedron under a hexahedron, its face covering half of the hexahedron's base: the face is not on the
     # boundary, although the two cells have no facet with the same corners.
     corners = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1), (1, 0, -1)]
     cells = Ferrite.AbstractCell[Hexahedron((1, 2, 3, 4, 5, 6, 7, 8)), Tetrahedron((1, 2, 3, 9))]
     hanging = Grid(cells, [Node(Float64.(x)) for x in corners])
-    face = FacetIndex(2, findfirst(f -> issetequal(f, (1, 2, 3)), Ferrite.faces(cells[2])))
-    hanging.facetsets["half"] = typeof(grid.facetsets["left"])([face])
+    addfacetset!(hanging, "half", [FacetIndex(2, 1)])
     @test_throws "not on the boundary" check_facetsets(hanging, [:half])
 
     # The same between two pyramids: a triangular side of the second covers half of the base of the first.
     corners = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0), (0, 0, 1), (0, 0, -1), (1, 0, -1)]
     pyramids = Grid([Pyramid((1, 2, 3, 4, 5)), Pyramid((1, 2, 6, 7, 3))], [Node(Float64.(x)) for x in corners])
-    face = FacetIndex(2, findfirst(f -> issetequal(f, (1, 2, 3)), Ferrite.faces(getcells(pyramids, 2))))
-    pyramids.facetsets["half"] = typeof(grid.facetsets["left"])([face])
+    addfacetset!(pyramids, "half", [FacetIndex(2, 2)])
     @test_throws "not on the boundary" check_facetsets(pyramids, [:half])
 
     # Two hexahedra whose faces share three corners but not the fourth.
@@ -279,7 +321,7 @@ end
         (0, 2, 0), (0, 0, -1), (1, 0, -1), (1, 1, -1), (0, 1, -1),
     ]
     hexes = Grid([Hexahedron((1, 2, 3, 4, 5, 6, 7, 8)), Hexahedron((10, 11, 12, 13, 1, 2, 3, 9))], [Node(Float64.(x)) for x in corners])
-    hexes.facetsets["base"] = typeof(grid.facetsets["left"])([FacetIndex(1, 1)])
+    addfacetset!(hexes, "base", [FacetIndex(1, 1)])
     @test_throws "not on the boundary" check_facetsets(hexes, [:base])
 
     # Broken meshes of the cell types counted in one pass: duplicated cells, and cells sharing two edges.
@@ -289,15 +331,28 @@ end
             Grid([Tetrahedron((1, 2, 3, 4)), Tetrahedron((1, 2, 3, 4))], box(Tetrahedron, 3).nodes),
             Grid([Line((1, 1)), Line((2, 3))], box(Line, 1).nodes),
         )
-        topology = ExclusiveTopology(broken)
-        facets = [FacetIndex(c, f) for c in 1:getncells(broken) for f in 1:nfacets(getcells(broken, c))]
-        @test all(fi -> isempty(_shared_facets(broken, [fi])) == isempty(getneighborhood(topology, broken, fi)), facets)
+        @test agrees(broken)
     end
 
     # An embedded grid is rejected, as by `ExclusiveTopology`.
     surface = Grid([Triangle((1, 2, 3))], [Node((n.x[1], n.x[2], 0.0)) for n in nodes])
-    surface.facetsets["edge"] = typeof(grid.facetsets["left"])([FacetIndex(1, 1)])
+    addfacetset!(surface, "edge", [FacetIndex(1, 1)])
     @test_throws "Purely embedded" check_facetsets(surface, [:edge])
+end
+
+@testset "custom cell types" begin
+    # No cell-type metadata beyond what `ExclusiveTopology` needs is asked of a custom cell.
+    grid = Grid([CustomTriangle((1, 2, 3))], [Node((0.0, 0.0)), Node((1.0, 0.0)), Node((0.0, 1.0))])
+    addfacetset!(grid, "edge", [FacetIndex(1, 1)])
+    @test check_facetsets(grid, [:edge]) === nothing
+
+    # A facet is identified by all of its corners, not four of them.
+    nodes = [Node((cos(2pi * k / 5), sin(2pi * k / 5), 0.0)) for k in 0:4]
+    grid = Grid([PentagonParent((1, 2, 3, 4, 5))], nodes)
+    @test_throws "match no facet" add_boundary_pieces!(grid, :four => Grid([Quadrilateral((1, 2, 3, 4))], nodes[1:4]))
+    @test !haskey(grid.facetsets, "four")
+    add_boundary_pieces!(grid, :five => Grid([Pentagon((1, 5, 4, 3, 2))], nodes))
+    @test collect(getfacetset(grid, "five")) == [FacetIndex(1, 1)]
 end
 
 @testset "Gmsh L-shape" begin
