@@ -688,7 +688,7 @@ function SciMLBase.symbolic_discretize(pdesys::ModelingToolkit.PDESystem, disc::
 end
 
 """
-    operators(pdesys::PDESystem, disc::FEMDiscretization) -> NamedTuple
+    operators(pdesys::PDESystem, disc::FEMDiscretization; periodic_identification = false) -> NamedTuple
 
 The assembled Galerkin operators of `discretize(pdesys, disc)` as plain data, for a caller that
 builds its own system around them (such as a component with boundary ports). Returns
@@ -710,23 +710,57 @@ It is the linear, time-independent case only, and anything else raises an `Argum
 nonlinear term ("operators returns linear operators only, but the PDESystem has nonlinear
 terms"), a time-dependent source ("operators needs time-independent sources, but a source
 depends on time") and time-dependent Dirichlet data ("operators needs Dirichlet data that are
-constant in time"), and a periodic condition. Parameters are substituted by their values, as for the `DAEProblem`.
+constant in time"). Parameters are substituted by their values, as for the `DAEProblem`.
+
+By default a periodic condition `u(t, Γa) ~ u(t, Γb)` that ties dofs raises an `ArgumentError`
+("operators does not support periodic conditions"); a pair whose dofs are all prescribed ties
+none and is accepted, with the fields above as given. With `periodic_identification = true`,
+periodic conditions are accepted under the pairing, bijection, master and Dirichlet-agreement rules
+of `discretize`. `M`, `K` and `F` stay the operators over all dofs; the identification is returned
+in two further fields, after those above:
+
+  - `P`: a sparse `ndofs × n_independent` matrix with one column per dof that is not tied to
+    another (each periodic class master and each untied dof, in dof order) and a 1 in each row for
+    the column of that dof's master. Without periodic pairs it is the identity;
+  - `tied`: the sorted dofs that are not the master of their periodic class, including the prescribed
+    members of a class beyond its master.
+
+`P' * M * P`, `P' * K * P` and `P' * F` are the periodic system. It is the condensation `discretize`
+uses: the row of each tied dof is added to its master's row (`discretize` then replaces the tied
+row by `u_tied - u_master`, and skips the sum into a prescribed master, whose row the Dirichlet
+condition replaces). Dirichlet conditions are not imposed on `P' * K * P`: a master is a prescribed
+dof of its class when it has one, and the other prescribed dofs of a class share its column, so
+`prescribed` indexes columns of `P` through `findfirst(!iszero, P[d, :])`, and `u0` is the dof vector with each tied dof equal to its master.
+Values at periodically equivalent dofs that agree only within the agreement tolerance are replaced by the master's, in
+`u0` and in `dirichlet_values`, so `P * c == u0` for `c = u0[masters]`. This replacement happens only with
+`periodic_identification = true`.
 """
-function operators(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization)
+function operators(pdesys::ModelingToolkit.PDESystem, disc::FEMDiscretization; periodic_identification::Bool = false)
     parts = _lower(pdesys, disc)
     (; M, K, load, nonlinear, prescribed, dirichlet_values, timedep_dirichlet) = parts.raw
     nonlinear && throw(ArgumentError("operators returns linear operators only, but the PDESystem has nonlinear terms"))
     load isa AbstractVector || throw(ArgumentError("operators needs time-independent sources, but a source depends on time"))
     timedep_dirichlet && throw(ArgumentError("operators needs Dirichlet data that are constant in time"))
-    isempty(parts.md.space.ties) || throw(ArgumentError("operators does not support periodic conditions; use discretize"))
+    periodic_identification || isempty(parts.md.space.ties) ||
+        throw(ArgumentError("operators does not support periodic conditions; use discretize, or pass periodic_identification = true"))
     differential_vars = falses(size(M, 1))
     for (k, i) in enumerate(rowvals(M))
         iszero(nonzeros(M)[k]) || (differential_vars[i] = true)
     end
     md = parts.md
     fields = [f.name => field_range(md.space, f.name) for f in md.fields]
-    return (;
+    ops = (;
         M = copy(M), K = copy(K), F = copy(load), fields, differential_vars, prescribed = copy(prescribed),
         dirichlet_values = copy(dirichlet_values), u0 = parts.full_u0, metadata = md,
     )
+    periodic_identification || return ops
+    ties = class_ties(md.space.ties, md.space.classes)
+    u0, dirichlet_values = copy(ops.u0), ops.dirichlet_values
+    position = Dict(d => i for (i, d) in enumerate(prescribed))
+    for (member, master) in ties
+        u0[member] = u0[master]
+        haskey(position, member) && (dirichlet_values[position[member]] = dirichlet_values[position[master]])
+    end
+    isempty(ties) || (md = FEMMetadata(md.space, md.time, md.x̄, md.fields, md.pieces, md.pdesys; u0 = copy(u0), md.elimination))
+    return merge(ops, (; u0, metadata = md, P = periodic_projection(size(M, 1), ties), tied = sort!(first.(ties))))
 end
