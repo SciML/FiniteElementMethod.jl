@@ -246,11 +246,17 @@ end
     E(x) = x[1] < 0 ? [1.0, 0.0, 0.0] : [-2.0, 0.0, 0.0]
     u = Matrix(model.blocks.eps_real) \ FiniteElementMethod.maxwell_rhs(model, 1.0, x -> im .* E(x))
     sol = MaxwellSolution(model, 1.0, u)
-    vals = field_values(sol, Vec{3}[Vec(-1.0e-6, 0.125, 0.125), Vec{3, Float32}((1.0e-6, 0.125, 0.125))])
-    @test collect(vals.E[1]) ≈ [1, 0, 0] atol = 1.0e-5
-    @test collect(vals.E[2]) ≈ [-2, 0, 0] atol = 1.0e-5
-    @test collect(field_values(sol, [Vec{3, Float32}((-1.0e-6, 0.125, 0.125))]).E[1]) ≈ [1, 0, 0] atol = 1.0e-5
-    @test all(isfinite, field_values(sol, [Vec(0, 0, 0)]).E[1])
+    @testset "strictly inside the negative cell, within roundoff of the positive one" begin
+        @test collect(field_values(sol, [Vec{3, Float32}((-1.0e-6, 0.125, 0.125))]).E[1]) ≈ [1, 0, 0] atol = 1.0e-5
+    end
+    @testset "integer point" begin
+        @test all(isfinite, field_values(sol, [Vec(0, 0, 0)]).E[1])
+    end
+    @testset "Float64 and Float32 points in one vector" begin
+        vals = field_values(sol, Vec{3}[Vec(-1.0e-6, 0.125, 0.125), Vec{3, Float32}((1.0e-6, 0.125, 0.125))])
+        @test collect(vals.E[1]) ≈ [1, 0, 0] atol = 1.0e-5
+        @test collect(vals.E[2]) ≈ [-2, 0, 0] atol = 1.0e-5
+    end
 end
 
 @testset "PEC elimination keeps a nonzero diagonal when every diagonal entry of A(ω) is zero" begin
