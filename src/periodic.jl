@@ -43,9 +43,12 @@ end
 # Why the matching of `da` onto `db` is not a one-to-one correspondence, or `nothing`: every node of Γ_a needs a node of
 # Γ_b within the tolerance, no node of Γ_b may be the target of two, and the nearest node of Γ_a to each node of Γ_b must be
 # its own preimage.
-function _matching_problem(coords, scaled, da, db, matched, unmatched, shift, sshift, a, b)
+function _matching_problem(coords, scaled, da, db, matched, unmatched, shift, sshift, tolerance, a, b)
+    # Distance from the translate of `x` on Γ_a to `y` on Γ_b, from the scaled coordinates the match was decided in.
+    gap(x, y) = norm((scaled[x] + sshift - scaled[y]) .* tolerance)
     isempty(unmatched) || return "the node at $(_tuple_str(coords[first(unmatched)])) on Γ_$a has no node of Γ_$b at " *
-        "$(_tuple_str(coords[first(unmatched)] + shift)) ($(length(unmatched)) such nodes of Γ_$a, $(length(da)) on Γ_$a and $(length(db)) on Γ_$b)"
+        "$(_tuple_str(coords[first(unmatched)] + shift)), the nearest being at distance $(round(minimum(y -> gap(first(unmatched), y), db); sigdigits = 3)) " *
+        "($(length(unmatched)) such nodes of Γ_$a, $(length(da)) on Γ_$a and $(length(db)) on Γ_$b)"
     owner = Dict{Int, Int}()
     for (x, y) in matched
         haskey(owner, y) && return "the nodes at $(_tuple_str(coords[owner[y]])) and $(_tuple_str(coords[x])) on Γ_$a both match the node at " *
@@ -54,7 +57,9 @@ function _matching_problem(coords, scaled, da, db, matched, unmatched, shift, ss
         owner[y] = x
     end
     missed = [y for y in db if !haskey(owner, y)]
-    isempty(missed) || return "the node at $(_tuple_str(coords[first(missed)])) on Γ_$b has no node of Γ_$a ($(length(da)) on Γ_$a and $(length(db)) on Γ_$b)"
+    isempty(missed) || return "the node at $(_tuple_str(coords[first(missed)])) on Γ_$b has no node of Γ_$a at " *
+        "$(_tuple_str(coords[first(missed)] - shift)), the nearest being at distance $(round(minimum(x -> gap(x, first(missed)), da); sigdigits = 3)) " *
+        "($(length(da)) on Γ_$a and $(length(db)) on Γ_$b)"
     back, _ = _match_translate(scaled, db, da, -sshift)
     for (y, x) in back
         owner[y] == x && continue
@@ -158,7 +163,7 @@ function periodic_ties(grid, dh, ips, nodes, periodic, prescribed; dirichlet = D
         names = "Γ_$a and Γ_$b of $field"
         norm(sshift) <= 1 && throw(ArgumentError("periodic pieces $names coincide: their centroids are the same point, so there is no translation between them"))
         matched, unmatched = _match_translate(scaled, da, db, sshift)
-        problem = _matching_problem(coords, scaled, da, db, matched, unmatched, shift, sshift, a, b)
+        problem = _matching_problem(coords, scaled, da, db, matched, unmatched, shift, sshift, tolerance, a, b)
         problem === nothing && (problem = _facet_problem(_facet_points(local_grid, local_facets(fa), tolerance), _facet_points(local_grid, local_facets(fb), tolerance), sshift, lo, tolerance, a, b))
         problem === nothing || throw(
             ArgumentError(

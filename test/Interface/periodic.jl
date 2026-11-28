@@ -304,6 +304,10 @@ end
     @test problem(remesh(X -> Vec(X[1], X[2]^2))) isa SciMLBase.DAEProblem
     moved = remesh(X -> X[1] > 0.99 && 0.4 < X[2] < 0.6 ? Vec(X[1], X[2] + 1.0e-3) : X)
     @test_throws "periodic pieces Γ_left and Γ_right of u do not match under a translation" problem(moved)
+    # One node of a fine mesh off by 1e-5: the error says how far off the nearest node is (1e-5, less the shift of the centroid).
+    fine = generate_grid(Triangle, (32, 32), Vec(0.0, 0.0), Vec(1.0, 1.0))
+    nudged = Grid(fine.cells, [Node(n.x == Vec(1.0, 0.5) ? n.x + Vec(0.0, 1.0e-5) : n.x) for n in fine.nodes]; facetsets = fine.facetsets)
+    @test_throws "the nearest being at distance 9.7e-6" problem(nudged)
     # Two nodes on each side lie within the tolerance of one node of the other side.
     nodes = [Node(Vec(0.0, 0.0)), Node(Vec(1.0, 0.0)), Node(Vec(1.0, 1.0e-7)), Node(Vec(0.0, 1.0e-9)), Node(Vec(1.0, 1.0)), Node(Vec(0.0, 1.0))]
     close_grid = Grid(
