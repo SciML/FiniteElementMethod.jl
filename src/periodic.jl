@@ -11,34 +11,44 @@ function _piece_dofs(dh, field, grid, set)
     return sort(ch.prescribed_dofs)
 end
 
-# Coordinates are matched on a grid of cell `tol`, looking in the neighbouring cells too.
-function _match_translate(coords, from, to, shift, tol)
+# Points are matched in coordinates scaled by a per-axis tolerance, so a match is a distance of at most 1, on a grid of
+# cells of side 1 looking in the neighbouring cells too. The scaled coordinates are relative to the corner of the pair's cells,
+# from whose extent the tolerance comes, so they are at most about 1e6 in size; the clamp keeps any other point
+# (a facet point of a degenerate mesh) from overflowing the integer keys, and such a point matches nothing.
+_cell_key(point) = Tuple(floor.(Int, clamp.(point, -1.0e15, 1.0e15)))
+
+# Nearest points of `to` to `from[d] + shift` (in scaled coordinates), as `from_dof => to_dof`, and the `from` dofs with no
+# point of `to` within distance 1.
+function _match_translate(scaled, from, to, shift)
     index = Dict{Any, Vector{Int}}()
     for d in to
-        push!(get!(index, Tuple(round.(Int, coords[d] / tol)), Int[]), d)
+        push!(get!(index, _cell_key(scaled[d]), Int[]), d)
     end
-    dim = length(first(coords))
+    dim = length(shift)
     matched = Pair{Int, Int}[]
     unmatched = Int[]
     for d in from
-        target = coords[d] + shift
-        key = round.(Int, target / tol)
+        target = scaled[d] + shift
+        key = _cell_key(target)
         best, bestdist = 0, Inf
-        for offset in Iterators.product(ntuple(_ -> -1:1, dim)...), e in get(index, Tuple(key .+ offset), Int[])
-            dist = norm(coords[e] - target)
+        for offset in Iterators.product(ntuple(_ -> -1:1, dim)...), e in get(index, key .+ offset, Int[])
+            dist = norm(scaled[e] - target)
             dist < bestdist && ((best, bestdist) = (e, dist))
         end
-        bestdist <= tol ? push!(matched, d => best) : push!(unmatched, d)
+        bestdist <= 1 ? push!(matched, d => best) : push!(unmatched, d)
     end
     return matched, unmatched
 end
 
 # Why the matching of `da` onto `db` is not a one-to-one correspondence, or `nothing`: every node of Γ_a needs a node of
-# Γ_b within `tol`, no node of Γ_b may be the target of two, and the nearest node of Γ_a to each node of Γ_b must be its
-# own preimage.
-function _matching_problem(coords, da, db, matched, unmatched, shift, tol, a, b)
+# Γ_b within the tolerance, no node of Γ_b may be the target of two, and the nearest node of Γ_a to each node of Γ_b must be
+# its own preimage.
+function _matching_problem(coords, scaled, da, db, matched, unmatched, shift, sshift, tolerance, a, b)
+    # Distance from the translate of `x` on Γ_a to `y` on Γ_b, from the scaled coordinates the match was decided in.
+    gap(x, y) = norm((scaled[x] + sshift - scaled[y]) .* tolerance)
     isempty(unmatched) || return "the node at $(_tuple_str(coords[first(unmatched)])) on Γ_$a has no node of Γ_$b at " *
-        "$(_tuple_str(coords[first(unmatched)] + shift)) ($(length(unmatched)) such nodes of Γ_$a, $(length(da)) on Γ_$a and $(length(db)) on Γ_$b)"
+        "$(_tuple_str(coords[first(unmatched)] + shift)), the nearest being at distance $(round(minimum(y -> gap(first(unmatched), y), db); sigdigits = 3)) " *
+        "($(length(unmatched)) such nodes of Γ_$a, $(length(da)) on Γ_$a and $(length(db)) on Γ_$b)"
     owner = Dict{Int, Int}()
     for (x, y) in matched
         haskey(owner, y) && return "the nodes at $(_tuple_str(coords[owner[y]])) and $(_tuple_str(coords[x])) on Γ_$a both match the node at " *
@@ -47,8 +57,10 @@ function _matching_problem(coords, da, db, matched, unmatched, shift, tol, a, b)
         owner[y] = x
     end
     missed = [y for y in db if !haskey(owner, y)]
-    isempty(missed) || return "the node at $(_tuple_str(coords[first(missed)])) on Γ_$b has no node of Γ_$a ($(length(da)) on Γ_$a and $(length(db)) on Γ_$b)"
-    back, _ = _match_translate(coords, db, da, -shift, tol)
+    isempty(missed) || return "the node at $(_tuple_str(coords[first(missed)])) on Γ_$b has no node of Γ_$a at " *
+        "$(_tuple_str(coords[first(missed)] - shift)), the nearest being at distance $(round(minimum(x -> gap(x, first(missed)), da); sigdigits = 3)) " *
+        "($(length(da)) on Γ_$a and $(length(db)) on Γ_$b)"
+    back, _ = _match_translate(scaled, db, da, -sshift)
     for (y, x) in back
         owner[y] == x && continue
         return "the node at $(_tuple_str(coords[y])) on Γ_$b is nearest to the node at $(_tuple_str(coords[x])) on Γ_$a, not to its match at " *
@@ -57,37 +69,107 @@ function _matching_problem(coords, da, db, matched, unmatched, shift, tol, a, b)
     return nothing
 end
 
+#     _pair_frame(grid, dh, field, ip, cells) -> (lo, tolerance, scaled, local_grid)
+#
+# The frame in which a periodic pair is matched: `cells` are the cells of `field` (interpolation `ip`) with a facet on either
+# piece, `lo` the corner of their bounding box and `tolerance` 1e-6 times its extent along each axis, so a thin mesh keeps its
+# translations. `local_grid` is those cells alone, in their order, moved by `-lo`, and `scaled[d]` the position on it of each
+# dof `d` of `field` on the cells, divided by `tolerance`: interpolated there, neither the distance of the cells from the origin
+# nor any other cell of the mesh rounds a position.
+function _pair_frame(grid, dh, field, ip, cells)
+    ids = unique(n for c in cells for n in Ferrite.getcells(grid, c).nodes)
+    x = [Ferrite.get_node_coordinate(grid, n) for n in ids]
+    lo = Ferrite.Vec(ntuple(k -> minimum(p -> p[k], x), length(first(x))))
+    hi = Ferrite.Vec(ntuple(k -> maximum(p -> p[k], x), length(first(x))))
+    tolerance = max.(1.0e-6 .* Vector(hi - lo), floatmin(Float64))
+    local_id = Dict(n => k for (k, n) in enumerate(ids))
+    local_cells = [(cell = Ferrite.getcells(grid, c); typeof(cell)(map(n -> local_id[n], cell.nodes))) for c in cells]
+    local_grid = Ferrite.Grid(local_cells, [Ferrite.Node(p - lo) for p in x])
+    local_dh = Ferrite.DofHandler(local_grid)
+    Ferrite.add!(local_dh, field, ip)
+    Ferrite.close!(local_dh)
+    positions = [Ferrite.apply_analytical!(zeros(Ferrite.ndofs(local_dh)), local_dh, field, p -> p[k] / tolerance[k]) for k in eachindex(tolerance)]
+    scaled = Dict{Int, Vector{Float64}}()
+    for sdh in dh.subdofhandlers, (k, c) in enumerate(cells)
+        field in sdh.field_names && c in sdh.cellset || continue
+        for (l, d) in zip(Ferrite.celldofs(local_dh, k), view(Ferrite.celldofs(dh, c), Ferrite.dof_range(sdh, field)))
+            scaled[d] = getindex.(positions, l)
+        end
+    end
+    return Vector(lo), tolerance, scaled, local_grid
+end
+
+# The points of each of `facets` of `grid` at a quadrature rule of the mesh geometry, scaled by `tolerance`. The rule is exact
+# to twice the geometric order with positive weights, so two facets whose maps agree at its points are the same facet, and it is
+# symmetric, so the set of points does not depend on the orientation of the facet in its cell.
+function _facet_points(grid, facets, tolerance)
+    ip = Ferrite.geometric_interpolation(Ferrite.getcelltype(grid))
+    fv = Ferrite.FacetValues(Ferrite.FacetQuadratureRule{Ferrite.getrefshape(ip)}(2 * _order(ip)), ip, ip)
+    return map(facets) do (cell, facet)
+        x = Ferrite.getcoordinates(grid, cell)
+        Ferrite.reinit!(fv, Ferrite.getcells(grid, cell), x, facet)
+        [Vector(Ferrite.spatial_coordinate(fv, q, x)) ./ tolerance for q in 1:Ferrite.getnquadpoints(fv)]
+    end
+end
+
+# `nothing` if the facets of Γ_a (the scaled points `pa` of each), translated by `sshift`, are the facets of Γ_b one to one,
+# else why not. Facets are paired by their mean points, and a pair must agree at every point.
+function _facet_problem(pa, pb, sshift, origin, tolerance, a, b)
+    centres = [sum(p) / length(p) for p in [pa; pb]]
+    place(f) = _tuple_str(origin + centres[f] .* tolerance)
+    na = length(pa)
+    matched, unmatched = _match_translate(centres, 1:na, na .+ eachindex(pb), sshift)
+    isempty(unmatched) || return "the facet of Γ_$a centred at $(place(first(unmatched))) has no facet of Γ_$b at the translated place: " *
+        "the two pieces are triangulated differently, or a facet is curved differently"
+    hits = zeros(Int, length(pb))
+    for (f, g) in matched
+        hits[g - na] += 1
+        all(p -> any(q -> norm(p + sshift - q) <= 1, pb[g - na]), pa[f]) || return "the facet of Γ_$a centred at $(place(f)) and the facet of " *
+            "Γ_$b centred at $(place(g)) differ in shape: the two pieces are curved differently"
+    end
+    g = findfirst(!=(1), hits)
+    g === nothing || return "the facet of Γ_$b centred at $(place(na + g)) is the image of $(hits[g]) facets of Γ_$a: the two pieces are triangulated differently"
+    return nothing
+end
+
 function _tuple_str(x)
     return "(" * join(round.(x; sigdigits = 6), ", ") * ")"
 end
 
-#     periodic_ties(grid, dh, coords, periodic, prescribed) -> Vector{Pair{Int, Int}}
+#     periodic_ties(grid, dh, ips, nodes, periodic, prescribed) -> (ties, classes)
 #
+# `ips[field]` is the interpolation of each field and `nodes` are the dof coordinates, used for the Dirichlet data and the
+# messages; each pair is matched in its own frame (`_pair_frame`), on the facets of its pieces where the field lives.
 # `(ties, classes)`: `mirror => master` dof pairs (and the prescribed dofs of each class, for `check_agreement`) that make the dofs matched by `periodic`, a collection of
 # `(field, set_a, set_b)`, equal. The pieces of a pair must be translates of each other: the translation is the
 # difference of their centroids and each node of one must have a node of the other at the translated place, or
 # an `ArgumentError` names both pieces. A master is a `prescribed` (Dirichlet) dof of its class if it has one, else
 # its lowest dof; prescribed dofs are never mirrors.
-function periodic_ties(grid, dh, nodes, periodic, prescribed; dirichlet = Dict{Int, Any}(), times = (0.0,))
+function periodic_ties(grid, dh, ips, nodes, periodic, prescribed; dirichlet = Dict{Int, Any}(), times = (0.0,))
     coords = [collect(Float64, Tuple(x)) for x in nodes]
-    lo = reduce((a, b) -> min.(a, b), coords)
-    hi = reduce((a, b) -> max.(a, b), coords)
-    tol = 1.0e-6 * max(norm(hi - lo), eps())
     parent = collect(1:Ferrite.ndofs(dh))
     root(d) = parent[d] == d ? d : (parent[d] = root(parent[d]))
     for (field, a, b) in periodic
         da, db = _piece_dofs(dh, field, grid, a), _piece_dofs(dh, field, grid, b)
-        mean_coord(ds) = sum(coords[d] for d in ds) / length(ds)
-        shift = mean_coord(db) - mean_coord(da)
+        carrying = Set(_field_cells(dh, field))
+        fa, fb = ([f for f in Ferrite.getfacetset(grid, String(set)) if f[1] in carrying] for set in (a, b))
+        cells = unique([f[1] for f in [fa; fb]])
+        lo, tolerance, scaled, local_grid = _pair_frame(grid, dh, field, ips[field], cells)
+        local_cell = Dict(c => k for (k, c) in enumerate(cells))
+        local_facets(fs) = [Ferrite.FacetIndex(local_cell[c], f) for (c, f) in fs]
+        mean_coord(ds) = sum(scaled[d] for d in ds) / length(ds)
+        sshift = mean_coord(db) - mean_coord(da)
+        shift = sshift .* tolerance
         names = "Γ_$a and Γ_$b of $field"
-        norm(shift) <= tol && throw(ArgumentError("periodic pieces $names coincide: their centroids are the same point, so there is no translation between them"))
-        matched, unmatched = _match_translate(coords, da, db, shift, tol)
-        problem = _matching_problem(coords, da, db, matched, unmatched, shift, tol, a, b)
+        norm(sshift) <= 1 && throw(ArgumentError("periodic pieces $names coincide: their centroids are the same point, so there is no translation between them"))
+        matched, unmatched = _match_translate(scaled, da, db, sshift)
+        problem = _matching_problem(coords, scaled, da, db, matched, unmatched, shift, sshift, tolerance, a, b)
+        problem === nothing && (problem = _facet_problem(_facet_points(local_grid, local_facets(fa), tolerance), _facet_points(local_grid, local_facets(fb), tolerance), sshift, lo, tolerance, a, b))
         problem === nothing || throw(
             ArgumentError(
                 "periodic pieces $names do not match under a translation: $problem; the translation between their centroids is " *
-                    "$(_tuple_str(shift)) and the tolerance is $(round(tol; sigdigits = 3)). Periodic pieces must be translates of each other, " *
-                    "with a one-to-one correspondence of their nodes"
+                    "$(_tuple_str(shift)) and the tolerance per axis is $(_tuple_str(tolerance)). Periodic pieces must be translates of each other, " *
+                    "with a one-to-one correspondence of their nodes and facets"
             )
         )
         for (x, y) in matched

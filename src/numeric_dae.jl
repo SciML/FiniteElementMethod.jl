@@ -187,6 +187,15 @@ end
 
 nonlinear_residual!(r, N::FEMNonlinear, u, t) = add_nonlinear!(fill!(r, 0), N, u, t)
 
+# Adds the entries `vals[from]` of the mirror rows into the master rows' entries `out[to]`; a function barrier, since the
+# ties are stored untyped in `FEMNonlinear`.
+function scatter_ties!(out::AbstractVector, vals::AbstractVector, from::Vector{Int}, to::Vector{Int})
+    for k in eachindex(from, to)
+        out[to[k]] += vals[from[k]]
+    end
+    return out
+end
+
 # `nonzeros(J) .+= nonzeros(∂N/∂u)` outside the prescribed rows; `J` must have the pattern of `N`'s Jacobian.
 function add_nonlinear_jacobian!(J, N::FEMNonlinear, u, t)
     u isa AbstractVector{<:AbstractFloat} ||
@@ -200,12 +209,7 @@ function add_nonlinear_jacobian!(J, N::FEMNonlinear, u, t)
             for k in eachindex(rows)
                 N.prescribed[rows[k]] || (out[k] += vals[k])
             end
-            if N.ties !== nothing
-                _, from, to = N.ties
-                for (a, b) in zip(from, to)
-                    out[b] += vals[a]
-                end
-            end
+            N.ties === nothing || scatter_ties!(out, vals, N.ties[2], N.ties[3])
         else
             e, nzmap = elimination
             vals, out = nonzeros(jacobian!(op.J, op, full_state(e, u), N.p, t)), nonzeros(J)

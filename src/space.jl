@@ -92,7 +92,7 @@ function FEMSpace(
     times = range(t0, tend; length = 17)
     ties, classes = isempty(periodic) ? (Pair{Int, Int}[], DirichletClasses(Vector{Int}[], Dict{Int, Vector{Float64}}(), Dict{Int, String}(), Any[])) :
         periodic_ties(
-            grid, dh, _dof_coordinates(grid, dh, names), [(Symbol(f), a, b) for (f, a, b) in periodic], ch.prescribed_dofs;
+            grid, dh, Dict(zip(names, ips)), _dof_coordinates(grid, dh, names), [(Symbol(f), a, b) for (f, a, b) in periodic], ch.prescribed_dofs;
             dirichlet = owner, times
         )
     pattern = extend_pattern(Ferrite.allocate_matrix(dh, ch), ties, ch.prescribed_dofs)

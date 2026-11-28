@@ -38,10 +38,6 @@ with_columns(ops) = merge(ops, (; prescribed_columns = [argmax(Vector(ops.P[d, :
 
 reldiff(a, b) = norm(a - b) / norm(b)
 
-# PDE:    u_t = u_xx + u_yy
-# Domain: the unit square, t in (0, 0.05), 16 x 16 triangle pairs, P1
-# BCs:    periodic left-right and bottom-top; IC sin(2 pi (x + y))
-# Shows:  `operators` accepts the periodic pairs on request and its reduced system reproduces the solution of `discretize`.
 @testset "operators reduces a fully periodic box to the system discretize solves" begin
     Ω = MeshDomain(generate_grid(Triangle, (16, 16), Vec(0.0, 0.0), Vec(1.0, 1.0)))
     left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
@@ -63,10 +59,6 @@ reldiff(a, b) = norm(a - b) / norm(b)
     @test diff < 1.0e-10
 end
 
-# PDE:    u_t = u_xx + u_yy + u_zz
-# Domain: the unit cube, 4 x 4 x 4 hexahedra, Q1, t in (0, 0.05)
-# BCs:    periodic in x, y and z; IC sin(2 pi x) cos(2 pi y) + sin(2 pi z)
-# Shows:  the same agreement in 3D, where edges and corners belong to several pairs.
 @testset "operators reduces a fully periodic cube to the system discretize solves" begin
     Ω = MeshDomain(generate_grid(Hexahedron, (4, 4, 4), Vec(0.0, 0.0, 0.0), Vec(1.0, 1.0, 1.0)))
     left, right, front, back, bottom, top = boundarypiece.(Ω, (:left, :right, :front, :back, :bottom, :top))
@@ -84,11 +76,6 @@ end
     @test diff < 1.0e-10
 end
 
-# PDE:    u_t = u_xx + u_yy
-# Domain: the unit square, t in (0, 0.05), 8 x 8 triangle pairs
-# BCs:    periodic left and right; u = 0 on bottom and top; IC sin(2 pi x) sin(pi y)
-# Shows:  where a periodic class holds a prescribed dof, that dof is the master, and the reduced system with the prescribed
-#         columns removed matches `discretize`.
 @testset "operators with periodic x and Dirichlet y keeps the prescribed dof as master" begin
     Ω = MeshDomain(generate_grid(Triangle, (8, 8), Vec(0.0, 0.0), Vec(1.0, 1.0)))
     left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
@@ -104,11 +91,6 @@ end
     @test diff < 1.0e-10
 end
 
-# PDE:    u_t = u_xx + u_yy
-# Domain: the unit square, t in (0, 0.05), 8 x 8 triangle pairs, P1
-# BCs:    periodic left and right; u = 0 on bottom and top
-# Shows:  the left and right nodes on a Dirichlet edge are one periodic class, so `P` has one column for the pair and maps
-#         every reduced vector to equal values at equivalent dofs, although neither is tied by the solver.
 @testset "P has one column per periodic class when the class holds several prescribed dofs" begin
     n = 8
     Ω = MeshDomain(generate_grid(Triangle, (n, n), Vec(0.0, 0.0), Vec(1.0, 1.0)))
@@ -129,10 +111,6 @@ end
     @test all(values[d] == values[first(findall(e -> key(e) == key(d), axes(xy, 2)))] for d in axes(xy, 2))
 end
 
-# PDE:    u_t = u_xx + u_yy
-# Domain: the unit square, 8 x 8 triangle pairs, P1
-# BCs:    periodic left and right; u = 5e-9 x on bottom and u = 0 on top, whose corner values differ within the agreement tolerance
-# Shows:  the returned `u0` and `dirichlet_values` are constant on each periodic class, so `P * c == u0` for some `c`.
 @testset "operators returns u0 and Dirichlet values that P reproduces when corner data agree within tolerance" begin
     Ω = MeshDomain(generate_grid(Triangle, (8, 8), Vec(0.0, 0.0), Vec(1.0, 1.0)))
     left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
@@ -161,10 +139,6 @@ end
     @test spread == 0
 end
 
-# PDE:    u_t = u_xx + u_yy + 1
-# Domain: the unit square, t in (0, 0.05), 8 x 8 triangle pairs, P1
-# BCs:    periodic in x and y; IC u = 0
-# Shows:  `P' * F` carries the source: the reduced system gives u = t, as `discretize` does.
 @testset "operators reduces a constant source on a periodic box through P'F" begin
     Ω = MeshDomain(generate_grid(Triangle, (8, 8), Vec(0.0, 0.0), Vec(1.0, 1.0)))
     left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
@@ -183,10 +157,8 @@ end
     @test diff < 1.0e-10
 end
 
-# PDE:    u_t = u_xx + u_yy, mass and stiffness only
-# Domain: the unit square, 8 x 8 triangle pairs, P1, periodic in x and y
-# Shows:  the generalized eigenvalues of (P'KP, P'MP) are the discrete Fourier symbols of the uniform triangle grid:
-#         K has the five-point stencil (4, -1, -1, -1, -1) and M = h^2/12 (6; 1 on the four axis neighbours; 1 along the cut diagonal).
+# The generalized eigenvalues of (P'KP, P'MP) are the discrete Fourier symbols of the uniform triangle grid:
+# K has the five-point stencil (4, -1, -1, -1, -1) and M = h^2/12 (6; 1 on the four axis neighbours; 1 along the cut diagonal).
 @testset "periodic operators on a structured triangle grid have the discrete Fourier eigenvalues" begin
     n = 8
     Ω = MeshDomain(generate_grid(Triangle, (n, n), Vec(0.0, 0.0), Vec(1.0, 1.0)))
@@ -212,8 +184,6 @@ end
     @test err < 1.0e-12
 end
 
-# PDE:    u_t = u_xx + u_yy on the unit square
-# Shows:  without periodic pairs `P` is the identity and no dof is tied.
 @testset "operators without periodic pairs returns the identity P" begin
     Ω = MeshDomain(generate_grid(Triangle, (4, 3), Vec(0.0, 0.0), Vec(1.0, 1.0)))
     sides = boundarypiece.(Ω, (:left, :right, :bottom, :top))
@@ -229,8 +199,6 @@ end
 
 const DEFAULT_KEYS = (:M, :K, :F, :fields, :differential_vars, :prescribed, :dirichlet_values, :u0, :metadata)
 
-# PDE:    u_t = u_xx + u_yy on the unit square
-# Shows:  without the keyword `operators` returns exactly its documented fields, in order.
 @testset "default operators returns the documented fields without periodic pairs" begin
     Ω = MeshDomain(generate_grid(Triangle, (4, 3), Vec(0.0, 0.0), Vec(1.0, 1.0)))
     sides = boundarypiece.(Ω, (:left, :right, :bottom, :top))
@@ -241,11 +209,7 @@ const DEFAULT_KEYS = (:M, :K, :F, :fields, :differential_vars, :prescribed, :dir
     @test keys(operators(pdesys, FEMDiscretization(Ω, t))) === DEFAULT_KEYS
 end
 
-# PDE:    u_t = u_xx + u_yy
-# Domain: the unit square, 4 x 1 triangle pairs, P1: every node lies on bottom or top
-# BCs:    periodic left and right; u = 5e-9 x on bottom and u = 0 on top
-# Shows:  a periodic pair whose dofs are all prescribed ties nothing in the solver: by default `operators` accepts it and
-#         returns the documented fields with the corner values as given; on request it identifies the two corner pairs.
+# Every node of the 4 x 1 mesh lies on bottom or top, so the periodic pair ties nothing in the solver.
 @testset "operators on a periodic pair whose dofs are all prescribed" begin
     Ω = MeshDomain(generate_grid(Triangle, (4, 1), Vec(0.0, 0.0), Vec(1.0, 1.0)))
     left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
@@ -270,8 +234,6 @@ end
     @test periodic.u0[corners[1]] == periodic.u0[corners[2]]
 end
 
-# BCs:    periodic left and right with dofs the solver has to tie
-# Shows:  without the keyword such a pair is rejected.
 @testset "default operators rejects periodic pairs that tie dofs" begin
     Ω = MeshDomain(generate_grid(Triangle, (4, 3), Vec(0.0, 0.0), Vec(1.0, 1.0)))
     left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
