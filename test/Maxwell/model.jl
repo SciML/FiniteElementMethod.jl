@@ -198,12 +198,12 @@ end
     addcellset!(model.grid, "b", x -> x[2] <= 0.5)
     Ja, Jb = [1.0, 0.0, 0.0], [0.5, 2.0, 0.0]
     summed(x) = (x[1] < 0.5 ? Ja : zeros(3)) .+ (x[2] < 0.5 ? Jb : zeros(3))
-    ab = Base.ImmutableDict("a" => Ja, "b" => Jb)
-    ba = Base.ImmutableDict("b" => Jb, "a" => Ja)
-    @test collect(keys(ab)) == reverse(collect(keys(ba)))
-    b_ab, b_ba = (FiniteElementMethod.maxwell_rhs(model, 2.0, J) for J in (ab, ba))
-    @test b_ab == b_ba
-    @test b_ab ≈ FiniteElementMethod.maxwell_rhs(model, 2.0, summed)
+    forward = Base.ImmutableDict("a" => Ja, "b" => Jb)
+    backward = Base.ImmutableDict("b" => Jb, "a" => Ja)
+    @test collect(keys(forward)) == reverse(collect(keys(backward)))
+    b_forward, b_backward = (FiniteElementMethod.maxwell_rhs(model, 2.0, J) for J in (forward, backward))
+    @test b_forward == b_backward
+    @test b_forward ≈ FiniteElementMethod.maxwell_rhs(model, 2.0, summed)
 end
 
 @testset "point evaluation on a 1e-11 and a metre-scale tetrahedron" begin
