@@ -88,9 +88,10 @@ function FEMSpace(
         owner[d] = (set, g)
     end
     times = range(t0, tend; length = 17)
-    # Periodic matching compares positions to a fraction of the mesh extent, so it uses dof coordinates interpolated on the
-    # mesh moved to the origin: interpolated in place, far from the origin, a midside dof is rounded to an ulp of its coordinates.
-    moved = isempty(periodic) ? grid : _moved_to_origin(grid)
+    # Periodic matching compares positions to a fraction of the extent of the dofs, so it uses dof coordinates interpolated on
+    # the mesh moved so that the corner of the cells with dofs is the origin: interpolated in place, far from the origin, a midside
+    # dof is rounded to an ulp of its coordinates.
+    moved = isempty(periodic) ? grid : _moved_to_origin(grid, [c for sdh in dh.subdofhandlers for c in sdh.cellset])
     ties, classes = isempty(periodic) ? (Pair{Int, Int}[], DirichletClasses(Vector{Int}[], Dict{Int, Vector{Float64}}(), Dict{Int, String}(), Any[])) :
         periodic_ties(
             moved, dh, _dof_coordinates(grid, dh, names), _dof_coordinates(moved, _numbered_dofhandler(moved, names, ips, regions), names),
@@ -109,10 +110,11 @@ function _numbered_dofhandler(grid, names, ips, regions)
     return dh
 end
 
-# `grid` translated so that the lower corner of its bounding box is the origin, with the same cells and sets.
-function _moved_to_origin(grid)
+# `grid` translated so that the lower corner of the bounding box of `cells` is the origin, with the same cells and sets.
+function _moved_to_origin(grid, cells)
     x = Ferrite.get_node_coordinate.(Ferrite.getnodes(grid))
-    corner = Ferrite.Vec(ntuple(d -> minimum(p -> p[d], x), length(first(x))))
+    active = [x[n] for c in cells for n in Ferrite.getcells(grid, c).nodes]
+    corner = Ferrite.Vec(ntuple(d -> minimum(p -> p[d], active), length(first(x))))
     return Ferrite.Grid(Ferrite.getcells(grid), [Ferrite.Node(p - corner) for p in x]; cellsets = grid.cellsets, facetsets = grid.facetsets)
 end
 

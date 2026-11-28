@@ -116,7 +116,8 @@ function periodic_ties(grid, dh, nodes, relative, periodic, prescribed; dirichle
     relative = [collect(Float64, Tuple(x)) for x in relative]
     lo = reduce((a, b) -> min.(a, b), relative)
     hi = reduce((a, b) -> max.(a, b), relative)
-    # One tolerance per axis, a fraction of the extent of the mesh along it, so a thin mesh keeps its translations.
+    # One tolerance per axis, a fraction of the extent of the dofs along it, so a thin mesh keeps its translations; positions are
+    # measured from the corner of the same dofs.
     tolerance = max.(1.0e-6 .* (hi - lo), floatmin(Float64))
     scaled = [(c - lo) ./ tolerance for c in relative]
     origin = coords[1] - relative[1] + lo

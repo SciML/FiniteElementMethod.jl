@@ -131,6 +131,15 @@ const MISMATCH = "periodic pieces Γ_left and Γ_right of u do not match under a
         cellsets = Dict("narrow" => Set([2])), facetsets = Dict("bottom" => [Ferrite.FacetIndex(2, 1)], "top" => [Ferrite.FacetIndex(2, 3)])
     )
     @test length(FEMSpace(narrow, [:u => Lagrange{RefQuadrilateral, 1}()]; periodic = [(:u, "bottom", "top")], regions = Dict(:u => "narrow")).ties) == 2
+    # A field on the unit square of a mesh with a far, disconnected cell: the mesh is moved by the corner of the field's cells,
+    # so the far cell does not round the field's coordinates.
+    function with_far_cell(x)
+        nodes = Node.([Vec(0.0, 0.0), Vec(1.0, 0.0), Vec(1.0, 1.0), Vec(0.0, 1.0), Vec(x, 2.0), Vec(x + 4, 2.0), Vec(x + 4, 3.0), Vec(x, 3.0)])
+        grid = Grid([Quadrilateral((1, 2, 3, 4)), Quadrilateral((5, 6, 7, 8))], nodes; cellsets = Dict("square" => Set([1])), facetsets = Dict(k => v for (k, v) in SIDES if k in ("left", "right")))
+        return FEMSpace(grid, [:u => Lagrange{RefQuadrilateral, 1}()]; periodic = [(:u, "left", "right")], regions = Dict(:u => "square")).ties
+    end
+    @test length(with_far_cell(-10.0)) == 2
+    @test with_far_cell(-1.0e16) == with_far_cell(-10.0)
 end
 
 # BCs:    left and right periodic on one nine-node quadrilateral, with the default Q1 field
