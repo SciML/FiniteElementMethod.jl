@@ -1,6 +1,6 @@
 using FiniteElementMethod
 using FiniteElementMethod: FEMSpace, rectangle_grid, field_range, prescribed_dofs, dirichlet_values!,
-    check_facetsets, _meshdim, _facetset_names, _cellset_names, _contains_point
+    check_facetsets, _meshdim, _facetset_names, _cellset_names, _contains_point, _boundary_facets, _shared_facets
 using Ferrite
 using PDEBase: PDEBase
 using Test
@@ -224,6 +224,43 @@ end
     @test_throws ArgumentError check_facetsets(grid, [:middle])
     @test occursin("not on the boundary", errmsg(() -> check_facetsets(grid, [:middle])))
     @test_logs check_facetsets(grid, [:left, :top])
+end
+
+@testset "boundary and shared facets agree with ExclusiveTopology" begin
+    box(CT, dim) = generate_grid(CT, ntuple(Returns(2), dim))
+    nodes = [Node(x) for x in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (2.0, 0.0), (2.0, 1.0)]]
+    grids = [
+        box(Line, 1), box(QuadraticLine, 1), box(Triangle, 2), box(QuadraticTriangle, 2), box(Quadrilateral, 2),
+        box(QuadraticQuadrilateral, 2), box(Tetrahedron, 3), box(Hexahedron, 3), box(Wedge, 3), box(Pyramid, 3),
+        # mixed cell types of one dimension, and of two dimensions (lines on an interior and a boundary edge)
+        Grid(Ferrite.AbstractCell[Triangle((1, 2, 3)), Triangle((1, 3, 4)), Quadrilateral((2, 5, 6, 3))], nodes),
+        Grid(Ferrite.AbstractCell[Triangle((1, 2, 3)), Triangle((1, 3, 4)), Line((1, 3)), Line((1, 2))], nodes),
+    ]
+    for grid in grids
+        topology = ExclusiveTopology(grid)
+        facets = [FacetIndex(c, f) for c in 1:getncells(grid) for f in 1:nfacets(getcells(grid, c))]
+        interior = Set(fi for fi in facets if !isempty(getneighborhood(topology, grid, fi)))
+        @test _shared_facets(grid, facets) == interior
+        @test all(fi -> _shared_facets(grid, [fi]) == intersect(interior, [fi]), facets)
+        # `_boundary_facets` is only used on grids of one dimension.
+        all(c -> Ferrite.getrefdim(c) == Ferrite.getrefdim(getcells(grid, 1)), getcells(grid)) &&
+            @test _boundary_facets(grid) == setdiff(Set(facets), interior)
+    end
+
+    # Three cells at one node: it is not on the boundary.
+    branched = Grid([Line((1, 2)), Line((2, 3)), Line((2, 5))], nodes)
+    @test _boundary_facets(branched) == Set([FacetIndex(1, 1), FacetIndex(2, 2), FacetIndex(3, 2)])
+
+    grid = box(Tetrahedron, 3)
+    grid.facetsets["inside"] = typeof(grid.facetsets["left"])([FacetIndex(1, 3)])
+    @test errmsg(() -> check_facetsets(grid, [:left, :inside])) ==
+        "ArgumentError: facet set :inside is not on the boundary: it contains 1 interior facets " *
+        "(shared by two cells; first: cell 1, local facet 3)"
+
+    # An embedded grid is rejected, as by `ExclusiveTopology`.
+    surface = Grid([Triangle((1, 2, 3))], [Node((n.x[1], n.x[2], 0.0)) for n in nodes])
+    surface.facetsets["edge"] = typeof(grid.facetsets["left"])([FacetIndex(1, 1)])
+    @test_throws "Purely embedded" check_facetsets(surface, [:edge])
 end
 
 @testset "Gmsh L-shape" begin
