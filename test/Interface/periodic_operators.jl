@@ -1,4 +1,4 @@
-# `operators` on a PDESystem with periodic conditions returns the periodic identification `P` (one column per class master
+# `operators(...; periodic_identification = true)` on a PDESystem with periodic conditions returns the periodic identification `P` (one column per class master
 # and per untied dof) and the tied dofs, so that `P' M P`, `P' K P` and `P' F` are the system `discretize` condenses.
 # Each case reduces the heat equation with `P`, advances it exactly with a matrix exponential and compares with `discretize`.
 using FiniteElementMethod, ModelingToolkit, DomainSets, OrdinaryDiffEqBDF, Test
@@ -47,7 +47,7 @@ reldiff(a, b) = norm(a - b) / norm(b)
         [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.05)], [t, x, y], [u(t, x, y)], []
     )
     disc = FEMDiscretization(Ω, t)
-    ops = with_columns(operators(pdesys, disc))
+    ops = with_columns(operators(pdesys, disc; periodic_identification = true))
     n = size(ops.M, 1)
     @test size(ops.P) == (n, n - length(ops.tied))
     @test length(ops.tied) == 17^2 - 16^2
@@ -69,7 +69,7 @@ end
         [(x, y, z) ∈ Ω, t ∈ Interval(0.0, 0.05)], [t, x, y, z], [U], []
     )
     disc = FEMDiscretization(Ω, t)
-    ops = with_columns(operators(pdesys, disc))
+    ops = with_columns(operators(pdesys, disc; periodic_identification = true))
     @test size(ops.P, 2) == 4^3
     diff = reldiff(reduced_solution(ops, 0.05), discretize_solution(pdesys, disc, 0.05))
     println("periodic cube relative difference: ", diff)
@@ -85,7 +85,7 @@ end
         [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.05)], [t, x, y], [u(t, x, y)], []
     )
     disc = FEMDiscretization(Ω, t)
-    ops = with_columns(operators(pdesys, disc))
+    ops = with_columns(operators(pdesys, disc; periodic_identification = true))
     diff = reldiff(reduced_solution(ops, 0.05), discretize_solution(pdesys, disc, 0.05))
     println("periodic x, Dirichlet y relative difference: ", diff)
     @test diff < 1.0e-10
@@ -100,7 +100,7 @@ end
         [u(t, left) ~ u(t, right), u(t, bottom) ~ 0, u(t, top) ~ 0, u(0, x, y) ~ sin(2π * x) * sin(π * y)],
         [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.05)], [t, x, y], [u(t, x, y)], []
     )
-    ops = operators(pdesys, FEMDiscretization(Ω, t))
+    ops = operators(pdesys, FEMDiscretization(Ω, t); periodic_identification = true)
     xy = dof_coordinates(ops.metadata)
     key(d) = (round(mod(xy[1, d], 1.0); digits = 8), round(xy[2, d]; digits = 8))
     classes = unique(key.(axes(xy, 2)))
@@ -119,7 +119,7 @@ end
         [u(t, left) ~ u(t, right), u(t, bottom) ~ 5.0e-9 * x, u(t, top) ~ 0, u(0, x, y) ~ sin(2π * x) * sin(π * y)],
         [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.05)], [t, x, y], [u(t, x, y)], []
     )
-    ops = operators(pdesys, FEMDiscretization(Ω, t))
+    ops = operators(pdesys, FEMDiscretization(Ω, t); periodic_identification = true)
     master_dofs = [first(findall(==(1.0), ops.P[:, j])) for j in axes(ops.P, 2)]
     @test ops.P * ops.u0[master_dofs] == ops.u0
     @test ops.metadata.u0 == ops.u0
@@ -148,7 +148,7 @@ end
         [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.05)], [t, x, y], [u(t, x, y)], []
     )
     disc = FEMDiscretization(Ω, t)
-    ops = with_columns(operators(pdesys, disc))
+    ops = with_columns(operators(pdesys, disc; periodic_identification = true))
     reduced = reduced_solution(ops, 0.05)
     exact_error = norm(reduced .- 0.05, Inf)
     diff = reldiff(reduced, discretize_solution(pdesys, disc, 0.05))
@@ -168,7 +168,7 @@ end
         [u(t, left) ~ u(t, right), u(t, bottom) ~ u(t, top), u(0, x, y) ~ 0],
         [(x, y) ∈ Ω, t ∈ Interval(0.0, 0.05)], [t, x, y], [u(t, x, y)], []
     )
-    ops = operators(pdesys, FEMDiscretization(Ω, t))
+    ops = operators(pdesys, FEMDiscretization(Ω, t); periodic_identification = true)
     λ = sort(eigvals(Symmetric(Matrix(ops.P' * ops.K * ops.P)), Symmetric(Matrix(ops.P' * ops.M * ops.P))))
     h = 1 / n
     θ = [2π * k / n for k in 0:(n - 1)]
@@ -191,8 +191,56 @@ end
         [Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y)))], [[u(t, Γ) ~ 0 for Γ in sides]; u(0, x, y) ~ 0],
         [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], []
     )
-    ops = operators(pdesys, FEMDiscretization(Ω, t))
+    ops = operators(pdesys, FEMDiscretization(Ω, t); periodic_identification = true)
     n = size(ops.M, 1)
     @test ops.P == sparse(1:n, 1:n, 1.0, n, n)
     @test isempty(ops.tied)
+end
+
+const DEFAULT_KEYS = (:M, :K, :F, :fields, :differential_vars, :prescribed, :dirichlet_values, :u0, :metadata)
+
+@testset "default operators returns the documented fields without periodic pairs" begin
+    Ω = MeshDomain(generate_grid(Triangle, (4, 3), Vec(0.0, 0.0), Vec(1.0, 1.0)))
+    sides = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+    @named pdesys = PDESystem(
+        [Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y)))], [[u(t, Γ) ~ 0 for Γ in sides]; u(0, x, y) ~ 0],
+        [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], []
+    )
+    @test keys(operators(pdesys, FEMDiscretization(Ω, t))) === DEFAULT_KEYS
+end
+
+# Every node of the 4 x 1 mesh lies on bottom or top, so the periodic pair ties nothing in the solver.
+@testset "operators on a periodic pair whose dofs are all prescribed" begin
+    Ω = MeshDomain(generate_grid(Triangle, (4, 1), Vec(0.0, 0.0), Vec(1.0, 1.0)))
+    left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+    @named pdesys = PDESystem(
+        [Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y)))],
+        [u(t, left) ~ u(t, right), u(t, bottom) ~ 5.0e-9 * x, u(t, top) ~ 0, u(0, x, y) ~ 0],
+        [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], []
+    )
+    ops = operators(pdesys, FEMDiscretization(Ω, t))
+    @test keys(ops) === DEFAULT_KEYS
+    xy = dof_coordinates(ops.metadata)
+    corners = [only(d for d in axes(xy, 2) if xy[1, d] == a && xy[2, d] == 0) for a in (0.0, 1.0)]
+    values = Dict(ops.prescribed .=> ops.dirichlet_values)
+    @test length(ops.prescribed) == size(xy, 2)
+    @test getindex.(Ref(values), corners) == ops.u0[corners] == [0.0, 5.0e-9]
+
+    periodic = operators(pdesys, FEMDiscretization(Ω, t); periodic_identification = true)
+    @test keys(periodic) === (DEFAULT_KEYS..., :P, :tied)
+    @test size(periodic.P) == (10, 8)
+    @test length(periodic.tied) == 2
+    @test periodic.P[corners[1], :] == periodic.P[corners[2], :]
+    @test periodic.u0[corners[1]] == periodic.u0[corners[2]]
+end
+
+@testset "default operators rejects periodic pairs that tie dofs" begin
+    Ω = MeshDomain(generate_grid(Triangle, (4, 3), Vec(0.0, 0.0), Vec(1.0, 1.0)))
+    left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
+    @named pdesys = PDESystem(
+        [Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y)))],
+        [u(t, left) ~ u(t, right), u(t, bottom) ~ 0, u(t, top) ~ 0, u(0, x, y) ~ 0],
+        [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], []
+    )
+    @test_throws "operators does not support periodic conditions; use discretize" operators(pdesys, FEMDiscretization(Ω, t))
 end

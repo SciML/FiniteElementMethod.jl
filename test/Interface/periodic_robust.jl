@@ -77,7 +77,7 @@ function periodic_pair(grid)
         [Differential(t)(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y)))],
         [u(t, left) ~ u(t, right), u(t, bottom) ~ 0, u(t, top) ~ 0, u(0, x, y) ~ 0], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], []
     )
-    return () -> discretize(steady, FEMDiscretization(Ω)), () -> FiniteElementMethod.operators(heat, FEMDiscretization(Ω, t))
+    return () -> discretize(steady, FEMDiscretization(Ω)), () -> FiniteElementMethod.operators(heat, FEMDiscretization(Ω, t); periodic_identification = true)
 end
 
 const SIDES = Dict("bottom" => [Ferrite.FacetIndex(1, 1)], "right" => [Ferrite.FacetIndex(1, 2)], "top" => [Ferrite.FacetIndex(1, 3)], "left" => [Ferrite.FacetIndex(1, 4)])
@@ -145,7 +145,7 @@ end
         @named heat = PDESystem(equations, bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], shared ? [u(t, x, y)] : [u(t, x, y), v(t, x, y)], [])
         disc = FEMDiscretization(Ω, t; regions, boundary_check = :off)
         @test discretize(heat, disc) isa SciMLBase.DAEProblem
-        ops = FiniteElementMethod.operators(heat, disc)
+        ops = FiniteElementMethod.operators(heat, disc; periodic_identification = true)
         coords = FiniteElementMethod._dof_coordinates(ops.metadata.space)
         @test all((ops.P[d, :] == ops.P[e, :]) == (coords[d][1] == coords[e][1]) for d in 1:4, e in 1:4)
     end
@@ -207,7 +207,7 @@ end
         [Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y)))],
         [u(t, left) ~ u(t, right), u(t, bottom) ~ 0, u(t, top) ~ 0, u(0, x, y) ~ 0], [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], [u(t, x, y)], []
     )
-    ops = FiniteElementMethod.operators(pdesys, FEMDiscretization(Ω, t))
+    ops = FiniteElementMethod.operators(pdesys, FEMDiscretization(Ω, t); periodic_identification = true)
     @test sort(ops.prescribed) == 1:4
     @test size(ops.P) == (4, 2)
     @test length(ops.tied) == 2 && issorted(ops.tied)
