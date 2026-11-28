@@ -257,6 +257,15 @@ end
         "ArgumentError: facet set :inside is not on the boundary: it contains 1 interior facets " *
         "(shared by two cells; first: cell 1, local facet 3)"
 
+    # A tetrahedron under a hexahedron, its face covering half of the hexahedron's base: the face is not on the
+    # boundary, although the two cells have no facet with the same corners.
+    corners = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1), (1, 0, -1)]
+    cells = Ferrite.AbstractCell[Hexahedron((1, 2, 3, 4, 5, 6, 7, 8)), Tetrahedron((1, 2, 3, 9))]
+    hanging = Grid(cells, [Node(Float64.(x)) for x in corners])
+    face = FacetIndex(2, findfirst(f -> issetequal(f, (1, 2, 3)), Ferrite.faces(cells[2])))
+    hanging.facetsets["half"] = typeof(grid.facetsets["left"])([face])
+    @test_throws "not on the boundary" check_facetsets(hanging, [:half])
+
     # An embedded grid is rejected, as by `ExclusiveTopology`.
     surface = Grid([Triangle((1, 2, 3))], [Node((n.x[1], n.x[2], 0.0)) for n in nodes])
     surface.facetsets["edge"] = typeof(grid.facetsets["left"])([FacetIndex(1, 1)])
