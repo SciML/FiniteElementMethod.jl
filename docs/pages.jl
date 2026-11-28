@@ -7,6 +7,7 @@ pages = [
     "Discretization" => "discretization.md",
     "Navier–Stokes example" => "navier_stokes.md",
     "Axisymmetric swirl: a collapsing core" => "axisymmetric_swirl.md",
+    "Frequency-domain Maxwell" => "maxwell.md",
     "Extension contract" => "extension_contract.md",
     "API" => "api.md",
 ]

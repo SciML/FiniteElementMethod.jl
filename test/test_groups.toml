@@ -48,3 +48,6 @@ versions = ["lts", "1"]
 
 [NavierStokes]
 versions = ["lts", "1", "pre"]
+
+[Maxwell]
+versions = ["lts", "1", "pre"]
