@@ -87,7 +87,7 @@ function check_facetsets(grid::Ferrite.Grid, names; disjoint::Bool = true)
             )
         )
     end
-    isempty(used) && return nothing
+    (isempty(used) || _none_shared(grid, used)) && return nothing
     topology = Ferrite.ExclusiveTopology(grid)
     for name in used
         interior = sort!(
@@ -102,6 +102,57 @@ function check_facetsets(grid::Ferrite.Grid, names; disjoint::Bool = true)
         )
     end
     return nothing
+end
+
+# Ferrite's own cell types whose facets have at most three corners, by the dimension of the mesh they fill.
+const _ONE_PASS_CELLS = (
+    (Ferrite.Line, Ferrite.QuadraticLine),
+    (
+        Ferrite.Triangle, Ferrite.QuadraticTriangle, Ferrite.Quadrilateral, Ferrite.QuadraticQuadrilateral,
+        Ferrite.SerendipityQuadraticQuadrilateral,
+    ),
+    (Ferrite.Tetrahedron, Ferrite.QuadraticTetrahedron),
+)
+
+# Sorted corner-node ids of a facet with at most three corners, padded to three.
+function _corner_key(ids::Tuple)
+    a, b, c = ntuple(i -> i <= length(ids) ? ids[i] : typemax(Int), Val(3))
+    a, b = minmax(a, b)
+    b, c = minmax(b, c)
+    a, b = minmax(a, b)
+    return (a, b, c)
+end
+
+# The key of each local facet of `cell`, one of `_ONE_PASS_CELLS`.
+function _corner_keys(cell)
+    vertices = Ferrite.vertices(cell)
+    return map(facet -> _corner_key(map(i -> vertices[i], facet)), Ferrite.reference_facets(cell))
+end
+
+# Proves in one pass that no facet of the sets `names` is shared, so `ExclusiveTopology` is not needed; `false`
+# leaves the answer, and any error, to it. Neighbouring facets of these cell types have equal corner keys, so a key
+# counted once is unshared. A higher count decides nothing, e.g. for duplicated cells.
+function _none_shared(grid::Ferrite.Grid{dim}, names) where {dim}
+    # Before anything that asks a cell type for its metadata: other types need not define it.
+    Ferrite.getcelltype(grid) in get(_ONE_PASS_CELLS, dim, ()) || return false
+    cells = Ferrite.getcells(grid)
+    # `ExclusiveTopology` throws on a grid without cells or with a vertex that is not a node.
+    nodes = 1:Ferrite.getnnodes(grid)
+    !isempty(cells) && all(cell -> all(in(nodes), Ferrite.vertices(cell)), cells) || return false
+    # Only the keys of the named facets are stored, not those of the whole mesh.
+    count = Dict{NTuple{3, Int}, Int}()
+    for name in names, fi in Ferrite.getfacetset(grid, String(name))
+        checkbounds(Bool, cells, fi[1]) || return false
+        facet_keys = _corner_keys(cells[fi[1]])
+        fi[2] in eachindex(facet_keys) || return false
+        count[facet_keys[fi[2]]] = 0
+    end
+    # Skips hashing most facets: a key starts with its lowest node.
+    lowest = BitSet(first(key) for key in keys(count))
+    for cell in cells, key in _corner_keys(cell)
+        first(key) in lowest && haskey(count, key) && (count[key] += 1)
+    end
+    return all(==(1), values(count))
 end
 
 # Sorted corner-node ids of local facet `lf` of `cell`: the identity of a facet of a conforming mesh, whatever the

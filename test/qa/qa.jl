@@ -6,7 +6,8 @@ using JET
 # but declares none of them `public`;
 # `Ferrite.dirichlet_facetdof_indices` (a facet's local nodes) has no public spelling in Ferrite 1.
 # `Ferrite.vertices`, `reference_facets` and `getrefdim` (the corner nodes of a cell, of its facets, and the
-# dimension of its reference shape) identify the facets of a submesh and have no public spelling in Ferrite 1.
+# dimension of its reference shape) identify the facets of a submesh and of a facet set, and have no public
+# spelling in Ferrite 1.
 # ModelingToolkit re-exports these ModelingToolkitBase names; on Julia 1.10 `Base.which` reports
 # ModelingToolkitBase as their owner, on 1.11+ ModelingToolkit, the module we depend on.
 const LTS_MTK_OWNER = VERSION < v"1.11" ? (:ProblemTypeCtx, :t_nounits) : ()
