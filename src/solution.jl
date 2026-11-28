@@ -416,6 +416,57 @@ function _nodal_gradient(md, f::FieldInfo, d, U, projector)
     return _project_at_nodes(proj, qpvals, qr)
 end
 
+# Bound the table storage held for an entire gradient query.
+const GRADIENT_TABLE_MAX_BYTES = 2^28
+# The tables allocate less than they save from 4 states on Q2 quadrilaterals and 2 on P1 and P2 triangles; 8 leaves a margin.
+const GRADIENT_TABLE_MIN_STATES = 8
+
+# The dofs of field `f` and the gradient component `d` of its basis functions at the quadrature points of each of its
+# `cells`, in the order `_nodal_gradient` reads them.
+function _gradient_tables(md, f::FieldInfo, d, cv, cells)
+    dh = _dh(md)
+    nbasis, nq = Ferrite.getnbasefunctions(cv), Ferrite.getnquadpoints(cv)
+    dofs, dφ = zeros(Int, nbasis, length(cells)), zeros(nbasis, nq, length(cells))
+    for (k, cell) in enumerate(Ferrite.CellIterator(dh, cells))
+        Ferrite.reinit!(cv, cell)
+        dofs[:, k] .= Ferrite.celldofs(cell)[_cell_range(dh, Ferrite.cellid(cell), f.name)]
+        for q in 1:nq, j in 1:nbasis
+            dφ[j, q, k] = Ferrite.shape_gradient(cv, q, j)[d]
+        end
+    end
+    return (; cells, dofs, dφ)
+end
+
+# `_nodal_gradient` from the tables, with the same products summed in the same order, so the result is identical.
+function _tabulated_gradient!(qpvals, tables, U::AbstractVector{Float64}, projector)
+    (; cells, dofs, dφ) = tables
+    checkbounds(U, dofs)
+    @inbounds for (k, c) in enumerate(cells), q in axes(dφ, 2)
+        g = 0.0
+        for j in axes(dφ, 1)
+            g += dφ[j, q, k] * U[dofs[j, k]]
+        end
+        qpvals[c][q] = g
+    end
+    return _project_at_nodes(projector.proj, qpvals, projector.qr)
+end
+
+# `_nodal_gradient` of every state, tabulating the state-independent basis gradients once, at the first `Float64` state,
+# when there are at least `GRADIENT_TABLE_MIN_STATES` states. `states` may be lazy: each is read once.
+function _nodal_gradients(md, f::FieldInfo, d, states; max_bytes = GRADIENT_TABLE_MAX_BYTES)
+    projector = _gradient_projector(md, f)
+    cv = projector.cv
+    cells = _field_cells(_dh(md), f.name)
+    nbasis, nq = Ferrite.getnbasefunctions(cv), Ferrite.getnquadpoints(cv)
+    tabulate = length(states) >= GRADIENT_TABLE_MIN_STATES && 8 * nbasis * (nq + 1) * length(cells) <= max_bytes
+    buffers = nothing
+    return map(states) do U
+        (tabulate && U isa AbstractVector{Float64}) || return _nodal_gradient(md, f, d, U, projector)
+        buffers === nothing && (buffers = (_gradient_tables(md, f, d, cv, cells), [zeros(nq) for _ in 1:Ferrite.getncells(_grid(md))]))
+        return _tabulated_gradient!(buffers[2], buffers[1], U, projector)
+    end
+end
+
 _project_at_nodes(proj, qpvals, qr) = Ferrite.evaluate_at_grid_nodes(proj, Ferrite.project(proj, qpvals, qr))
 # Ferrite's projection assembles into real buffers, so complex data is projected part by part.
 function _project_at_nodes(proj, qpvals::Vector{<:Vector{<:Complex}}, qr)
@@ -458,8 +509,7 @@ function Base.getindex(A::FEMSolution, sym::Num)
     _reject_fixed(md, s)
     g = _gradkey(md, s)
     if g !== nothing
-        projector = _gradient_projector(md, g[1])
-        return _stack(A, g[1], [_nodal_gradient(md, g..., U, projector) for U in _states(A)])
+        return _stack(A, g[1], _nodal_gradients(md, g..., _states(A)))
     end
     if SymbolicUtils.iscall(s) && _is_normal_derivative(SymbolicUtils.operation(s))
         trace = Symbolics.unwrap(only(SymbolicUtils.arguments(s)))
