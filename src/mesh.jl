@@ -135,10 +135,13 @@ _boundary_facets(grid::Ferrite.Grid) = Set(fi for fi in values(_facet_owners(gri
 # Those of `facets` that another cell shares. Only the keys of `facets` are stored, not those of the whole mesh.
 function _shared_facets(grid::Ferrite.Grid{dim}, facets) where {dim}
     cells = Ferrite.getcells(grid)
-    # `ExclusiveTopology` has its own rules for mixed cell types (a triangle on part of a quadrilateral face is a
-    # neighbour) and rejects embedded grids.
+    # `ExclusiveTopology` counts a triangle on part of a quadrilateral face as a neighbour, which can happen between
+    # mixed cell types or between cells with both kinds of face (pyramids, wedges). It also rejects embedded grids.
     CT = Ferrite.getcelltype(grid)
-    if !(isconcretetype(CT) && Ferrite.getrefdim(CT) == dim)
+    if !(
+            isconcretetype(CT) && Ferrite.getrefdim(CT) == dim &&
+                allequal(map(length, Ferrite.reference_facets(Ferrite.getrefshape(CT))))
+        )
         topology = Ferrite.ExclusiveTopology(grid)
         return Set(fi for fi in facets if !isempty(Ferrite.getneighborhood(topology, grid, fi)))
     end

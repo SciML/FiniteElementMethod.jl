@@ -266,6 +266,13 @@ end
     hanging.facetsets["half"] = typeof(grid.facetsets["left"])([face])
     @test_throws "not on the boundary" check_facetsets(hanging, [:half])
 
+    # The same between two pyramids: a triangular side of the second covers half of the base of the first.
+    corners = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0), (0, 0, 1), (0, 0, -1), (1, 0, -1)]
+    pyramids = Grid([Pyramid((1, 2, 3, 4, 5)), Pyramid((1, 2, 6, 7, 3))], [Node(Float64.(x)) for x in corners])
+    face = FacetIndex(2, findfirst(f -> issetequal(f, (1, 2, 3)), Ferrite.faces(getcells(pyramids, 2))))
+    pyramids.facetsets["half"] = typeof(grid.facetsets["left"])([face])
+    @test_throws "not on the boundary" check_facetsets(pyramids, [:half])
+
     # An embedded grid is rejected, as by `ExclusiveTopology`.
     surface = Grid([Triangle((1, 2, 3))], [Node((n.x[1], n.x[2], 0.0)) for n in nodes])
     surface.facetsets["edge"] = typeof(grid.facetsets["left"])([FacetIndex(1, 1)])
