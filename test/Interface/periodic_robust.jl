@@ -27,11 +27,6 @@ function five_tetrahedra_cube()
     return grid
 end
 
-# PDE:    -Δu = 0 in the unit cube
-# BCs:    left and right periodic, u = y z on the other four faces
-# Shows:  the corners of the left and right faces match, but the faces are split along opposite diagonals, so no solution can
-#         be periodic across them; the pair is refused, while the same cube meshed with one diagonal direction on both faces is
-#         accepted.
 @testset "periodic faces triangulated along different diagonals are rejected" begin
     function steady(grid)
         Ω = MeshDomain(grid)
@@ -48,9 +43,7 @@ end
 
 periodic_square(corner, size; n = (1, 1)) = generate_grid(Quadrilateral, n, Vec(corner...), Vec((corner .+ size)...))
 
-# BCs:    left and right periodic on a Q1 square [x0, x0 + 1] x [0, 1], with x0 = 0 and x0 = 1e14
-# Shows:  the matching uses coordinates relative to the mesh, so a mesh far from the origin gives the same ties as the same mesh
-#         at the origin (integer keys of absolute coordinates would overflow), and a solve on it works.
+# Integer keys of absolute coordinates would overflow at x0 = 1e14, so the matching uses coordinates relative to the mesh.
 @testset "periodic matching does not depend on the distance of the mesh from the origin" begin
     ties(corner) = FEMSpace(periodic_square(corner, (1.0, 1.0); n = (3, 3)), [:u => Lagrange{RefQuadrilateral, 1}()]; periodic = [(:u, "left", "right")]).ties
     @test !isempty(ties((0.0, 0.0)))
@@ -64,9 +57,7 @@ periodic_square(corner, size; n = (1, 1)) = generate_grid(Quadrilateral, n, Vec(
     @test solution(1.0e14) ≈ solution(0.0) atol = 1.0e-8
 end
 
-# BCs:    left and right periodic on a rectangle of width 1e-7 and height 1, and two pieces with the same centroid
-# Shows:  the tolerance follows each axis, so an exact translation of 1e-7 along a thin axis is accepted, while a pair with no
-#         translation at all is still refused as coincident.
+# The tolerance follows each axis, so an exact translation of 1e-7 along a thin axis is kept.
 @testset "periodic matching on a thin domain, and coincident pieces" begin
     grid = periodic_square((0.0, 0.0), (1.0e-7, 1.0); n = (1, 4))
     space = FEMSpace(grid, [:u => Lagrange{RefQuadrilateral, 1}()]; periodic = [(:u, "left", "right")])
@@ -78,8 +69,6 @@ end
     @test_throws "periodic pieces Γ_diagonal_a and Γ_diagonal_b of u coincide" FEMSpace(square, [:u => Lagrange{RefQuadrilateral, 1}()]; periodic = [(:u, "diagonal_a", "diagonal_b")])
 end
 
-# The steady problem (`discretize`) and the transient `operators` of a left-right periodic pair with u = 0 on the bottom and
-# top.
 function periodic_pair(grid)
     Ω = MeshDomain(grid)
     left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))
@@ -98,10 +87,7 @@ quadrilateral(x0, bottom, top) = Grid([Quadrilateral((1, 2, 3, 4))], Node.([Vec(
 
 const MISMATCH = "periodic pieces Γ_left and Γ_right of u do not match under a translation"
 
-# BCs:    left and right periodic on one Q1 cell at x0 = 1e12, a few units in the last place wide
-# Shows:  the tolerance follows the extent of the mesh, not the size of its coordinates: a cell four ulps wide whose sides are
-#         exact translates is identified like the same cell at the origin, and a cell whose right side is skewed by two ulps is
-#         refused, through `discretize` and through `operators`.
+# The tolerance follows the extent of the mesh, not the size of its coordinates: a cell four ulps wide is matched, a skew of two ulps refused.
 @testset "periodic matching of a mesh a few ulps wide far from the origin" begin
     x0 = 1.0e12
     w = 4 * eps(x0)
@@ -124,28 +110,58 @@ const MISMATCH = "periodic pieces Γ_left and Γ_right of u do not match under a
     @test length(q2ties(slanted(0.0))) == 3
     @test q2ties(slanted(x0)) == q2ties(slanted(0.0))
     # A field restricted to a cell 1e-14 wide at x = 1, in a mesh that reaches x = 0: positions are measured from the corner of
-    # the field's dofs, whose extent gives the tolerance, not from the corner of the mesh.
+    # the pair's cells, whose extent gives the tolerance, not from the corner of the mesh.
     d = 1.0e-14
     narrow = Grid(
         [Quadrilateral((1, 2, 5, 4)), Quadrilateral((2, 3, 6, 5))], Node.([Vec(0.0, 0.0), Vec(1.0, 0.0), Vec(1.0 + d, 0.0), Vec(0.0, 1.0), Vec(1.0, 1.0), Vec(1.0 + d, 1.0)]);
         cellsets = Dict("narrow" => Set([2])), facetsets = Dict("bottom" => [Ferrite.FacetIndex(2, 1)], "top" => [Ferrite.FacetIndex(2, 3)])
     )
     @test length(FEMSpace(narrow, [:u => Lagrange{RefQuadrilateral, 1}()]; periodic = [(:u, "bottom", "top")], regions = Dict(:u => "narrow")).ties) == 2
-    # A field on the unit square of a mesh with a far, disconnected cell: the mesh is moved by the corner of the field's cells,
-    # so the far cell does not round the field's coordinates.
-    function with_far_cell(x)
-        nodes = Node.([Vec(0.0, 0.0), Vec(1.0, 0.0), Vec(1.0, 1.0), Vec(0.0, 1.0), Vec(x, 2.0), Vec(x + 4, 2.0), Vec(x + 4, 3.0), Vec(x, 3.0)])
-        grid = Grid([Quadrilateral((1, 2, 3, 4)), Quadrilateral((5, 6, 7, 8))], nodes; cellsets = Dict("square" => Set([1])), facetsets = Dict(k => v for (k, v) in SIDES if k in ("left", "right")))
-        return FEMSpace(grid, [:u => Lagrange{RefQuadrilateral, 1}()]; periodic = [(:u, "left", "right")], regions = Dict(:u => "square")).ties
-    end
-    @test length(with_far_cell(-10.0)) == 2
-    @test with_far_cell(-1.0e16) == with_far_cell(-10.0)
 end
 
-# BCs:    left and right periodic on one nine-node quadrilateral, with the default Q1 field
-# Shows:  the geometry of the pieces is matched, not only the field's dofs: with straight sides the pair is accepted, and with
-#         the left midside node moved inwards (a bowed side, invisible to the Q1 dofs) it is refused, through `discretize` and
-#         `operators`.
+# A cell at -2^54 rounds 0.5 away in any frame that contains it; the pair is matched in the frame of its own cells.
+@testset "a distant cell does not erase the separation of a periodic pair's nodes" begin
+    @variables v(..)
+    function distant(x0)
+        nodes = Node.([Vec(0.0, 0.0), Vec(0.5, 0.0), Vec(0.5, 2.0^40), Vec(0.0, 2.0^40), Vec(x0, 0.0), Vec(x0 + 16, 0.0), Vec(x0 + 16, 1.0), Vec(x0, 1.0)])
+        return Grid(
+            [Quadrilateral((1, 2, 3, 4)), Quadrilateral((5, 6, 7, 8))], nodes;
+            cellsets = Dict("rectangle" => Set([1]), "far" => Set([2])), facetsets = Dict(k => f for (k, f) in SIDES if k in ("bottom", "top"))
+        )
+    end
+    ip = Lagrange{RefQuadrilateral, 1}()
+    layouts = [([:u => ip], Dict()), ([:u => ip, :v => ip], Dict(:u => "rectangle", :v => "far")), ([:u => ip], Dict(:u => "rectangle"))]
+    for x0 in (-32.0, -2.0^54), (fields, regions) in layouts
+        @test FEMSpace(distant(x0), fields; periodic = [(:u, "bottom", "top")], regions).ties == [3 => 2, 4 => 1]
+    end
+    for x0 in (-32.0, -2.0^54), shared in (true, false)
+        Ω = MeshDomain(distant(x0))
+        bottom, top = boundarypiece.(Ω, (:bottom, :top))
+        Dt = Differential(t)
+        equations = [Dt(u(t, x, y)) ~ Dx(Dx(u(t, x, y))) + Dy(Dy(u(t, x, y)))]
+        bcs = [u(t, bottom) ~ u(t, top), u(0, x, y) ~ 0]
+        shared || (push!(equations, Dt(v(t, x, y)) ~ Dx(Dx(v(t, x, y)))); push!(bcs, v(0, x, y) ~ 0))
+        regions = shared ? Dict() : Dict(u => Region(Ω, :rectangle), v => Region(Ω, :far))
+        @named heat = PDESystem(equations, bcs, [(x, y) ∈ Ω, t ∈ Interval(0.0, 1.0)], [t, x, y], shared ? [u(t, x, y)] : [u(t, x, y), v(t, x, y)], [])
+        disc = FEMDiscretization(Ω, t; regions, boundary_check = :off)
+        @test discretize(heat, disc) isa SciMLBase.DAEProblem
+        ops = FiniteElementMethod.operators(heat, disc)
+        coords = FiniteElementMethod._dof_coordinates(ops.metadata.space)
+        @test all((ops.P[d, :] == ops.P[e, :]) == (coords[d][1] == coords[e][1]) for d in 1:4, e in 1:4)
+    end
+end
+
+# Facets of a piece outside the field's region carry none of its dofs, so their geometry is not compared.
+@testset "periodic facets are compared only inside the field's region" begin
+    grid = Grid(
+        [Quadrilateral((1, 2, 5, 4)), Quadrilateral((2, 3, 6, 5))], Node.([Vec(0.0, 0.0), Vec(1.0, 0.0), Vec(2.0, 0.0), Vec(0.0, 1.0), Vec(1.0, 1.0), Vec(2.3, 1.0)]);
+        cellsets = Dict("left" => Set([1])), facetsets = Dict("bottom" => [Ferrite.FacetIndex(1, 1), Ferrite.FacetIndex(2, 1)], "top" => [Ferrite.FacetIndex(1, 3), Ferrite.FacetIndex(2, 3)])
+    )
+    space(regions) = FEMSpace(grid, [:u => Lagrange{RefQuadrilateral, 1}()]; periodic = [(:u, "bottom", "top")], regions)
+    @test space(Dict(:u => "left")).ties == [3 => 2, 4 => 1]
+    @test_throws "periodic pieces Γ_bottom and Γ_top of u do not match under a translation" space(Dict())
+end
+
 @testset "periodic pieces must be translates in the mesh geometry, not only at the field's dofs" begin
     straight = generate_grid(Ferrite.QuadraticQuadrilateral, (1, 1), Vec(0.0, 0.0), Vec(1.0, 1.0))
     nodes = map(n -> n.x == Vec(0.0, 0.5) ? Node(Vec(0.15, 0.5)) : n, straight.nodes)
@@ -157,8 +173,6 @@ end
     @test_throws "$MISMATCH: the facet of Γ_left" ops()
 end
 
-# Shows:  the scatter of a mirror row of the nonlinear Jacobian into its master row is inferred and allocates nothing, though
-#         `FEMNonlinear` stores its ties untyped.
 @testset "the periodic Jacobian scatter is type-stable and allocation-free" begin
     out, vals = zeros(6), collect(1.0:6.0)
     from, to = [1, 3, 5], [2, 4, 6]
@@ -185,9 +199,6 @@ end
     @test (@allocated FiniteElementMethod.scatter_ties!(outc, vals, from, to)) == 0
 end
 
-# PDE:    u_t = u_xx + u_yy on a single Q1 quadrilateral
-# BCs:    left and right periodic, u = 0 on bottom and top, so all four nodes are prescribed and the solver's tie list is empty
-# Shows:  `operators` still returns the identification: P has one column per class and `tied` lists the non-master members.
 @testset "operators with every periodic node prescribed" begin
     Ω = MeshDomain(periodic_square((0.0, 0.0), (1.0, 1.0)))
     left, right, bottom, top = boundarypiece.(Ω, (:left, :right, :bottom, :top))

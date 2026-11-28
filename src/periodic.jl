@@ -12,8 +12,8 @@ function _piece_dofs(dh, field, grid, set)
 end
 
 # Points are matched in coordinates scaled by a per-axis tolerance, so a match is a distance of at most 1, on a grid of
-# cells of side 1 looking in the neighbouring cells too. The scaled coordinates are relative to the corner of the dofs' own
-# bounding box, from whose extent the tolerance comes, so they are at most about 1e6 in size; the clamp keeps any other point
+# cells of side 1 looking in the neighbouring cells too. The scaled coordinates are relative to the corner of the pair's cells,
+# from whose extent the tolerance comes, so they are at most about 1e6 in size; the clamp keeps any other point
 # (a facet point of a degenerate mesh) from overflowing the integer keys, and such a point matches nothing.
 _cell_key(point) = Tuple(floor.(Int, clamp.(point, -1.0e15, 1.0e15)))
 
@@ -64,16 +64,46 @@ function _matching_problem(coords, scaled, da, db, matched, unmatched, shift, ss
     return nothing
 end
 
-# The points of each facet of the set at a quadrature rule of the mesh geometry, relative to `lo` and scaled by `tolerance`.
-# The rule is exact to twice the geometric order with positive weights, so two facets whose maps agree at its points are the
-# same facet, and it is symmetric, so the set of points does not depend on the orientation of the facet in its cell.
-function _facet_points(grid, set, lo, tolerance)
+#     _pair_frame(grid, dh, field, ip, cells) -> (lo, tolerance, scaled, local_grid)
+#
+# The frame in which a periodic pair is matched: `cells` are the cells of `field` (interpolation `ip`) with a facet on either
+# piece, `lo` the corner of their bounding box and `tolerance` 1e-6 times its extent along each axis, so a thin mesh keeps its
+# translations. `local_grid` is those cells alone, in their order, moved by `-lo`, and `scaled[d]` the position on it of each
+# dof `d` of `field` on the cells, divided by `tolerance`: interpolated there, neither the distance of the cells from the origin
+# nor any other cell of the mesh rounds a position.
+function _pair_frame(grid, dh, field, ip, cells)
+    ids = unique(n for c in cells for n in Ferrite.getcells(grid, c).nodes)
+    x = [Ferrite.get_node_coordinate(grid, n) for n in ids]
+    lo = Ferrite.Vec(ntuple(k -> minimum(p -> p[k], x), length(first(x))))
+    hi = Ferrite.Vec(ntuple(k -> maximum(p -> p[k], x), length(first(x))))
+    tolerance = max.(1.0e-6 .* Vector(hi - lo), floatmin(Float64))
+    local_id = Dict(n => k for (k, n) in enumerate(ids))
+    local_cells = [(cell = Ferrite.getcells(grid, c); typeof(cell)(map(n -> local_id[n], cell.nodes))) for c in cells]
+    local_grid = Ferrite.Grid(local_cells, [Ferrite.Node(p - lo) for p in x])
+    local_dh = Ferrite.DofHandler(local_grid)
+    Ferrite.add!(local_dh, field, ip)
+    Ferrite.close!(local_dh)
+    positions = [Ferrite.apply_analytical!(zeros(Ferrite.ndofs(local_dh)), local_dh, field, p -> p[k] / tolerance[k]) for k in eachindex(tolerance)]
+    scaled = Dict{Int, Vector{Float64}}()
+    for sdh in dh.subdofhandlers, (k, c) in enumerate(cells)
+        field in sdh.field_names && c in sdh.cellset || continue
+        for (l, d) in zip(Ferrite.celldofs(local_dh, k), view(Ferrite.celldofs(dh, c), Ferrite.dof_range(sdh, field)))
+            scaled[d] = getindex.(positions, l)
+        end
+    end
+    return Vector(lo), tolerance, scaled, local_grid
+end
+
+# The points of each of `facets` of `grid` at a quadrature rule of the mesh geometry, scaled by `tolerance`. The rule is exact
+# to twice the geometric order with positive weights, so two facets whose maps agree at its points are the same facet, and it is
+# symmetric, so the set of points does not depend on the orientation of the facet in its cell.
+function _facet_points(grid, facets, tolerance)
     ip = Ferrite.geometric_interpolation(Ferrite.getcelltype(grid))
     fv = Ferrite.FacetValues(Ferrite.FacetQuadratureRule{Ferrite.getrefshape(ip)}(2 * _order(ip)), ip, ip)
-    return map(collect(Ferrite.getfacetset(grid, String(set)))) do (cell, facet)
+    return map(facets) do (cell, facet)
         x = Ferrite.getcoordinates(grid, cell)
         Ferrite.reinit!(fv, Ferrite.getcells(grid, cell), x, facet)
-        [(Vector(Ferrite.spatial_coordinate(fv, q, x)) - lo) ./ tolerance for q in 1:Ferrite.getnquadpoints(fv)]
+        [Vector(Ferrite.spatial_coordinate(fv, q, x)) ./ tolerance for q in 1:Ferrite.getnquadpoints(fv)]
     end
 end
 
@@ -101,38 +131,35 @@ function _tuple_str(x)
     return "(" * join(round.(x; sigdigits = 6), ", ") * ")"
 end
 
-#     periodic_ties(moved, dh, nodes, relative, periodic, prescribed) -> (ties, classes)
+#     periodic_ties(grid, dh, ips, nodes, periodic, prescribed) -> (ties, classes)
 #
-# `moved` is the mesh translated so that its lower corner is the origin, `nodes` the dof coordinates and `relative` the dof
-# coordinates interpolated on `moved`, which the matching uses so that the distance of the mesh from the origin does not round
-# them; `nodes` are used for the Dirichlet data and the messages.
+# `ips[field]` is the interpolation of each field and `nodes` are the dof coordinates, used for the Dirichlet data and the
+# messages; each pair is matched in its own frame (`_pair_frame`), on the facets of its pieces where the field lives.
 # `(ties, classes)`: `mirror => master` dof pairs (and the prescribed dofs of each class, for `check_agreement`) that make the dofs matched by `periodic`, a collection of
 # `(field, set_a, set_b)`, equal. The pieces of a pair must be translates of each other: the translation is the
 # difference of their centroids and each node of one must have a node of the other at the translated place, or
 # an `ArgumentError` names both pieces. A master is a `prescribed` (Dirichlet) dof of its class if it has one, else
 # its lowest dof; prescribed dofs are never mirrors.
-function periodic_ties(grid, dh, nodes, relative, periodic, prescribed; dirichlet = Dict{Int, Any}(), times = (0.0,))
+function periodic_ties(grid, dh, ips, nodes, periodic, prescribed; dirichlet = Dict{Int, Any}(), times = (0.0,))
     coords = [collect(Float64, Tuple(x)) for x in nodes]
-    relative = [collect(Float64, Tuple(x)) for x in relative]
-    lo = reduce((a, b) -> min.(a, b), relative)
-    hi = reduce((a, b) -> max.(a, b), relative)
-    # One tolerance per axis, a fraction of the extent of the dofs along it, so a thin mesh keeps its translations; positions are
-    # measured from the corner of the same dofs.
-    tolerance = max.(1.0e-6 .* (hi - lo), floatmin(Float64))
-    scaled = [(c - lo) ./ tolerance for c in relative]
-    origin = coords[1] - relative[1] + lo
     parent = collect(1:Ferrite.ndofs(dh))
     root(d) = parent[d] == d ? d : (parent[d] = root(parent[d]))
     for (field, a, b) in periodic
         da, db = _piece_dofs(dh, field, grid, a), _piece_dofs(dh, field, grid, b)
-        mean_coord(ds) = sum(relative[d] for d in ds) / length(ds)
-        shift = mean_coord(db) - mean_coord(da)
-        sshift = shift ./ tolerance
+        carrying = Set(_field_cells(dh, field))
+        fa, fb = ([f for f in Ferrite.getfacetset(grid, String(set)) if f[1] in carrying] for set in (a, b))
+        cells = unique([f[1] for f in [fa; fb]])
+        lo, tolerance, scaled, local_grid = _pair_frame(grid, dh, field, ips[field], cells)
+        local_cell = Dict(c => k for (k, c) in enumerate(cells))
+        local_facets(fs) = [Ferrite.FacetIndex(local_cell[c], f) for (c, f) in fs]
+        mean_coord(ds) = sum(scaled[d] for d in ds) / length(ds)
+        sshift = mean_coord(db) - mean_coord(da)
+        shift = sshift .* tolerance
         names = "Γ_$a and Γ_$b of $field"
         norm(sshift) <= 1 && throw(ArgumentError("periodic pieces $names coincide: their centroids are the same point, so there is no translation between them"))
         matched, unmatched = _match_translate(scaled, da, db, sshift)
         problem = _matching_problem(coords, scaled, da, db, matched, unmatched, shift, sshift, a, b)
-        problem === nothing && (problem = _facet_problem(_facet_points(grid, a, lo, tolerance), _facet_points(grid, b, lo, tolerance), sshift, origin, tolerance, a, b))
+        problem === nothing && (problem = _facet_problem(_facet_points(local_grid, local_facets(fa), tolerance), _facet_points(local_grid, local_facets(fb), tolerance), sshift, lo, tolerance, a, b))
         problem === nothing || throw(
             ArgumentError(
                 "periodic pieces $names do not match under a translation: $problem; the translation between their centroids is " *

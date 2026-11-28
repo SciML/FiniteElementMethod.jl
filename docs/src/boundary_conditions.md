@@ -148,9 +148,10 @@ have a node of the other at the translated place. The mesh geometry is compared 
 of one piece, translated, must be a facet of the other with the same shape, so pieces triangulated
 along different diagonals, or a side curved by its midside nodes where the field's nodes cannot see
 it, are refused. On a mismatch `discretize` throws an `ArgumentError` that names both pieces and
-the mismatch. Positions are compared to `1e-6` times the extent of the discretized dofs along
-each axis, measured from their corner, so the distance of the mesh from the origin does not
-matter. The pairs are per field, so one field may be periodic
+the mismatch. Each pair is matched on the cells of its field that have a facet on either piece:
+positions are measured from the corner of their bounding box and compared to `1e-6` times its
+extent along each axis, so neither the distance of the mesh from the origin nor the rest of the
+mesh matters. The pairs are per field, so one field may be periodic
 where another carries Dirichlet pieces, and they work with any element space, including the
 Taylor–Hood pair of a Navier–Stokes system, in the time-dependent and steady paths and with
 `SUPG` test spaces.
