@@ -1,4 +1,4 @@
-# Spec §10.5, M2 layer "Linear numeric": PDESystemLibrary 0.1.10's linear systems heat_1d1, pdesys,
+# Spec §10.5, M2 layer "Linear numeric": PDESystemLibrary 0.1.12's linear systems heat_1d1, pdesys,
 # sph, convdiff2 and convdiff4, solved end to end at n = 16, 32, 64 (and 128 for convdiff4).
 # The library writes MethodOfLines endpoint conditions on interval domains; each system is
 # converted to trace conditions on the named pieces of a 1D mesh of the same interval (the inverse
@@ -73,11 +73,7 @@ mesh_domain(sys, n) = (I = spatial_interval(sys, sys.ivs[2]); MeshDomain(rectang
 function symbolic_exact(sys)
     rhs = only(sys.analytic).rhs
     rhs = substitute(rhs, Dict(first(p) => last(p) for p in params(sys)))
-    f = Symbolics.build_function(rhs, sys.ivs...; expression = Val(false))
-    I = spatial_interval(sys, sys.ivs[2])
-    lo, hi = DomainSets.infimum(I), DomainSets.supremum(I)
-    # sph's sin(r)/r has a removable singularity at r = 0: take the limit from inside the interval
-    return (t_, x_) -> (v = f(t_, x_); isfinite(v) ? v : f(t_, x_ + 1.0e-9 * (hi - lo) * sign((lo + hi) / 2 - x_)))
+    return Symbolics.build_function(rhs, sys.ivs...; expression = Val(false))
 end
 
 # convdiff: k f'' + v f' = 0 with f(0) = 0, f(L) = 1, reached to below 1e-8 by t = 30 (slowest
@@ -122,22 +118,6 @@ end
         end
 
         exact = haskey(case, :exact) ? case.exact : symbolic_exact(sys)
-        if case.name === :sph
-            # L8 (new, spec §11.2 numbering continued): sph's initial condition sin(r)/r is NaN at
-            # r = 0, a node of every mesh of [0, 1], and the front end rejects non-finite initial data.
-            Ω = mesh_domain(sys, 16)
-            @test_throws "u(0, r) ~ sin(r) / r is not finite at the node coordinate (0.0,)" discretize(
-                trace_system(sys, Ω, case.tend), FEMDiscretization(Ω, sys.ivs[1])
-            )
-            @test_broken try
-                errs = nodal_errors(case, sys, exact)
-                log2(errs[end - 1] / errs[end]) >= MIN_RATE && errs[end] <= 1.5 * case.err64
-            catch e
-                e isa ArgumentError || rethrow()
-                false
-            end
-            continue
-        end
         errs = nodal_errors(case, sys, exact)
         rate = log2(errs[end - 1] / errs[end])
         err64 = errs[findfirst(==(64), case.ns)]
