@@ -418,6 +418,8 @@ end
 
 # Bound the table storage held for an entire gradient query.
 const GRADIENT_TABLE_MAX_BYTES = 2^28
+# The tables allocate less than they save from 4 states on Q2 quadrilaterals and 2 on P1 and P2 triangles; 8 leaves a margin.
+const GRADIENT_TABLE_MIN_STATES = 8
 
 # The dofs of field `f` and the gradient component `d` of its basis functions at the quadrature points of each of its
 # `cells`, in the order `_nodal_gradient` reads them.
@@ -450,13 +452,13 @@ function _tabulated_gradient!(qpvals, tables, U::AbstractVector{Float64}, projec
 end
 
 # `_nodal_gradient` of every state, tabulating the state-independent basis gradients once, at the first `Float64` state,
-# when there is more than one state. `states` may be lazy: each is read once.
+# when there are at least `GRADIENT_TABLE_MIN_STATES` states. `states` may be lazy: each is read once.
 function _nodal_gradients(md, f::FieldInfo, d, states; max_bytes = GRADIENT_TABLE_MAX_BYTES)
     projector = _gradient_projector(md, f)
     cv = projector.cv
     cells = _field_cells(_dh(md), f.name)
     nbasis, nq = Ferrite.getnbasefunctions(cv), Ferrite.getnquadpoints(cv)
-    tabulate = length(states) > 1 && 8 * nbasis * (nq + 1) * length(cells) <= max_bytes
+    tabulate = length(states) >= GRADIENT_TABLE_MIN_STATES && 8 * nbasis * (nq + 1) * length(cells) <= max_bytes
     buffers = nothing
     return map(states) do U
         (tabulate && U isa AbstractVector{Float64}) || return _nodal_gradient(md, f, d, U, projector)

@@ -613,6 +613,15 @@ end
     per_state(complex_states)
     # No tables for states that cannot use them: these would add about 43 kB; the slack covers a few hundred bytes of jitter.
     @test @allocated(FiniteElementMethod._nodal_gradients(md, f, 1, complex_states)) <= @allocated(per_state(complex_states)) + 4096
+    few = states[1:(FiniteElementMethod.GRADIENT_TABLE_MIN_STATES - 1)]
+    @test FiniteElementMethod._nodal_gradients(md, f, 1, few) == reference[eachindex(few)]
+    # Below the minimum no tables are built: on Q2 quadrilaterals they would add 4% (0.5 MiB) for two states.
+    quads, _ = gradient_case(Quadrilateral, 2; nel = 30)
+    quad_md, quad_f = quads.disc_data, first(quads.disc_data.fields)
+    pair = [FiniteElementMethod._full(quad_md, U) for U in quads.original_sol.u[1:2]]
+    quad_per_state(states) = FiniteElementMethod._nodal_gradients(quad_md, quad_f, 1, states; max_bytes = 0)
+    FiniteElementMethod._nodal_gradients(quad_md, quad_f, 1, pair), quad_per_state(pair)
+    @test @allocated(FiniteElementMethod._nodal_gradients(quad_md, quad_f, 1, pair)) <= 1.01 * @allocated(quad_per_state(pair))
     mixed = AbstractVector[iseven(k) ? complex_states[k] : states[k] for k in eachindex(states)]
     @test FiniteElementMethod._nodal_gradients(md, f, 1, mixed) == [FiniteElementMethod._nodal_gradient(md, f, 1, U, projector) for U in mixed]
     reads = Ref(0)
