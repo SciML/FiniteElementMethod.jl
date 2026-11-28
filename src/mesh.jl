@@ -132,27 +132,32 @@ end
 
 _boundary_facets(grid::Ferrite.Grid) = Set(fi for fi in values(_facet_owners(grid)) if fi != _SHARED_FACET)
 
-# Those of `facets` that another cell shares. Only the keys of `facets` are stored, not those of the whole mesh.
-function _shared_facets(grid::Ferrite.Grid{dim}, facets) where {dim}
-    cells = Ferrite.getcells(grid)
-    # `ExclusiveTopology` counts a triangle on part of a quadrilateral face as a neighbour, which can happen between
-    # mixed cell types or between cells with both kinds of face (pyramids, wedges). It also rejects embedded grids.
+# Those of `facets` that another cell shares, as `Ferrite.ExclusiveTopology` counts them.
+function _shared_facets(grid::Ferrite.Grid, facets)
+    _none_shared(grid, facets) && return Set{Ferrite.FacetIndex}()
+    topology = Ferrite.ExclusiveTopology(grid)
+    return Set(fi for fi in facets if !isempty(Ferrite.getneighborhood(topology, grid, fi)))
+end
+
+# Proves in one pass that no facet of `facets` is shared; `false` leaves the answer to `ExclusiveTopology`. With at
+# most three corners per face, its neighbours always have equal corner keys, so a key counted once is unshared (it
+# matches quadrilateral faces on three corners). A higher count decides nothing, e.g. for duplicated cells.
+function _none_shared(grid::Ferrite.Grid{dim}, facets) where {dim}
     CT = Ferrite.getcelltype(grid)
-    if !(
-            isconcretetype(CT) && Ferrite.getrefdim(CT) == dim &&
-                allequal(map(length, Ferrite.reference_facets(Ferrite.getrefshape(CT))))
-        )
-        topology = Ferrite.ExclusiveTopology(grid)
-        return Set(fi for fi in facets if !isempty(Ferrite.getneighborhood(topology, grid, fi)))
-    end
-    keyof = Dict(fi => _facet_corners(cells[fi[1]])[fi[2]] for fi in facets)
-    count = Dict(key => 0 for key in values(keyof))
+    isconcretetype(CT) && Ferrite.getrefdim(CT) == dim &&
+        all(facet -> length(facet) <= 3, Ferrite.reference_facets(Ferrite.getrefshape(CT))) || return false
+    cells = Ferrite.getcells(grid)
+    # `ExclusiveTopology` throws on a grid without cells or with a vertex that is not a node.
+    nodes = 1:Ferrite.getnnodes(grid)
+    !isempty(cells) && all(cell -> all(in(nodes), Ferrite.vertices(cell)), cells) || return false
+    # Only the keys of `facets` are stored, not those of the whole mesh.
+    count = Dict(_facet_corners(cells[fi[1]])[fi[2]] => 0 for fi in facets)
     # Skips hashing most facets: a key starts with its lowest node.
     lowest = BitSet(first(key) for key in keys(count))
     for cell in cells, key in _facet_corners(cell)
         first(key) in lowest && haskey(count, key) && (count[key] += 1)
     end
-    return Set(fi for (fi, key) in keyof if count[key] > 1)
+    return all(==(1), values(count))
 end
 
 # Map each node of `sub` to the parent node within `atol` of it (the nearest one), through a hash of `atol`-wide

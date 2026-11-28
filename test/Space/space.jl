@@ -273,6 +273,27 @@ end
     pyramids.facetsets["half"] = typeof(grid.facetsets["left"])([face])
     @test_throws "not on the boundary" check_facetsets(pyramids, [:half])
 
+    # Two hexahedra whose faces share three corners but not the fourth.
+    corners = [
+        (0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1),
+        (0, 2, 0), (0, 0, -1), (1, 0, -1), (1, 1, -1), (0, 1, -1),
+    ]
+    hexes = Grid([Hexahedron((1, 2, 3, 4, 5, 6, 7, 8)), Hexahedron((10, 11, 12, 13, 1, 2, 3, 9))], [Node(Float64.(x)) for x in corners])
+    hexes.facetsets["base"] = typeof(grid.facetsets["left"])([FacetIndex(1, 1)])
+    @test_throws "not on the boundary" check_facetsets(hexes, [:base])
+
+    # Broken meshes of the cell types counted in one pass: duplicated cells, and cells sharing two edges.
+    for broken in (
+            Grid([Triangle((1, 2, 3)), Triangle((1, 2, 3))], nodes),
+            Grid([Quadrilateral((1, 2, 3, 4)), Quadrilateral((1, 2, 3, 5))], nodes),
+            Grid([Tetrahedron((1, 2, 3, 4)), Tetrahedron((1, 2, 3, 4))], box(Tetrahedron, 3).nodes),
+            Grid([Line((1, 1)), Line((2, 3))], box(Line, 1).nodes),
+        )
+        topology = ExclusiveTopology(broken)
+        facets = [FacetIndex(c, f) for c in 1:getncells(broken) for f in 1:nfacets(getcells(broken, c))]
+        @test all(fi -> isempty(_shared_facets(broken, [fi])) == isempty(getneighborhood(topology, broken, fi)), facets)
+    end
+
     # An embedded grid is rejected, as by `ExclusiveTopology`.
     surface = Grid([Triangle((1, 2, 3))], [Node((n.x[1], n.x[2], 0.0)) for n in nodes])
     surface.facetsets["edge"] = typeof(grid.facetsets["left"])([FacetIndex(1, 1)])
