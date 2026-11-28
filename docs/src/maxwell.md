@@ -30,6 +30,23 @@ that is a function of `ω`, so a frequency sweep only recombines nonzero values 
 [`maxwell_operator!`](@ref), and further terms (boundary conditions, ports) are added as blocks with
 `FiniteElementMethod.add_term!`.
 
+## Resonant modes
+
+[`maxwell_eigenmodes`](@ref) finds the modes nearest a target frequency by shift-invert Arnoldi, with the
+PEC dofs eliminated and the `ω = 0` gradient null space of the edge elements projected out, so any target
+works, including one below the lowest mode. It needs `using KrylovKit`. A lossy material gives complex
+`ω`; the quality factor is `Q = Re(ω) / (2 Im(ω))`. Only ordinary passive materials are supported: `real(εr)` and `μr` must be positive (the gradient projection needs a definite mass form), otherwise an `ArgumentError` names the cell set. An air-filled 100 × 50 × 75 mm box has its TE101 mode
+at 2.498 GHz:
+
+```julia
+using FiniteElementMethod, Ferrite, KrylovKit
+grid = generate_grid(Tetrahedron, (12, 6, 9), Vec(0.0, 0.0, 0.0), Vec(100.0, 50.0, 75.0))
+model = MaxwellModel(grid; pec = ["left", "right", "bottom", "top", "front", "back"], length_scale = 1.0e-3)
+modes = maxwell_eigenmodes(model; nev = 4, target_frequency = 2.0e9)
+modes.frequency, modes.Q                          # Hz; Q is Inf without loss
+field_values(modes.modes[1], [Vec(50.0, 25.0, 37.5)]).E
+```
+
 ```@docs
 MaxwellModel
 MaxwellMaterial
@@ -40,6 +57,7 @@ driven_problem
 solve_driven
 MaxwellSolution
 field_values
+maxwell_eigenmodes
 FiniteElementMethod.maxwell_rhs
 FiniteElementMethod.add_term!
 FiniteElementMethod.EPS0

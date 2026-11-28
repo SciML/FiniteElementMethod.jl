@@ -13,7 +13,7 @@ using DiffEqBase: BrownFullBasicInit
 using DomainSets: DomainSets
 using Ferrite: Ferrite, Lagrange, RefLine, RefTriangle, RefQuadrilateral, RefTetrahedron, RefHexahedron
 using ForwardDiff: ForwardDiff
-using LinearAlgebra: I, dot, mul!, norm
+using LinearAlgebra: dot, eigen, I, lu, mul!, norm, opnorm, SingularException, Symmetric
 using ModelingToolkit: ModelingToolkit, @parameters, @variables, Differential, MTKParameters,
     ProblemTypeCtx, System, complete, getmetadata
 using NonlinearSolveFirstOrder: NewtonRaphson
@@ -56,8 +56,9 @@ export Weighted
 # Frequency-domain Maxwell: a separate entry point assembled directly on Ferrite, not through the PDESystem front end.
 include("maxwell/model.jl")
 include("maxwell/driven.jl")
+include("maxwell/eigen.jl")
 export MaxwellMaterial, MaxwellModel, MaxwellTerm, maxwell_operator, maxwell_operator!
-export MaxwellSolution, driven_problem, solve_driven, field_values
+export MaxwellSolution, driven_problem, solve_driven, field_values, maxwell_eigenmodes
 
 include("precompile.jl")
 
