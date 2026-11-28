@@ -232,8 +232,11 @@ end
     E(x) = a .+ cross(b, collect(x))
     u = Matrix(model.blocks.eps_real) \ FiniteElementMethod.maxwell_rhs(model, 1.0, x -> im .* E(x))
     on_facet = x2 / 2 + x3 / 4 + x4 / 4    # reference coordinates (0.5, 0.25, 0.25), summing to 1 + eps(Float32)
-    vals = field_values(MaxwellSolution(model, 1.0, u), [on_facet])
-    @test collect(vals.E[1]) ≈ E(on_facet) rtol = 1.0e-5
+    # A Float64 copy of the point is no more precise than the Float32 mesh it lies on.
+    for p in (on_facet, Vec{3, Float64}(on_facet))
+        vals = field_values(MaxwellSolution(model, 1.0, u), [p])
+        @test collect(vals.E[1]) ≈ E(on_facet) rtol = 1.0e-5
+    end
 end
 
 @testset "PEC elimination keeps a nonzero diagonal when every diagonal entry of A(ω) is zero" begin

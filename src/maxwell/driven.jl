@@ -96,8 +96,9 @@ end
 
 `(; E, curlE)` at the mesh-coordinate `points` (`Vec{3}`s): vectors of `Vec{3, ComplexF64}`, with `curlE` in
 SI units (per metre, not per mesh unit). Each point is evaluated in a tetrahedron that contains it, up to a
-barycentric roundoff of `max(1e-12, 64 eps(T))` for coordinates of type `T`; points outside the mesh get `NaN`s. A point on a facet shared by two cells takes
-the trace of one of them, so a normal component that jumps there has either one-sided value.
+barycentric roundoff of `max(1e-12, 64 eps(T))` with `T` the coarser of the point and mesh coordinate types;
+points outside the mesh get `NaN`s. A point on a facet shared by two cells takes the trace of one of them, so a
+normal component that jumps there has either one-sided value.
 """
 function field_values(sol::MaxwellSolution, points::AbstractVector{<:Ferrite.Vec{3}})
     (; model, u) = sol
@@ -108,7 +109,7 @@ function field_values(sol::MaxwellSolution, points::AbstractVector{<:Ferrite.Vec
         p = points[k]
         if cell !== nothing
             ξ = _tet_coords(grid, cell, p)
-            _barycentric_min(ξ) >= -_tet_roundoff(ξ) && (ph.local_coords[k] = ξ; continue)
+            _barycentric_min(ξ) >= -_tet_roundoff(grid, p) && (ph.local_coords[k] = ξ; continue)
         end
         ph.cells[k], ph.local_coords[k] = _in_box(box, p) ? _containing_tet(grid, p) : (nothing, zero(p))
     end
@@ -129,8 +130,9 @@ end
 # Ferrite's point search accepts a cell that misses the point by up to its own tolerance (an absolute residual, so on
 # a small cell even its initial guess), which picks the wrong side of a normal jump near a facet or a cell beside the
 # point. The Maxwell point evaluation computes the reference coordinates of its linear tetrahedra exactly instead,
-# accepting a barycentric coordinate down to minus this roundoff of their number type.
-_tet_roundoff(ξ) = max(1.0e-12, 64 * eps(eltype(ξ)))
+# accepting a barycentric coordinate down to minus this roundoff of the coarser of the point and mesh number types.
+_tet_roundoff(xs...) = max(1.0e-12, map(x -> 64 * eps(eltype(x)), xs)...)
+_tet_roundoff(grid::Ferrite.Grid, p) = _tet_roundoff(p, Ferrite.get_node_coordinate(grid, 1))
 
 # The least barycentric coordinate of the reference point `ξ` of a tetrahedron: negative outside.
 _barycentric_min(ξ) = min(1 - sum(ξ), minimum(ξ))
@@ -166,6 +168,6 @@ function _containing_tet(grid, p)
         λ = _barycentric_min(ξ)
         λ > best_λ && ((best, best_ξ, best_λ) = (cell, ξ, λ))
     end
-    best_λ >= -_tet_roundoff(best_ξ) || return nothing, zero(p)
+    best_λ >= -_tet_roundoff(grid, p) || return nothing, zero(p)
     return best, best_ξ
 end
