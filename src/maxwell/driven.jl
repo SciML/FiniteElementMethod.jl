@@ -95,23 +95,26 @@ end
     field_values(sol::MaxwellSolution, points)
 
 `(; E, curlE)` at the mesh-coordinate `points` (`Vec{3}`s): vectors of `Vec{3, ComplexF64}`, with `curlE` in
-SI units (per metre, not per mesh unit). Each point is evaluated in a tetrahedron that contains it, up to a
-barycentric roundoff of `max(1e-12, 64 eps(T))` with `T` the coarser of the point and mesh coordinate types;
-points outside the mesh get `NaN`s. A point on a facet shared by two cells takes the trace of one of them, so a
+SI units (per metre, not per mesh unit). Each point is evaluated in the tetrahedron that contains it most deeply,
+which may miss it by a barycentric roundoff of `max(1e-12, 64 eps(T))` with `T` the coarsest of the point and mesh
+coordinate types; points outside the mesh get `NaN`s. A point on a facet shared by two cells takes the trace of one of them, so a
 normal component that jumps there has either one-sided value.
 """
 function field_values(sol::MaxwellSolution, points::AbstractVector{<:Ferrite.Vec{3}})
     (; model, u) = sol
     grid = model.grid
-    ph = _locate(grid, points)
-    box = _grid_box(grid)
-    for (k, cell) in pairs(ph.cells)
-        p = points[k]
-        if cell !== nothing
-            ξ = _tet_coords(grid, cell, p)
-            _barycentric_min(ξ) >= -_tet_roundoff(grid, p) && (ph.local_coords[k] = ξ; continue)
+    roundoff(x) = 64 * eps(float(eltype(x)))
+    tol = max(1.0e-12, roundoff(Ferrite.get_node_coordinate(grid, 1)), maximum(roundoff, points; init = 0.0))
+    pts = Ferrite.Vec{3, Float64}.(points)
+    ph = _locate(grid, pts)
+    box = _grid_box(grid, tol)
+    for (k, p) in pairs(pts)
+        cell = ph.cells[k]
+        ξ = cell === nothing ? nothing : _tet_coords(grid, cell, p)
+        if ξ === nothing || _barycentric_min(ξ) < 0
+            cell, ξ = _in_box(box, p) ? _containing_tet(grid, p, tol) : (nothing, zero(p))
         end
-        ph.cells[k], ph.local_coords[k] = _in_box(box, p) ? _containing_tet(grid, p) : (nothing, zero(p))
+        ph.cells[k], ph.local_coords[k] = cell, ξ
     end
     pv = Ferrite.PointValues(_NEDELEC)
     nan = Ferrite.Vec{3, ComplexF64}((NaN, NaN, NaN))
@@ -129,10 +132,7 @@ end
 
 # Ferrite's point search accepts a cell that misses the point by up to its own tolerance (an absolute residual, so on
 # a small cell even its initial guess), which picks the wrong side of a normal jump near a facet or a cell beside the
-# point. The Maxwell point evaluation computes the reference coordinates of its linear tetrahedra exactly instead,
-# accepting a barycentric coordinate down to minus this roundoff of the coarser of the point and mesh number types.
-_tet_roundoff(xs...) = max(1.0e-12, map(x -> 64 * eps(eltype(x)), xs)...)
-_tet_roundoff(grid::Ferrite.Grid, p) = _tet_roundoff(p, Ferrite.get_node_coordinate(grid, 1))
+# point. The Maxwell point evaluation computes the reference coordinates of its linear tetrahedra exactly instead.
 
 # The least barycentric coordinate of the reference point `ξ` of a tetrahedron: negative outside.
 _barycentric_min(ξ) = min(1 - sum(ξ), minimum(ξ))
@@ -148,26 +148,26 @@ end
 _det3(a, b, c) = a[1] * (b[2] * c[3] - b[3] * c[2]) - a[2] * (b[1] * c[3] - b[3] * c[1]) + a[3] * (b[1] * c[2] - b[2] * c[1])
 
 # The bounding box of the grid nodes, widened by roundoff, and whether `p` is in it.
-function _grid_box(grid)
+function _grid_box(grid, tol)
     lo = hi = Tuple(Ferrite.get_node_coordinate(first(Ferrite.getnodes(grid))))
     for node in Ferrite.getnodes(grid)
         x = Tuple(Ferrite.get_node_coordinate(node))
         lo, hi = min.(lo, x), max.(hi, x)
     end
-    slack = _tet_roundoff(lo) * maximum(hi .- lo)
+    slack = tol * maximum(hi .- lo)
     return lo .- slack, hi .+ slack
 end
 _in_box((lo, hi), p) = all(lo .<= Tuple(p) .<= hi)
 
 # The cell of the tetrahedral `grid` that contains `p` most deeply (largest least barycentric coordinate) and the
-# reference coordinates of `p` in it; `nothing` if every cell misses `p` by more than roundoff.
-function _containing_tet(grid, p)
+# reference coordinates of `p` in it; `nothing` if every cell misses `p` by more than `tol`.
+function _containing_tet(grid, p, tol)
     best, best_ξ, best_λ = nothing, zero(p), -Inf
     for cell in 1:Ferrite.getncells(grid)
         ξ = _tet_coords(grid, cell, p)
         λ = _barycentric_min(ξ)
         λ > best_λ && ((best, best_ξ, best_λ) = (cell, ξ, λ))
     end
-    best_λ >= -_tet_roundoff(grid, p) || return nothing, zero(p)
+    best_λ >= -tol || return nothing, zero(p)
     return best, best_ξ
 end

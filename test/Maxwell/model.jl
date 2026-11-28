@@ -239,6 +239,20 @@ end
     end
 end
 
+@testset "point evaluation picks the containing cell for mixed and integer point types" begin
+    # Two Float32 tetrahedra on either side of x = 0, with normal fields 1 and -2: the edge space holds the jump.
+    nodes = Node.(Vec{3, Float32}.([(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (-1, 0, 0)]))
+    model = MaxwellModel(Grid(Tetrahedron.([(1, 2, 3, 4), (1, 3, 5, 4)]), nodes); eps0 = 1.0, mu0 = 1.0)
+    E(x) = x[1] < 0 ? [1.0, 0.0, 0.0] : [-2.0, 0.0, 0.0]
+    u = Matrix(model.blocks.eps_real) \ FiniteElementMethod.maxwell_rhs(model, 1.0, x -> im .* E(x))
+    sol = MaxwellSolution(model, 1.0, u)
+    vals = field_values(sol, Vec{3}[Vec(-1.0e-6, 0.125, 0.125), Vec{3, Float32}((1.0e-6, 0.125, 0.125))])
+    @test collect(vals.E[1]) ≈ [1, 0, 0] atol = 1.0e-5
+    @test collect(vals.E[2]) ≈ [-2, 0, 0] atol = 1.0e-5
+    @test collect(field_values(sol, [Vec{3, Float32}((-1.0e-6, 0.125, 0.125))]).E[1]) ≈ [1, 0, 0] atol = 1.0e-5
+    @test all(isfinite, field_values(sol, [Vec(0, 0, 0)]).E[1])
+end
+
 @testset "PEC elimination keeps a nonzero diagonal when every diagonal entry of A(ω) is zero" begin
     model = MaxwellModel(generate_grid(Tetrahedron, (1, 1, 1)); pec = ["left"], eps0 = 1.0, mu0 = 1.0)
     A0 = maxwell_operator(model, 2.0)

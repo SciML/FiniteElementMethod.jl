@@ -173,7 +173,7 @@ function _assemble_blocks(dh, cv, cell_materials)
     mats = (curlcurl = pattern, eps_real = copy(pattern), eps_imag = copy(pattern), sigma = copy(pattern))
     assemblers = map(Ferrite.start_assemble, mats)
     n = Ferrite.getnbasefunctions(cv)
-    kc, m = zeros(n, n), zeros(n, n)
+    kc, m, ke = zeros(n, n), zeros(n, n), zeros(n, n)
     for cc in Ferrite.CellIterator(dh)
         Ferrite.reinit!(cv, cc)
         fill!(kc, 0.0)
@@ -190,10 +190,10 @@ function _assemble_blocks(dh, cv, cell_materials)
         end
         (; eps_r, mu_r, sigma) = cell_materials[Ferrite.cellid(cc)]
         dofs = Ferrite.celldofs(cc)
-        Ferrite.assemble!(assemblers.curlcurl, dofs, kc ./ mu_r)
-        Ferrite.assemble!(assemblers.eps_real, dofs, real(eps_r) .* m)
-        Ferrite.assemble!(assemblers.eps_imag, dofs, imag(eps_r) .* m)
-        Ferrite.assemble!(assemblers.sigma, dofs, sigma .* m)
+        Ferrite.assemble!(assemblers.curlcurl, dofs, ke .= kc ./ mu_r)
+        Ferrite.assemble!(assemblers.eps_real, dofs, ke .= real(eps_r) .* m)
+        Ferrite.assemble!(assemblers.eps_imag, dofs, ke .= imag(eps_r) .* m)
+        Ferrite.assemble!(assemblers.sigma, dofs, ke .= sigma .* m)
     end
     return mats
 end
